@@ -1,6 +1,9 @@
 ﻿use crate::{utok, ByteDecoder, Tokenizer};
 use std::{io::Result, path::Path};
 
+/// 由 tokenizer.model 文件定义的 bpe 分词器。
+///
+/// 文件格式为 `[10, total_len, 10, str_len, [str;str_len], 21, [score;4], ..; vocab_size]`。
 pub struct BPE {
     mmap: memmap2::Mmap,
     /// 保存每个序号对应的对象在文件中的偏移，用于从序号查询 token 字符串。
@@ -12,28 +15,32 @@ pub struct BPE {
 }
 
 impl BPE {
-    pub fn from_model(model_file: impl AsRef<Path>) -> Result<Self> {
+    /// 打开 tokenizer.model 文件并构造一个 bpe 分词器。
+    pub fn from_model_file(model_file: impl AsRef<Path>) -> Result<Self> {
+        // 打开文件
         let file = std::fs::File::open(model_file)?;
         let mmap = unsafe { memmap2::Mmap::map(&file) }?;
-        // format: 10 <total_len> 10 <str_len> <str;str_len> 21 <score;4> []
-        let mut offsets = Vec::new();
-        let mut offset = 0usize;
+        // 遍历文件，标记所有词汇的位置并记录最大长度
         let mut max_piece_len = 0usize;
-        loop {
-            let slice = &mmap[offset..];
-            if slice.is_empty() || slice[0] != 10 {
-                break;
-            }
-            max_piece_len = max_piece_len.max(slice[3] as usize);
-            offsets.push(offset + 3);
-            offset += 2 + slice[1] as usize;
-        }
+        let offsets = (0..)
+            .scan(0usize, |offset, _| match &mmap[*offset..] {
+                [10, total_len, 10, str_len, ..] => {
+                    max_piece_len = max_piece_len.max(*str_len as usize);
+                    let next = *offset + 3;
+                    *offset += 2 + *total_len as usize;
+                    Some(next)
+                }
+                [..] => None,
+            })
+            .collect::<Vec<_>>();
+        // 对词汇表按字典序排序
         let mut sorted_indices = (0..offsets.len() as utok).collect::<Vec<_>>();
         sorted_indices.sort_by_key(|&i| {
             let slice = &mmap[offsets[i as usize]..];
             let len = slice[0] as usize;
             std::str::from_utf8(&slice[1..][..len]).unwrap()
         });
+        // 生成分词器
         Ok(Self {
             mmap,
             offsets,
@@ -43,6 +50,7 @@ impl BPE {
         })
     }
 
+    /// 根据词汇查找代码。
     #[inline]
     fn find_piece(&self, piece: &str) -> Option<utok> {
         self.sorted_indices
@@ -51,6 +59,7 @@ impl BPE {
             .map(|i| self.sorted_indices[i])
     }
 
+    /// 根据代码查找词汇。
     #[inline]
     fn get_piece(&self, i: utok) -> &str {
         let offset = self.offsets[i as usize];
@@ -59,6 +68,7 @@ impl BPE {
         std::str::from_utf8(&slice[1..][..len]).unwrap()
     }
 
+    /// 根据代码查找合词评分。
     #[inline]
     fn get_score(&self, i: utok) -> f32 {
         let offset = self.offsets[i as usize];
@@ -78,6 +88,10 @@ impl Tokenizer for BPE {
     #[inline]
     fn eos(&self) -> utok {
         2
+    }
+
+    fn vocab_size(&self) -> usize {
+        self.offsets.len()
     }
 
     #[inline]
@@ -158,7 +172,7 @@ impl Tokenizer for BPE {
 
 #[test]
 fn read_tokenizer() {
-    if let Ok(bpe) = BPE::from_model("tokenizer.model") {
+    if let Ok(bpe) = BPE::from_model_file("tokenizer.model") {
         for i in 0..bpe.offsets.len() {
             println!("{}: {}", bpe.get_piece(i as utok), bpe.get_score(i as utok));
         }
@@ -168,11 +182,12 @@ fn read_tokenizer() {
 #[test]
 fn once_upon_a_time() {
     use std::time::Instant;
-    if let Ok(bpe) = BPE::from_model("tokenizer.model") {
-        let tokens = bpe.encode("Once▁upon▁a▁time,", true, false);
+    if let Ok(bpe) = BPE::from_model_file("tokenizer.model") {
+        const PROMPT: &str = "Once▁upon▁a▁time,";
+        let tokens = bpe.encode(PROMPT, true, false);
         let t0 = Instant::now();
         for _ in 0..10000 {
-            let _tokens = bpe.encode("Once▁upon▁a▁time,", true, false);
+            let _tokens = bpe.encode(PROMPT, true, false);
         }
         let t1 = Instant::now();
         println!("{:?}", t1 - t0);

@@ -1,7 +1,7 @@
 ﻿use crate::{utok, ByteDecoder, Tokenizer};
 use memmap2::Mmap;
 use patricia_tree::PatriciaMap;
-use std::{fs::File, path::Path};
+use std::{fs::File, io::Result, path::Path};
 
 /// 一个基于朴素词表的分词器。
 pub struct VocabTxt {
@@ -16,8 +16,9 @@ pub struct VocabTxt {
 }
 
 impl VocabTxt {
-    pub fn new(tokenizer: impl AsRef<Path>) -> Self {
-        let mmap = unsafe { Mmap::map(&File::open(tokenizer).unwrap()) }.unwrap();
+    pub fn from_txt_file(tokenizer: impl AsRef<Path>) -> Result<Self> {
+        let file = File::open(tokenizer)?;
+        let mmap = unsafe { Mmap::map(&file) }?;
         let text = unsafe { std::str::from_utf8_unchecked(&mmap) };
 
         let mut words = Vec::new();
@@ -29,12 +30,12 @@ impl VocabTxt {
             words.push(piece.to_string());
             trie.insert(piece, i as _);
         }
-        Self {
+        Ok(Self {
             words,
             trie,
             max_piece_len,
             byte_pieces: ByteDecoder::new(),
-        }
+        })
     }
 }
 
@@ -47,6 +48,10 @@ impl Tokenizer for VocabTxt {
     #[inline]
     fn eos(&self) -> utok {
         2
+    }
+
+    fn vocab_size(&self) -> usize {
+        self.words.len()
     }
 
     #[inline]
