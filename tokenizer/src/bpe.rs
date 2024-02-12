@@ -80,16 +80,6 @@ impl BPE {
 }
 
 impl Tokenizer for BPE {
-    #[inline]
-    fn bos(&self) -> utok {
-        1
-    }
-
-    #[inline]
-    fn eos(&self) -> utok {
-        2
-    }
-
     fn vocab_size(&self) -> usize {
         self.offsets.len()
     }
@@ -99,13 +89,12 @@ impl Tokenizer for BPE {
         self.max_piece_len
     }
 
-    fn encode(&self, text: &str, bos: bool, eos: bool) -> Vec<utok> {
+    fn encode(&self, text: &str) -> Vec<utok> {
         let mut tokens = Vec::new();
-        if bos {
-            tokens.push(self.bos());
-        }
-        if !text.is_empty() {
-            tokens.push(self.find_piece("▁").unwrap())
+        if let Some(c) = text.chars().next() {
+            if c.is_alphabetic() {
+                tokens.push(self.find_piece("▁").unwrap())
+            }
         }
 
         text.chars().map(|c| c.to_string()).for_each(|c| {
@@ -116,51 +105,33 @@ impl Tokenizer for BPE {
             }
         });
 
-        fn map_pair(bpe: &BPE, tokens: &[utok], i: usize) -> Option<utok> {
+        fn map_pair(bpe: &BPE, tokens: &[utok], i: usize) -> Option<(utok, f32)> {
             bpe.find_piece(&format!(
                 "{}{}",
                 bpe.get_piece(tokens[i]),
                 bpe.get_piece(tokens[i + 1])
             ))
+            .map(|tok| (tok, bpe.get_score(tok)))
         }
 
         let mut merges = (0..tokens.len() - 1)
             .map(|i| map_pair(self, &tokens, i))
             .collect::<Vec<_>>();
-        loop {
-            let mut best_score = std::f32::NEG_INFINITY;
-            let mut replacement = None;
-            for (i, index) in merges.iter().enumerate() {
-                if let Some(index) = index {
-                    let score = self.get_score(*index);
-                    if score > best_score {
-                        best_score = score;
-                        replacement = Some((i, *index));
-                    }
-                }
+        while let Some((i, (tok, _))) = merges
+            .iter()
+            .enumerate()
+            .filter_map(|(i, tok)| tok.map(|tok| (i, tok)))
+            .max_by(|(_, (_, a)), (_, (_, b))| a.total_cmp(b))
+        {
+            tokens[i] = tok;
+            tokens.remove(i + 1);
+            merges.remove(i);
+            if let Some(i) = i.checked_sub(1) {
+                merges[i] = map_pair(self, &tokens, i);
             }
-            match replacement {
-                Some((i, j)) => {
-                    tokens[i] = j;
-                    tokens.remove(i + 1);
-                    merges.remove(i);
-                    if let Some(index) = merges.get_mut(i - 1) {
-                        *index = map_pair(self, &tokens, i - 1);
-                    }
-                    if let Some(index) = merges.get_mut(i) {
-                        *index = map_pair(self, &tokens, i);
-                    }
-                }
-                None => break,
-            }
+            merges[i] = map_pair(self, &tokens, i);
         }
 
-        if bos {
-            assert_eq!(tokens[0], self.bos());
-        }
-        if eos {
-            tokens.push(self.eos());
-        }
         tokens
     }
 
@@ -184,13 +155,13 @@ fn once_upon_a_time() {
     use std::time::Instant;
     if let Ok(bpe) = BPE::from_model_file("tokenizer.model") {
         const PROMPT: &str = "Once▁upon▁a▁time,";
-        let tokens = bpe.encode(PROMPT, true, false);
+        let tokens = bpe.encode(PROMPT);
         let t0 = Instant::now();
         for _ in 0..10000 {
-            let _tokens = bpe.encode(PROMPT, true, false);
+            let _tokens = bpe.encode(PROMPT);
         }
         let t1 = Instant::now();
         println!("{:?}", t1 - t0);
-        assert_eq!(tokens, &[1, 9038, 2501, 263, 931, 29892]);
+        assert_eq!(tokens, &[9038, 2501, 263, 931, 29892]);
     }
 }

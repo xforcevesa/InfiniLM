@@ -7,5 +7,5 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-patricia_tree = "0.8"
 memmap2 = "0.9"
+patricia_tree = "0.8"

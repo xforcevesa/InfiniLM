@@ -40,16 +40,6 @@ impl VocabTxt {
 }
 
 impl Tokenizer for VocabTxt {
-    #[inline]
-    fn bos(&self) -> utok {
-        1
-    }
-
-    #[inline]
-    fn eos(&self) -> utok {
-        2
-    }
-
     fn vocab_size(&self) -> usize {
         self.words.len()
     }
@@ -59,11 +49,8 @@ impl Tokenizer for VocabTxt {
         self.max_piece_len
     }
 
-    fn encode(&self, mut text: &str, bos: bool, eos: bool) -> Vec<utok> {
+    fn encode(&self, mut text: &str) -> Vec<utok> {
         let mut tokens = Vec::<utok>::new();
-        if bos {
-            tokens.push(self.bos());
-        }
 
         while !text.is_empty() {
             let piece = if text.len() > self.max_piece_len {
@@ -82,12 +69,6 @@ impl Tokenizer for VocabTxt {
             }
         }
 
-        if bos {
-            assert_eq!(tokens[0], self.bos());
-        }
-        if eos {
-            tokens.push(self.eos());
-        }
         tokens
     }
 

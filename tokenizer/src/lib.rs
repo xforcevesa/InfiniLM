@@ -6,11 +6,9 @@ mod vocab_txt;
 pub type utok = u32;
 
 pub trait Tokenizer {
-    fn bos(&self) -> utok;
-    fn eos(&self) -> utok;
     fn vocab_size(&self) -> usize;
     fn max_piece_len(&self) -> usize;
-    fn encode(&self, text: &str, bos: bool, eos: bool) -> Vec<utok>;
+    fn encode(&self, text: &str) -> Vec<utok>;
     fn decode(&self, token: utok) -> &str;
 }
 
