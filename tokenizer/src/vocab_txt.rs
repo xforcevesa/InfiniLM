@@ -1,4 +1,4 @@
-﻿use super::{utok, Tokenizer};
+﻿use crate::{utok, ByteDecoder, Tokenizer};
 use memmap2::Mmap;
 use patricia_tree::PatriciaMap;
 use std::{fs::File, path::Path};
@@ -12,7 +12,7 @@ pub struct VocabTxt {
     /// 词汇的最大长度。
     max_piece_len: usize,
     /// 单字节词汇转义。
-    byte_pieces: [u8; 256],
+    byte_pieces: ByteDecoder,
 }
 
 impl VocabTxt {
@@ -29,16 +29,12 @@ impl VocabTxt {
             words.push(piece.to_string());
             trie.insert(piece, i as _);
         }
-        let mut ans = Self {
+        Self {
             words,
             trie,
             max_piece_len,
-            byte_pieces: [0; 256],
-        };
-        for i in 0..=255u8 {
-            ans.byte_pieces[i as usize] = i;
+            byte_pieces: ByteDecoder::new(),
         }
-        ans
     }
 }
 
@@ -90,16 +86,8 @@ impl Tokenizer for VocabTxt {
         tokens
     }
 
-    fn decode(&self, token: utok, next: utok) -> &str {
-        let piece = self.words[next as usize].as_str();
-        if let Some(byte) = piece.strip_prefix("<0x").and_then(|s| s.strip_suffix('>')) {
-            let byte = u8::from_str_radix(byte, 16).unwrap();
-            let byte = &self.byte_pieces[byte as usize..][..1];
-            unsafe { std::str::from_utf8_unchecked(byte) }
-        } else if token == self.bos() && piece.starts_with(' ') {
-            &piece[1..]
-        } else {
-            piece
-        }
+    #[inline]
+    fn decode(&self, token: utok) -> &str {
+        self.byte_pieces.decode(self.words[token as usize].as_str())
     }
 }
