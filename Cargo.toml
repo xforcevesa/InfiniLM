@@ -1,3 +1,3 @@
 [workspace]
-members = ["tokenizer"]
+members = ["common", "tokenizer"]
 resolver = "2"

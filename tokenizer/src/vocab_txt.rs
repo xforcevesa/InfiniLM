@@ -1,4 +1,5 @@
-﻿use crate::{utok, ByteDecoder, Tokenizer};
+﻿use crate::{ByteDecoder, Tokenizer};
+use common::utok;
 use memmap2::Mmap;
 use patricia_tree::PatriciaMap;
 use std::{fs::File, io::Result, path::Path};

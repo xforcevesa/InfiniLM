@@ -1,9 +1,7 @@
 mod bpe;
 mod vocab_txt;
 
-/// `utok` for token id.
-#[allow(non_camel_case_types)]
-pub type utok = u32;
+use common::utok;
 
 pub trait Tokenizer {
     fn vocab_size(&self) -> usize;
