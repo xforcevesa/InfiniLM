@@ -1,0 +1,16 @@
+[package]
+name = "model-parameters"
+version = "0.0.0"
+edition = "2021"
+authors = ["YdrMaster <ydrml@hotmail.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+common = { path = "../common" }
+log = "0.4"
+memmap2 = "0.9"
+half = "2.3"
+safetensors = "0.4"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
