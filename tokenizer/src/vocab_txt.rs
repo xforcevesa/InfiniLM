@@ -25,7 +25,7 @@ impl VocabTxt {
         let mut words = Vec::new();
         let mut trie = PatriciaMap::new();
         let mut max_piece_len = 0;
-        for (i, line) in text.lines().into_iter().enumerate() {
+        for (i, line) in text.lines().enumerate() {
             let piece = line.strip_prefix('"').unwrap().strip_suffix('"').unwrap();
             max_piece_len = max_piece_len.max(piece.len());
             words.push(piece.to_string());

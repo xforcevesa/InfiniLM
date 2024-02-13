@@ -267,3 +267,17 @@ impl SafeTensors {
         })
     }
 }
+
+#[test]
+fn test_load() {
+    use std::time::Instant;
+    let t0 = Instant::now();
+    let safetensors = SafeTensors::new("../../TinyLlama-1.1B-Chat-v1.0");
+    let t1 = Instant::now();
+    println!("{:?}", t1 - t0);
+    match safetensors {
+        Ok(_) => {}
+        Err(SafeTensorError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => panic!("{:?}", e),
+    }
+}
