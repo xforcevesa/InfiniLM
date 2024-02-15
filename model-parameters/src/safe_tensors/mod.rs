@@ -2,7 +2,7 @@
 
 use crate::{DataType, LLama2};
 use config::{ConfigJson, SafeTensorHeaderJson};
-use log::warn;
+use log::{info, warn};
 use memmap2::Mmap;
 use safetensors::Dtype;
 use std::{fs::File, path::Path};
@@ -220,10 +220,12 @@ impl SafeTensors {
         let mut model_norm = 0;
         let mut lm_head = 0;
 
+        let header_offset = BASE_OFFSET + len;
         for (name, tensor) in header.tensors {
             let path = name.split('.').collect::<Vec<_>>();
-            let offset = BASE_OFFSET + len + tensor.data_offsets.0;
+            let offset = header_offset + tensor.data_offsets.0;
 
+            info!(target: "import safetensors", "detect {offset:#010x} -> \"{name}\"");
             match path.as_slice() {
                 ["model", "embed_tokens", "weight"] => {
                     assert_eq!(&tensor.shape, &[config.vocab_size, d]);
@@ -312,13 +314,18 @@ impl SafeTensors {
 #[test]
 fn test_load() {
     use std::time::Instant;
+
+    // set env for POWERSHELL: `$env:RUST_LOG="INFO";`
+    env_logger::init();
+
     let t0 = Instant::now();
     let safetensors = SafeTensors::new("../../TinyLlama-1.1B-Chat-v1.0");
     let t1 = Instant::now();
     println!("{:?}", t1 - t0);
+
     match safetensors {
         Ok(_) => {}
         Err(SafeTensorError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => panic!("{:?}", e),
+        Err(e) => panic!("{e:?}"),
     }
 }
