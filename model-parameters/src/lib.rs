@@ -1,8 +1,23 @@
 mod safe_tensors;
 
-pub trait LLama2 {
-    type Ptr;
+pub enum DataType {
+    F16,
+    BF16,
+    F32,
+}
 
+impl DataType {
+    #[inline]
+    pub const fn size(&self) -> usize {
+        match self {
+            DataType::F16 => 2,
+            DataType::BF16 => 2,
+            DataType::F32 => 4,
+        }
+    }
+}
+
+pub trait LLama2 {
     fn hidden_size(&self) -> usize;
     fn intermediate_size(&self) -> usize;
     fn max_position_embeddings(&self) -> usize;
@@ -10,19 +25,20 @@ pub trait LLama2 {
     fn num_hidden_layers(&self) -> usize;
     fn num_key_value_heads(&self) -> usize;
     fn vocab_size(&self) -> usize;
+    fn data_type(&self) -> DataType;
 
-    fn embed_tokens(&self) -> Self::Ptr;
-    fn input_layernorm(&self, layer: usize) -> Self::Ptr;
-    fn self_attn_q_proj(&self, layer: usize) -> Self::Ptr;
-    fn self_attn_k_proj(&self, layer: usize) -> Self::Ptr;
-    fn self_attn_v_proj(&self, layer: usize) -> Self::Ptr;
-    fn self_attn_o_proj(&self, layer: usize) -> Self::Ptr;
-    fn post_attention_layernorm(&self, layer: usize) -> Self::Ptr;
-    fn mlp_gate(&self, layer: usize) -> Self::Ptr;
-    fn mlp_down(&self, layer: usize) -> Self::Ptr;
-    fn mlp_up(&self, layer: usize) -> Self::Ptr;
-    fn model_norm(&self) -> Self::Ptr;
-    fn lm_head(&self) -> Self::Ptr;
+    fn embed_tokens(&self) -> &[u8];
+    fn input_layernorm(&self, layer: usize) -> &[u8];
+    fn self_attn_q_proj(&self, layer: usize) -> &[u8];
+    fn self_attn_k_proj(&self, layer: usize) -> &[u8];
+    fn self_attn_v_proj(&self, layer: usize) -> &[u8];
+    fn self_attn_o_proj(&self, layer: usize) -> &[u8];
+    fn post_attention_layernorm(&self, layer: usize) -> &[u8];
+    fn mlp_gate(&self, layer: usize) -> &[u8];
+    fn mlp_down(&self, layer: usize) -> &[u8];
+    fn mlp_up(&self, layer: usize) -> &[u8];
+    fn model_norm(&self) -> &[u8];
+    fn lm_head(&self) -> &[u8];
 }
 
 pub use safe_tensors::SafeTensors;

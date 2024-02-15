@@ -1,11 +1,11 @@
 ﻿mod config;
 
-use crate::LLama2;
+use crate::{DataType, LLama2};
 use config::{ConfigJson, SafeTensorHeaderJson};
 use log::warn;
 use memmap2::Mmap;
 use safetensors::Dtype;
-use std::{ffi::c_void, fs::File, path::Path};
+use std::{fs::File, path::Path};
 
 pub struct SafeTensors {
     config: ConfigJson,
@@ -28,15 +28,13 @@ struct LayerParamsOffset {
     mlp_up: usize,
 }
 
-macro_rules! ptr_from_offset {
-    ($mmap:expr, $offset:expr) => {
-        $mmap[$offset..].as_ptr().cast()
+macro_rules! slice {
+    ($mmap:expr; $offset:expr, $len:expr) => {
+        $mmap[$offset..][..$len]
     };
 }
 
 impl LLama2 for SafeTensors {
-    type Ptr = *const c_void;
-
     #[inline]
     fn hidden_size(&self) -> usize {
         self.config.hidden_size
@@ -73,63 +71,104 @@ impl LLama2 for SafeTensors {
     }
 
     #[inline]
-    fn embed_tokens(&self) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.embed_tokens)
+    fn data_type(&self) -> DataType {
+        match self.config.torch_dtype.as_str() {
+            "float16" => DataType::F16,
+            "bfloat16" => DataType::BF16,
+            "float32" => DataType::F32,
+            t => panic!("Unsupported dtype: \"{t}\""),
+        }
     }
 
     #[inline]
-    fn input_layernorm(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].input_layernorm)
+    fn embed_tokens(&self) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dv = self.config.vocab_size;
+        let dt = self.data_type().size();
+        &slice!(self.mmap; self.embed_tokens, dv * d * dt)
     }
 
     #[inline]
-    fn self_attn_q_proj(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].self_attn_q_proj)
+    fn input_layernorm(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].input_layernorm, d * dt)
     }
 
     #[inline]
-    fn self_attn_k_proj(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].self_attn_k_proj)
+    fn self_attn_q_proj(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].self_attn_q_proj, d * d * dt)
     }
 
     #[inline]
-    fn self_attn_v_proj(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].self_attn_v_proj)
+    fn self_attn_k_proj(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dkv = d * self.config.num_key_value_heads / self.config.num_attention_heads;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].self_attn_k_proj, dkv * d * dt)
     }
 
     #[inline]
-    fn self_attn_o_proj(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].self_attn_o_proj)
+    fn self_attn_v_proj(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dkv = d * self.config.num_key_value_heads / self.config.num_attention_heads;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].self_attn_v_proj, dkv * d * dt)
     }
 
     #[inline]
-    fn post_attention_layernorm(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].post_attention_layernorm)
+    fn self_attn_o_proj(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].self_attn_o_proj, d * d * dt)
     }
 
     #[inline]
-    fn mlp_gate(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].mlp_gate)
+    fn post_attention_layernorm(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].post_attention_layernorm, d * dt)
     }
 
     #[inline]
-    fn mlp_down(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].mlp_down)
+    fn mlp_gate(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let di = self.config.intermediate_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].mlp_gate, di * d * dt)
     }
 
     #[inline]
-    fn mlp_up(&self, layer: usize) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.layers[layer].mlp_up)
+    fn mlp_down(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let di = self.config.intermediate_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].mlp_down, d * di * dt)
     }
 
     #[inline]
-    fn model_norm(&self) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.model_norm)
+    fn mlp_up(&self, layer: usize) -> &[u8] {
+        let d = self.config.hidden_size;
+        let di = self.config.intermediate_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.layers[layer].mlp_up, di * d * dt)
     }
 
     #[inline]
-    fn lm_head(&self) -> Self::Ptr {
-        ptr_from_offset!(self.mmap, self.lm_head)
+    fn model_norm(&self) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.model_norm, d * dt)
+    }
+
+    #[inline]
+    fn lm_head(&self) -> &[u8] {
+        let d = self.config.hidden_size;
+        let dv: usize = self.config.vocab_size;
+        let dt: usize = self.data_type().size();
+        &slice!(self.mmap; self.lm_head, dv * d * dt)
     }
 }
 
@@ -240,7 +279,9 @@ impl SafeTensors {
                             assert_eq!(tensor.dtype, dtype);
                             layers[layer].mlp_up = offset;
                         }
-                        [..] => warn!(target: "import safetensors", "Unknown tensor path: {name}"),
+                        [..] => {
+                            warn!(target: "import safetensors", "Unknown tensor path: \"{name}\"")
+                        }
                     };
                 }
                 ["model", "norm", "weight"] => {
@@ -253,7 +294,7 @@ impl SafeTensors {
                     assert_eq!(tensor.dtype, dtype);
                     lm_head = offset;
                 }
-                [..] => warn!(target: "import safetensors", "Unknown tensor path: {name}"),
+                [..] => warn!(target: "import safetensors", "Unknown tensor path: \"{name}\""),
             }
         }
 
