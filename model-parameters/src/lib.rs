@@ -1,23 +1,14 @@
-mod safe_tensors;
+mod data_type;
+mod memory;
 
-pub enum DataType {
-    F16,
-    BF16,
-    F32,
-}
+#[macro_use]
+extern crate log;
 
-impl DataType {
-    #[inline]
-    pub const fn size(&self) -> usize {
-        match self {
-            DataType::F16 => 2,
-            DataType::BF16 => 2,
-            DataType::F32 => 4,
-        }
-    }
-}
+use common::utok;
 
-pub trait LLama2 {
+pub use data_type::DataType;
+
+pub trait Llama2 {
     fn hidden_size(&self) -> usize;
     fn intermediate_size(&self) -> usize;
     fn max_position_embeddings(&self) -> usize;
@@ -41,4 +32,32 @@ pub trait LLama2 {
     fn lm_head(&self) -> &[u8];
 }
 
-pub use safe_tensors::SafeTensors;
+pub use memory::{Memory, SafeTensorError};
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+struct ConfigJson {
+    pub bos_token_id: utok,
+    pub eos_token_id: utok,
+    pub hidden_size: usize,
+    pub intermediate_size: usize,
+    pub max_position_embeddings: usize,
+    pub num_attention_heads: usize,
+    pub num_hidden_layers: usize,
+    pub num_key_value_heads: usize,
+    pub vocab_size: usize,
+    pub rms_norm_eps: f32,
+    pub rope_theta: f32,
+    pub torch_dtype: DataType,
+}
+
+struct LayerParamsOffset {
+    input_layernorm: usize,
+    self_attn_q_proj: usize,
+    self_attn_k_proj: usize,
+    self_attn_v_proj: usize,
+    self_attn_o_proj: usize,
+    post_attention_layernorm: usize,
+    mlp_gate: usize,
+    mlp_down: usize,
+    mlp_up: usize,
+}
