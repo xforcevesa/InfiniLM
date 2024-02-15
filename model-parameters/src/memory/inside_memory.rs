@@ -2,9 +2,9 @@
 use half::{bf16, f16};
 
 impl Memory<Vec<u8>> {
-    pub fn cast<T: AsRef<[u8]>>(src: &Memory<T>, new_dtype: DataType) -> Self {
-        let from = src.config.torch_dtype;
-        let mut blob = Vec::with_capacity(src.blob.as_ref().len() * new_dtype.size() / from.size());
+    pub fn cast(src: &impl Llama2, new_dtype: DataType) -> Self {
+        let from = src.data_type();
+        let mut blob = Vec::with_capacity(src.size() * new_dtype.size() / from.size());
         let mut append = |src: &[u8]| {
             let start = blob.len();
             let additional = src.len() * new_dtype.size() / from.size();
@@ -25,7 +25,7 @@ impl Memory<Vec<u8>> {
         }
 
         let embed_tokens = append(src.embed_tokens());
-        let layers = (0..src.config.num_hidden_layers)
+        let layers = (0..src.num_hidden_layers())
             .map(|layer| LayerParamsOffset {
                 input_layernorm: append(src.input_layernorm(layer)),
                 self_attn_q_proj: append(src.self_attn_q_proj(layer)),
@@ -43,8 +43,18 @@ impl Memory<Vec<u8>> {
 
         Self {
             config: ConfigJson {
+                bos_token_id: src.bos_token_id(),
+                eos_token_id: src.eos_token_id(),
+                hidden_size: src.hidden_size(),
+                intermediate_size: src.intermediate_size(),
+                max_position_embeddings: src.max_position_embeddings(),
+                num_attention_heads: src.num_attention_heads(),
+                num_hidden_layers: src.num_hidden_layers(),
+                num_key_value_heads: src.num_key_value_heads(),
+                vocab_size: src.vocab_size(),
+                rms_norm_eps: src.rms_norm_eps(),
+                rope_theta: src.rope_theta(),
                 torch_dtype: new_dtype,
-                ..src.config
             },
             blob,
             embed_tokens,

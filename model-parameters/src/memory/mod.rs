@@ -2,6 +2,7 @@
 mod safe_tensors;
 
 use crate::{ConfigJson, DataType, LayerParamsOffset, Llama2};
+use common::utok;
 pub use safe_tensors::SafeTensorError;
 
 pub struct Memory<T> {
@@ -14,6 +15,16 @@ pub struct Memory<T> {
 }
 
 impl<T: AsRef<[u8]>> Llama2 for Memory<T> {
+    #[inline]
+    fn bos_token_id(&self) -> utok {
+        self.config.bos_token_id
+    }
+
+    #[inline]
+    fn eos_token_id(&self) -> utok {
+        self.config.eos_token_id
+    }
+
     #[inline]
     fn hidden_size(&self) -> usize {
         self.config.hidden_size
@@ -47,6 +58,16 @@ impl<T: AsRef<[u8]>> Llama2 for Memory<T> {
     #[inline]
     fn vocab_size(&self) -> usize {
         self.config.vocab_size
+    }
+
+    #[inline]
+    fn rms_norm_eps(&self) -> f32 {
+        self.config.rms_norm_eps
+    }
+
+    #[inline]
+    fn rope_theta(&self) -> f32 {
+        self.config.rope_theta
     }
 
     #[inline]

@@ -9,6 +9,8 @@ use common::utok;
 pub use data_type::DataType;
 
 pub trait Llama2 {
+    fn bos_token_id(&self) -> utok;
+    fn eos_token_id(&self) -> utok;
     fn hidden_size(&self) -> usize;
     fn intermediate_size(&self) -> usize;
     fn max_position_embeddings(&self) -> usize;
@@ -16,7 +18,31 @@ pub trait Llama2 {
     fn num_hidden_layers(&self) -> usize;
     fn num_key_value_heads(&self) -> usize;
     fn vocab_size(&self) -> usize;
+    fn rms_norm_eps(&self) -> f32;
+    fn rope_theta(&self) -> f32;
     fn data_type(&self) -> DataType;
+
+    fn size(&self) -> usize {
+        let d = self.hidden_size();
+        let dv = self.vocab_size();
+        let dkv = d * self.num_key_value_heads() / self.num_attention_heads();
+        let di = self.intermediate_size();
+        let l = self.num_hidden_layers();
+
+        (d * dv      // embed_tokens
+       + l * d       // input_layernorm
+       + l * d * d   // self_attn_q_proj
+       + l * dkv * d // self_attn_k_proj
+       + l * dkv * d // self_attn_v_proj
+       + l * d * d   // self_attn_o_proj
+       + l * d       // post_attention_layernorm
+       + l * di * d  // mlp_gate
+       + l * d * di  // mlp_down
+       + l * di * d  // mlp_up
+       + d           // model_norm
+       + dv * d)     // lm_head
+       * self.data_type().size()
+    }
 
     fn embed_tokens(&self) -> &[u8];
     fn input_layernorm(&self, layer: usize) -> &[u8];
