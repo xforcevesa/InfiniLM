@@ -4,6 +4,7 @@ mod safe_tensors;
 use crate::{ConfigJson, DataType, LayerParamsOffset, Llama2};
 use common::utok;
 pub use safe_tensors::SafeTensorError;
+pub(crate) use safe_tensors::SafeTensorHeaderJson;
 
 pub struct Memory<T> {
     config: ConfigJson,

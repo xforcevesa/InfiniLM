@@ -1,5 +1,6 @@
 mod data_type;
 mod memory;
+mod save;
 
 #[macro_use]
 extern crate log;
@@ -7,6 +8,7 @@ extern crate log;
 use common::utok;
 
 pub use data_type::DataType;
+pub use save::save;
 
 pub trait Llama2 {
     fn bos_token_id(&self) -> utok;

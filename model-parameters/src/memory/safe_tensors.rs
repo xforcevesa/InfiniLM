@@ -143,7 +143,7 @@ impl Memory<Mmap> {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-struct SafeTensorHeaderJson {
+pub(crate) struct SafeTensorHeaderJson {
     #[serde(flatten)]
     pub tensors: HashMap<String, TensorInfo>,
     #[serde(rename = "__metadata__")]
