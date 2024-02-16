@@ -21,7 +21,8 @@ impl GenerateArgs {
         info!("load model ... {:?}", time.elapsed());
 
         let time = Instant::now();
-        let _transformer = Transformer::new(model, 1);
+        let transformer = Transformer::new(model);
+        let mut kv_cache = transformer.new_cache();
         info!("build transformer ... {:?}", time.elapsed());
 
         let time = Instant::now();
@@ -29,7 +30,12 @@ impl GenerateArgs {
         info!("build tokenizer ... {:?}", time.elapsed());
 
         let time = Instant::now();
-        let _prompt_tokens = tokenizer.encode(self.prompt.trim());
+        let prompt_tokens = tokenizer.encode(self.prompt.trim());
         info!("encode prompt ... {:?}", time.elapsed());
+
+        let time = Instant::now();
+        let (_last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
+        transformer.update(tokens, Some(&mut kv_cache), 0);
+        info!("prefill transformer ... {:?}", time.elapsed());
     }
 }

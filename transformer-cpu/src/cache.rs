@@ -1,14 +1,15 @@
 ﻿use model_parameters::Llama2;
 
-pub(super) struct LayerCache(Vec<u8>);
+pub struct LayerCache(Vec<u8>);
 
 impl LayerCache {
-    pub fn new(model: &dyn Llama2, batch: usize) -> Self {
-        let n = batch;
+    pub fn new_layers(model: &dyn Llama2) -> Vec<Self> {
         let dkv = model.num_key_value_heads();
         let ds = model.max_position_embeddings();
         let dh = model.hidden_size() / model.num_attention_heads();
-        Self(vec![0; 2 * n * dkv * ds * dh])
+        (0..model.num_hidden_layers())
+            .map(|_| Self(vec![0; 2 * dkv * ds * dh]))
+            .collect()
     }
 
     #[inline]
