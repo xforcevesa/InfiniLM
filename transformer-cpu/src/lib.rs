@@ -1,7 +1,9 @@
 mod cache;
+mod kernel;
 
 use cache::LayerCache;
 use common::{upos, utok};
+use kernel::{gather, rms_norm};
 use model_parameters::{DataType, Llama2, Memory};
 
 pub extern crate model_parameters;
@@ -26,10 +28,29 @@ impl Transformer {
 
     pub fn update(
         &self,
-        _tokens: &[utok],
+        tokens: &[utok],
         _cache: Option<&mut [LayerCache]>,
         _pos: upos,
     ) -> Vec<f32> {
+        let seq_len = tokens.len();
+        let d = self.model.hidden_size();
+        let dt = self.model.data_type();
+
+        let mut a = vec![0u8; seq_len * d * dt.size()];
+        gather(&mut a, self.model.embed_tokens(), tokens);
+
+        let mut b = vec![0u8; seq_len * d * dt.size()];
+        for l in 0..self.model.num_hidden_layers() {
+            {
+                // b <- rms-norm(a)
+                let o = &mut b;
+                let x = &a;
+                let w = self.model.input_layernorm(l);
+                let theta = self.model.rope_theta();
+                rms_norm(o, x, w, theta, dt);
+            }
+        }
+
         vec![]
     }
 }

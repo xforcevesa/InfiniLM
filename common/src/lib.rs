@@ -11,7 +11,7 @@ pub type upos = u32;
 #[macro_export]
 macro_rules! slice {
     ($blob:expr; $width:expr; [$line:expr]) => {
-        $blob[$line * $width..][..$width]
+        $blob[$line as usize * $width..][..$width]
     };
 }
 
