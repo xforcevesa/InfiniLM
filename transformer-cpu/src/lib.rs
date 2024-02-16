@@ -3,6 +3,8 @@ mod cache;
 use cache::LayerCache;
 use model_parameters::{DataType, Llama2, Memory};
 
+pub extern crate model_parameters;
+
 pub struct Transformer {
     model: Box<dyn Llama2>,
     cache: Vec<LayerCache>,

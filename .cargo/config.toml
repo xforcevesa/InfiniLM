@@ -1,3 +1,4 @@
 ﻿[alias]
 xtask = "run --package xtask --release --"
 cast = "xtask cast"
+generate = "xtask generate"

@@ -5,8 +5,6 @@ mod save;
 #[macro_use]
 extern crate log;
 
-use std::fmt;
-
 use common::utok;
 
 pub use data_type::DataType;
@@ -63,7 +61,6 @@ pub trait Llama2 {
 }
 
 pub use memory::{Memory, SafeTensorError};
-use serde::Serialize;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct ConfigJson {
@@ -76,18 +73,9 @@ struct ConfigJson {
     pub num_hidden_layers: usize,
     pub num_key_value_heads: usize,
     pub vocab_size: usize,
-    #[serde(serialize_with = "serialize_float")]
     pub rms_norm_eps: f32,
-    #[serde(serialize_with = "serialize_float")]
     pub rope_theta: f32,
     pub torch_dtype: DataType,
-}
-
-fn serialize_float<S>(val: &impl fmt::LowerExp, s: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    format!("{val:e}").serialize(s)
 }
 
 struct LayerParamsOffset {

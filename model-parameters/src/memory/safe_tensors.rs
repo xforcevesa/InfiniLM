@@ -56,7 +56,7 @@ impl Memory<Mmap> {
             let path = name.split('.').collect::<Vec<_>>();
             let offset = header_offset + tensor.data_offsets.0;
 
-            info!(target: "import safetensors", "detect {offset:#010x} -> \"{name}\"");
+            debug!(target: "import safetensors", "detect {offset:#010x} -> \"{name}\"");
             match path.as_slice() {
                 ["model", "embed_tokens", "weight"] => {
                     assert_eq!(&tensor.shape, &[config.vocab_size, d]);
