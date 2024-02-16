@@ -2,7 +2,7 @@
 use half::{bf16, f16};
 
 impl Memory<Vec<u8>> {
-    pub fn cast(src: &impl Llama2, new_dtype: DataType) -> Self {
+    pub fn cast(src: &dyn Llama2, new_dtype: DataType) -> Self {
         let from = src.data_type();
         let mut blob = Vec::with_capacity(src.size() * new_dtype.size() / from.size());
         let mut append = |src: &[u8]| {
