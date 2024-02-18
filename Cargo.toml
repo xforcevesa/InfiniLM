@@ -1,3 +1,10 @@
 [workspace]
-members = ["common", "model-parameters", "tokenizer", "transformer-cpu", "xtask"]
+members = [
+    "common",
+    "tensor",
+    "model-parameters",
+    "tokenizer",
+    "transformer-cpu",
+    "xtask",
+]
 resolver = "2"
