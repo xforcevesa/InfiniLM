@@ -1,9 +1,10 @@
 ﻿use super::Operator;
 use crate::{udim, Affine, Shape};
-use smallvec::SmallVec;
+
+type Permutation = Shape;
 
 pub struct Transpose {
-    perm: SmallVec<[udim; 4]>,
+    perm: Permutation,
 }
 
 impl Operator for Transpose {
@@ -29,7 +30,7 @@ impl Operator for Transpose {
 #[test]
 fn test() {
     let operator = Transpose {
-        perm: Shape::from_slice(&[0, 2, 1, 3]),
+        perm: Permutation::from_slice(&[0, 2, 1, 3]),
     };
     assert_eq!(
         operator.infer_shape(&[1, 2, 3, 4]),
