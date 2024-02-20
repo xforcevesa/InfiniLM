@@ -23,6 +23,13 @@ impl Operator for Transpose {
     }
 }
 
+impl Transpose {
+    #[inline]
+    pub const fn new(permutation: Permutation) -> Self {
+        Self(permutation)
+    }
+}
+
 #[test]
 fn test() {
     let ans = Transpose(Permutation::from_slice(&[0, 3, 1, 2])).build(&[1, 2, 3, 4]);
