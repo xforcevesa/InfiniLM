@@ -3,7 +3,7 @@ mod safe_tensors;
 
 use crate::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
-use tensor::Tensor;
+use tensor::{udim, Shape, Tensor};
 
 pub use safe_tensors::SafeTensorError;
 pub(crate) use safe_tensors::SafeTensorHeaderJson;
@@ -97,6 +97,32 @@ impl Llama2 for Memory {
     #[inline]
     fn input_layernorm(&self, layer: usize) -> Tensor<Storage> {
         self.layers[layer].input_layernorm.clone()
+    }
+
+    #[inline]
+    fn w_qkv(&self, layer: usize) -> Tensor<Storage> {
+        let q = &self.layers[layer].self_attn_q_proj;
+        let k = &self.layers[layer].self_attn_k_proj;
+        let v = &self.layers[layer].self_attn_v_proj;
+        let d = self.hidden_size() as udim;
+        let dkv =
+            (self.hidden_size() * self.num_key_value_heads() / self.num_attention_heads()) as udim;
+        let dt = self.config.torch_dtype.size();
+        debug_assert_eq!(q.shape(), &[d, d]);
+        debug_assert_eq!(k.shape(), &[dkv, d]);
+        debug_assert_eq!(v.shape(), &[dkv, d]);
+        let size = (q.size() + k.size() + v.size()) * dt;
+        let mut data = vec![0u8; size];
+        let (q_, kv_) = data.split_at_mut(q.size() * dt);
+        let (k_, v_) = kv_.split_at_mut(k.size() * dt);
+        q_.copy_from_slice(q.physical().as_slice());
+        k_.copy_from_slice(k.physical().as_slice());
+        v_.copy_from_slice(v.physical().as_slice());
+        Tensor::new(
+            self.config.torch_dtype,
+            Shape::from_vec(vec![d + dkv + dkv, d]),
+            Storage::from_blob(data),
+        )
     }
 
     #[inline]

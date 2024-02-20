@@ -84,3 +84,16 @@ pub(crate) struct SafeTensorHeaderJson {
     #[serde(rename = "__metadata__")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
+
+#[test]
+fn test_meta() {
+    let header = SafeTensorHeaderJson {
+        tensors: HashMap::new(),
+        meta: Some(
+            [("concat_qkv".to_string(), serde_json::Value::Bool(true))]
+                .into_iter()
+                .collect(),
+        ),
+    };
+    println!("{}", serde_json::to_string_pretty(&header).unwrap());
+}

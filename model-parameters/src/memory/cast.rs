@@ -1,7 +1,6 @@
 ﻿use super::Layer;
 use crate::{ConfigJson, DataType, Llama2, Memory, Storage};
 use half::{bf16, f16};
-use std::sync::Arc;
 use tensor::Tensor;
 
 impl Memory {
@@ -88,7 +87,6 @@ fn cast(src: Tensor<Storage>, new_dtype: DataType) -> Tensor<Storage> {
         _ => todo!(),
     }
 
-    let len = data.len();
-    let pysical = Storage::new(Arc::new(data), 0, len);
+    let pysical = Storage::from_blob(data);
     unsafe { src.cast(new_dtype, pysical) }
 }

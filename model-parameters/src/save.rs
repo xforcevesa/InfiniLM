@@ -62,7 +62,7 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
     );
     for layer in 0..model.num_hidden_layers() {
         header.tensors.insert(
-            format!("model.layers.{layer}.input_layernorm.weight",),
+            format!("model.layers.{layer}.input_layernorm.weight"),
             TensorInfo {
                 dtype,
                 shape: vec![d],

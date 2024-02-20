@@ -46,6 +46,7 @@ pub trait Llama2 {
 
     fn embed_tokens(&self) -> Tensor<Storage>;
     fn input_layernorm(&self, layer: usize) -> Tensor<Storage>;
+    fn w_qkv(&self, layer: usize) -> Tensor<Storage>;
     fn self_attn_q_proj(&self, layer: usize) -> Tensor<Storage>;
     fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage>;
     fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage>;
@@ -88,6 +89,15 @@ impl Storage {
         Self {
             data,
             range: offset..offset + len,
+        }
+    }
+
+    #[inline]
+    pub fn from_blob(data: impl 'static + AsRef<[u8]>) -> Self {
+        let len = data.as_ref().len();
+        Self {
+            data: Arc::new(data),
+            range: 0..len,
         }
     }
 
