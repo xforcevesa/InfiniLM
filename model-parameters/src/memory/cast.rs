@@ -24,9 +24,7 @@ impl Memory {
             layers: (0..src.num_hidden_layers())
                 .map(|l| Layer {
                     input_layernorm: cast(src.input_layernorm(l), new_dtype),
-                    self_attn_q_proj: cast(src.self_attn_q_proj(l), new_dtype),
-                    self_attn_k_proj: cast(src.self_attn_k_proj(l), new_dtype),
-                    self_attn_v_proj: cast(src.self_attn_v_proj(l), new_dtype),
+                    w_qkv: cast(src.w_qkv(l), new_dtype),
                     self_attn_o_proj: cast(src.self_attn_o_proj(l), new_dtype),
                     post_attention_layernorm: cast(src.post_attention_layernorm(l), new_dtype),
                     mlp_gate: cast(src.mlp_gate(l), new_dtype),

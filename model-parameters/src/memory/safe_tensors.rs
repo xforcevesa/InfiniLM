@@ -1,5 +1,5 @@
 ﻿use super::{Layer, Memory};
-use crate::{ConfigJson, DataType, Storage};
+use crate::{memory::concat0, ConfigJson, DataType, Storage};
 use memmap2::Mmap;
 use safetensors::{tensor::TensorInfo, Dtype};
 use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
@@ -30,23 +30,25 @@ impl Memory {
         let tensor = |name: &str| {
             let info = &header.tensors[name];
             let (start, end) = info.data_offsets;
+            let data_type = match info.dtype {
+                Dtype::BOOL => DataType::Bool,
+                Dtype::I8 => DataType::I8,
+                Dtype::I16 => DataType::I16,
+                Dtype::I32 => DataType::I32,
+                Dtype::I64 => DataType::I64,
+                Dtype::U8 => DataType::U8,
+                Dtype::U16 => DataType::U16,
+                Dtype::U32 => DataType::U32,
+                Dtype::U64 => DataType::U64,
+                Dtype::F16 => DataType::F16,
+                Dtype::BF16 => DataType::BF16,
+                Dtype::F32 => DataType::F32,
+                Dtype::F64 => DataType::F64,
+                _ => unreachable!(),
+            };
+            debug_assert_eq!(data_type, config.torch_dtype);
             Tensor::new(
-                match info.dtype {
-                    Dtype::BOOL => DataType::Bool,
-                    Dtype::I8 => DataType::I8,
-                    Dtype::I16 => DataType::I16,
-                    Dtype::I32 => DataType::I32,
-                    Dtype::I64 => DataType::I64,
-                    Dtype::U8 => DataType::U8,
-                    Dtype::U16 => DataType::U16,
-                    Dtype::U32 => DataType::U32,
-                    Dtype::U64 => DataType::U64,
-                    Dtype::F16 => DataType::F16,
-                    Dtype::BF16 => DataType::BF16,
-                    Dtype::F32 => DataType::F32,
-                    Dtype::F64 => DataType::F64,
-                    _ => unreachable!(),
-                },
+                data_type,
                 info.shape.iter().map(|&d| d as _).collect(),
                 Storage::new(mmap.clone(), start, end - start),
             )
@@ -59,9 +61,17 @@ impl Memory {
                     let name = |name: &str| format!("model.layers.{l}.{name}.weight");
                     Layer {
                         input_layernorm: tensor(&name("input_layernorm")),
-                        self_attn_q_proj: tensor(&name("self_attn.q_proj")),
-                        self_attn_k_proj: tensor(&name("self_attn.k_proj")),
-                        self_attn_v_proj: tensor(&name("self_attn.v_proj")),
+                        w_qkv: {
+                            let qkv = name("self_attn.qkv_proj");
+                            if header.tensors.contains_key(&qkv) {
+                                tensor(&qkv)
+                            } else {
+                                let q = tensor(&name("self_attn.q_proj"));
+                                let k = tensor(&name("self_attn.k_proj"));
+                                let v = tensor(&name("self_attn.v_proj"));
+                                concat0(&[&q, &k, &v])
+                            }
+                        },
                         self_attn_o_proj: tensor(&name("self_attn.o_proj")),
                         post_attention_layernorm: tensor(&name("post_attention_layernorm")),
                         mlp_gate: tensor(&name("mlp.gate_proj")),

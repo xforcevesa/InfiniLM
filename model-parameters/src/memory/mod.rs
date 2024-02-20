@@ -18,9 +18,7 @@ pub struct Memory {
 
 struct Layer {
     input_layernorm: Tensor<Storage>,
-    self_attn_q_proj: Tensor<Storage>,
-    self_attn_k_proj: Tensor<Storage>,
-    self_attn_v_proj: Tensor<Storage>,
+    w_qkv: Tensor<Storage>,
     self_attn_o_proj: Tensor<Storage>,
     post_attention_layernorm: Tensor<Storage>,
     mlp_gate: Tensor<Storage>,
@@ -101,26 +99,50 @@ impl Llama2 for Memory {
 
     #[inline]
     fn w_qkv(&self, layer: usize) -> Tensor<Storage> {
-        concat0(&[
-            &self.layers[layer].self_attn_q_proj,
-            &self.layers[layer].self_attn_k_proj,
-            &self.layers[layer].self_attn_v_proj,
-        ])
+        self.layers[layer].w_qkv.clone()
     }
 
     #[inline]
     fn self_attn_q_proj(&self, layer: usize) -> Tensor<Storage> {
-        self.layers[layer].self_attn_q_proj.clone()
+        let d = self.config.hidden_size;
+        let dt = self.config.torch_dtype.size();
+        let mut physical = self.layers[layer].w_qkv.physical().clone();
+        physical.range.end = physical.range.start + d * d * dt;
+        Tensor::new(
+            self.config.torch_dtype,
+            Shape::from_slice(&[d as _, d as _]),
+            physical,
+        )
     }
 
     #[inline]
     fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage> {
-        self.layers[layer].self_attn_k_proj.clone()
+        let d = self.config.hidden_size;
+        let dkv = d * self.config.num_key_value_heads / self.config.num_attention_heads;
+        let dt = self.config.torch_dtype.size();
+        let mut physical = self.layers[layer].w_qkv.physical().clone();
+        physical.range.start += d * d * dt;
+        physical.range.end = physical.range.start + dkv * d * dt;
+        Tensor::new(
+            self.config.torch_dtype,
+            Shape::from_slice(&[dkv as _, d as _]),
+            physical,
+        )
     }
 
     #[inline]
     fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage> {
-        self.layers[layer].self_attn_v_proj.clone()
+        let d = self.config.hidden_size;
+        let dkv = d * self.config.num_key_value_heads / self.config.num_attention_heads;
+        let dt = self.config.torch_dtype.size();
+        let mut physical = self.layers[layer].w_qkv.physical().clone();
+        physical.range.start += (d + dkv) * d * dt;
+        physical.range.end = physical.range.start + dkv * d * dt;
+        Tensor::new(
+            self.config.torch_dtype,
+            Shape::from_slice(&[dkv as _, d as _]),
+            physical,
+        )
     }
 
     #[inline]
