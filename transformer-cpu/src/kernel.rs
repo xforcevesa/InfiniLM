@@ -4,9 +4,18 @@ use std::{
     iter::zip,
     ops::{Mul, MulAssign},
 };
-use tensor::DataType;
+use tensor::{DataType, Tensor};
 
-pub(super) fn gather(x: &mut [u8], table: &[u8], tokens: &[utok]) {
+pub(super) fn gather<T, U>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: &[utok])
+where
+    T: AsMut<[u8]>,
+    U: AsRef<[u8]>,
+{
+    debug_assert_eq!(x.data_type(), table.data_type());
+    debug_assert_eq!(x.shape().last(), table.shape().last());
+
+    let x = x.as_mut_slice();
+    let table = table.as_slice();
     debug_assert_eq!(x.len() % tokens.len(), 0);
 
     let d = x.len() / tokens.len();
@@ -15,8 +24,21 @@ pub(super) fn gather(x: &mut [u8], table: &[u8], tokens: &[utok]) {
     }
 }
 
-pub(super) fn rms_norm(o: &mut [u8], x: &[u8], w: &[u8], theta: f32, dt: DataType) {
-    debug_assert_eq!(o.len(), x.len());
+pub(super) fn rms_norm<T, U, V>(o: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, theta: f32)
+where
+    T: AsMut<[u8]>,
+    U: AsRef<[u8]>,
+    V: AsRef<[u8]>,
+{
+    let dt = o.data_type();
+    debug_assert_eq!(x.data_type(), dt);
+    debug_assert_eq!(w.data_type(), dt);
+    debug_assert_eq!(o.shape(), x.shape());
+    debug_assert_eq!(&[*o.shape().last().unwrap()], w.shape());
+
+    let o = o.as_mut_slice();
+    let x = x.as_slice();
+    let w = w.as_slice();
 
     fn op<T: Copy + Mul<Output = T> + MulAssign>(
         o: &mut [u8],

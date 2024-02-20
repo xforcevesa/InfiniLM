@@ -10,7 +10,7 @@ pub struct Tensor<Physical> {
     physical: Physical,
 }
 
-impl<Physical: Clone> Tensor<Physical> {
+impl<Physical> Tensor<Physical> {
     pub fn new(data_type: DataType, shape: &[usize], physical: Physical) -> Self {
         let shape = Shape::from_iter(shape.iter().map(|&d| d as udim));
         Self {
@@ -62,7 +62,9 @@ impl<Physical: Clone> Tensor<Physical> {
             physical,
         }
     }
+}
 
+impl<Physical: Clone> Tensor<Physical> {
     pub fn reshape(&self, shape: Shape) -> Self {
         debug_assert!(self.is_contiguous());
         debug_assert_eq!(
