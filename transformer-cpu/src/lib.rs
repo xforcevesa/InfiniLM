@@ -49,20 +49,24 @@ impl Transformer {
             )
         }
 
+        println!("tokens: {tokens:?}");
+
         let mut a = tensor(dt, &[seq_len, d]);
         gather(&mut a, &self.model.embed_tokens(), tokens);
+
+        println!("gather: {a}");
 
         let mut b = tensor(dt, &[seq_len, d]);
         let mut qkv = tensor(dt, &[d + dkv + dkv, seq_len]);
         for layer in 0..self.model.num_hidden_layers() {
-            {
-                // b <- rms-norm(a)
-                let o = &mut b;
-                let x = &a;
-                let w = &self.model.input_layernorm(layer);
-                let theta = self.model.rope_theta();
-                rms_norm(o, x, w, theta);
-            }
+            // b <- rms-norm(a)
+            rms_norm(
+                &mut b,
+                &a,
+                &self.model.input_layernorm(layer),
+                self.model.rope_theta(),
+            );
+            println!("rms norm: {b}");
             {
                 // qkv = w_qkv * b
                 let w = &self.model.w_qkv(layer);

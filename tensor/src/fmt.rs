@@ -75,7 +75,7 @@ fn write_matrix<T: fmt::LowerExp>(
     let cs = strides.1 as usize;
     for r in 0..rows {
         for c in 0..cols {
-            write!(to, "{:<8.3e} ", unsafe { &*ptr.add(r * rs + c * cs) })?;
+            write!(to, "{:>9.3e} ", unsafe { &*ptr.add(r * rs + c * cs) })?;
         }
         writeln!(to)?;
     }

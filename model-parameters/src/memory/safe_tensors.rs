@@ -27,6 +27,7 @@ impl Memory {
             serde_json::from_slice(header).map_err(SafeTensorError::Serde)?;
 
         let mmap = Arc::new(mmap);
+        let offset = BASE_OFFSET + len;
         let tensor = |name: &str| {
             let info = &header.tensors[name];
             let (start, end) = info.data_offsets;
@@ -50,7 +51,7 @@ impl Memory {
             Tensor::new(
                 data_type,
                 &info.shape,
-                Storage::new(mmap.clone(), start, end - start),
+                Storage::new(mmap.clone(), offset + start, end - start),
             )
         };
 
