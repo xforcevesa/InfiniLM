@@ -8,6 +8,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 
 [dependencies]
 common = { path = "../common" }
+tensor = { path = "../tensor" }
 model-parameters = { path = "../model-parameters" }
 gemm = "0.17"
 

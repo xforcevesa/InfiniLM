@@ -1,4 +1,6 @@
-﻿use crate::{ConfigJson, DataType, LayerParamsOffset, Llama2, Memory};
+﻿use std::sync::Arc;
+
+use crate::{ConfigJson, DataType, LayerParamsOffset, Llama2, Memory};
 use half::{bf16, f16};
 
 impl Memory<Vec<u8>> {
@@ -24,22 +26,24 @@ impl Memory<Vec<u8>> {
                 .unwrap();
         }
 
-        let embed_tokens = append(src.embed_tokens());
+        let embed_tokens = append(src.embed_tokens().physical().as_slice());
         let layers = (0..src.num_hidden_layers())
             .map(|layer| LayerParamsOffset {
-                input_layernorm: append(src.input_layernorm(layer)),
-                self_attn_q_proj: append(src.self_attn_q_proj(layer)),
-                self_attn_k_proj: append(src.self_attn_k_proj(layer)),
-                self_attn_v_proj: append(src.self_attn_v_proj(layer)),
-                self_attn_o_proj: append(src.self_attn_o_proj(layer)),
-                post_attention_layernorm: append(src.post_attention_layernorm(layer)),
-                mlp_gate: append(src.mlp_gate(layer)),
-                mlp_down: append(src.mlp_down(layer)),
-                mlp_up: append(src.mlp_up(layer)),
+                input_layernorm: append(src.input_layernorm(layer).physical().as_slice()),
+                self_attn_q_proj: append(src.self_attn_q_proj(layer).physical().as_slice()),
+                self_attn_k_proj: append(src.self_attn_k_proj(layer).physical().as_slice()),
+                self_attn_v_proj: append(src.self_attn_v_proj(layer).physical().as_slice()),
+                self_attn_o_proj: append(src.self_attn_o_proj(layer).physical().as_slice()),
+                post_attention_layernorm: append(
+                    src.post_attention_layernorm(layer).physical().as_slice(),
+                ),
+                mlp_gate: append(src.mlp_gate(layer).physical().as_slice()),
+                mlp_down: append(src.mlp_down(layer).physical().as_slice()),
+                mlp_up: append(src.mlp_up(layer).physical().as_slice()),
             })
             .collect();
-        let model_norm = append(src.model_norm());
-        let lm_head = append(src.lm_head());
+        let model_norm = append(src.model_norm().physical().as_slice());
+        let lm_head = append(src.lm_head().physical().as_slice());
 
         Self {
             config: ConfigJson {
@@ -56,7 +60,7 @@ impl Memory<Vec<u8>> {
                 rope_theta: src.rope_theta(),
                 torch_dtype: new_dtype,
             },
-            blob,
+            blob: Arc::new(blob),
             embed_tokens,
             layers,
             model_norm,
@@ -106,5 +110,6 @@ fn cast(src_dtype: DataType, src: &[u8], dst_dtype: DataType, dst: &mut [u8]) {
         (DataType::F32, DataType::BF16) => {
             cast!(|x: f32| bf16::from_f32(x); src, f32 => dst, bf16);
         }
+        _ => todo!(),
     }
 }

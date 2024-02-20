@@ -2,7 +2,7 @@
 use crate::{ConfigJson, DataType, LayerParamsOffset};
 use memmap2::Mmap;
 use safetensors::{tensor::TensorInfo, Dtype};
-use std::{collections::HashMap, fs::File, path::Path};
+use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
 
 #[derive(Debug)]
 pub enum SafeTensorError {
@@ -21,6 +21,7 @@ impl Memory<Mmap> {
             DataType::F16 => Dtype::F16,
             DataType::BF16 => Dtype::BF16,
             DataType::F32 => Dtype::F32,
+            _ => todo!(),
         };
 
         let mmap = unsafe { Mmap::map(&model) }.map_err(SafeTensorError::Io)?;
@@ -133,7 +134,7 @@ impl Memory<Mmap> {
 
         Ok(Self {
             config,
-            blob: mmap,
+            blob: Arc::new(mmap),
             embed_tokens,
             layers,
             model_norm,

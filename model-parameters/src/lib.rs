@@ -1,13 +1,15 @@
 mod data_type;
 mod memory;
 mod save;
+mod storage;
 
 #[macro_use]
 extern crate log;
 
 use common::utok;
+use storage::Storage;
+use tensor::{DataType, Tensor};
 
-pub use data_type::DataType;
 pub use save::save;
 
 pub trait Llama2 {
@@ -46,18 +48,18 @@ pub trait Llama2 {
        * self.data_type().size()
     }
 
-    fn embed_tokens(&self) -> &[u8];
-    fn input_layernorm(&self, layer: usize) -> &[u8];
-    fn self_attn_q_proj(&self, layer: usize) -> &[u8];
-    fn self_attn_k_proj(&self, layer: usize) -> &[u8];
-    fn self_attn_v_proj(&self, layer: usize) -> &[u8];
-    fn self_attn_o_proj(&self, layer: usize) -> &[u8];
-    fn post_attention_layernorm(&self, layer: usize) -> &[u8];
-    fn mlp_gate(&self, layer: usize) -> &[u8];
-    fn mlp_down(&self, layer: usize) -> &[u8];
-    fn mlp_up(&self, layer: usize) -> &[u8];
-    fn model_norm(&self) -> &[u8];
-    fn lm_head(&self) -> &[u8];
+    fn embed_tokens(&self) -> Tensor<Storage>;
+    fn input_layernorm(&self, layer: usize) -> Tensor<Storage>;
+    fn self_attn_q_proj(&self, layer: usize) -> Tensor<Storage>;
+    fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage>;
+    fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage>;
+    fn self_attn_o_proj(&self, layer: usize) -> Tensor<Storage>;
+    fn post_attention_layernorm(&self, layer: usize) -> Tensor<Storage>;
+    fn mlp_gate(&self, layer: usize) -> Tensor<Storage>;
+    fn mlp_down(&self, layer: usize) -> Tensor<Storage>;
+    fn mlp_up(&self, layer: usize) -> Tensor<Storage>;
+    fn model_norm(&self) -> Tensor<Storage>;
+    fn lm_head(&self) -> Tensor<Storage>;
 }
 
 pub use memory::{Memory, SafeTensorError};

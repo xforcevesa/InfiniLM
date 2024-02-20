@@ -1,10 +1,10 @@
 ﻿use common::{slice, utok};
 use gemm::f16;
-use model_parameters::DataType;
 use std::{
     iter::zip,
     ops::{Mul, MulAssign},
 };
+use tensor::DataType;
 
 pub(super) fn gather(x: &mut [u8], table: &[u8], tokens: &[utok]) {
     debug_assert_eq!(x.len() % tokens.len(), 0);
@@ -42,7 +42,7 @@ pub(super) fn rms_norm(o: &mut [u8], x: &[u8], w: &[u8], theta: f32, dt: DataTyp
             f16::from_f32(rms_norm_reduce(x.iter().copied().map(f16::to_f32), theta))
         }),
         DataType::F32 => op(o, x, w, |x| rms_norm_reduce(x.iter().copied(), theta)),
-        DataType::BF16 => unreachable!(),
+        _ => unreachable!(),
     }
 }
 

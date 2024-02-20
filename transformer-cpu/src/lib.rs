@@ -4,7 +4,8 @@ mod kernel;
 use cache::LayerCache;
 use common::{upos, utok};
 use kernel::{gather, rms_norm};
-use model_parameters::{DataType, Llama2, Memory};
+use model_parameters::{Llama2, Memory};
+use tensor::DataType;
 
 pub extern crate model_parameters;
 
@@ -37,7 +38,11 @@ impl Transformer {
         let dt = self.model.data_type();
 
         let mut a = vec![0u8; seq_len * d * dt.size()];
-        gather(&mut a, self.model.embed_tokens(), tokens);
+        gather(
+            &mut a,
+            self.model.embed_tokens().physical().as_slice(),
+            tokens,
+        );
 
         let mut b = vec![0u8; seq_len * d * dt.size()];
         for l in 0..self.model.num_hidden_layers() {
@@ -46,6 +51,7 @@ impl Transformer {
                 let o = &mut b;
                 let x = &a;
                 let w = self.model.input_layernorm(l);
+                let w = w.physical().as_slice();
                 let theta = self.model.rope_theta();
                 rms_norm(o, x, w, theta, dt);
             }

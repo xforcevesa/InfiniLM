@@ -21,6 +21,22 @@ impl<Physical: Clone> Tensor<Physical> {
         }
     }
 
+    #[inline]
+    pub const fn data_type(&self) -> DataType {
+        self.data_type
+    }
+
+    #[inline]
+    pub fn shape(&self) -> &[udim] {
+        &self.shape
+    }
+
+    #[inline]
+    pub const fn physical(&self) -> &Physical {
+        &self.physical
+    }
+
+    #[inline]
     pub fn reshape(&self, shape: Shape) -> Self {
         debug_assert_eq!(self.pattern.0, Pattern::from_shape(&self.shape).0);
         Self {
