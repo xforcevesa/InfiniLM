@@ -30,7 +30,7 @@ where
     }
 }
 
-pub(super) fn rms_norm<T, U, V>(o: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, theta: f32)
+pub(super) fn rms_norm<T, U, V>(o: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
 where
     T: AsMut<[u8]>,
     U: AsRef<[u8]>,
@@ -67,15 +67,15 @@ where
 
     match dt {
         DataType::F16 => op(o, x, w, |x| {
-            f16::from_f32(rms_norm_reduce(x.iter().copied().map(f16::to_f32), theta))
+            f16::from_f32(rms_norm_reduce(x.iter().copied().map(f16::to_f32), epsilon))
         }),
-        DataType::F32 => op(o, x, w, |x| rms_norm_reduce(x.iter().copied(), theta)),
+        DataType::F32 => op(o, x, w, |x| rms_norm_reduce(x.iter().copied(), epsilon)),
         _ => unreachable!(),
     }
 }
 
 #[inline]
-fn rms_norm_reduce(x: impl Iterator<Item = f32>, theta: f32) -> f32 {
+fn rms_norm_reduce(x: impl Iterator<Item = f32>, epsilon: f32) -> f32 {
     // (Σx^2 / n + δ)^(-1/2)
     let mut len = 0usize;
     let mut sum = 0.0f32;
@@ -83,7 +83,7 @@ fn rms_norm_reduce(x: impl Iterator<Item = f32>, theta: f32) -> f32 {
         len += 1;
         sum += x * x;
     }
-    (sum / (len as f32) + theta).sqrt().recip()
+    (sum / (len as f32) + epsilon).sqrt().recip()
 }
 
 pub(super) fn matmul<T, U, V>(y: &mut Tensor<T>, w: &Tensor<U>, x: &Tensor<V>)

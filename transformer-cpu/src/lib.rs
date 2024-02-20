@@ -54,7 +54,7 @@ impl Transformer {
         let mut a = tensor(dt, &[seq_len, d]);
         gather(&mut a, &self.model.embed_tokens(), tokens);
 
-        println!("gather: {a}");
+        // println!("gather: {a}");
 
         let mut b = tensor(dt, &[seq_len, d]);
         let mut qkv = tensor(dt, &[d + dkv + dkv, seq_len]);
@@ -64,19 +64,18 @@ impl Transformer {
                 &mut b,
                 &a,
                 &self.model.input_layernorm(layer),
-                self.model.rope_theta(),
+                self.model.rms_norm_eps(),
             );
-            println!("rms norm: {b}");
-            {
-                // qkv = w_qkv * b
-                let w = &self.model.w_qkv(layer);
-                let x = &b.transpose(&[1, 0]);
-                matmul(&mut qkv, w, x);
-            }
+            // println!("layer {layer} rms norm: {b}");
+            // qkv = w_qkv * b
+            matmul(&mut qkv, &self.model.w_qkv(layer), &b.transpose(&[1, 0]));
             let qkv = qkv.split(0, &[d as _, dkv as _, dkv as _]);
-            let _q = &qkv[0];
-            let _k = &qkv[1];
-            let _v = &qkv[2];
+            let q = &qkv[0];
+            let k = &qkv[1];
+            let v = &qkv[2];
+            println!("layer {layer} q: {q}");
+            println!("layer {layer} k: {k}");
+            println!("layer {layer} v: {v}");
         }
 
         vec![]
