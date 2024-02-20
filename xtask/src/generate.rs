@@ -30,7 +30,7 @@ impl GenerateArgs {
         info!("build tokenizer ... {:?}", time.elapsed());
 
         let time = Instant::now();
-        let prompt_tokens = tokenizer.encode(self.prompt.trim());
+        let prompt_tokens = tokenizer.encode(&self.prompt.trim().replace(' ', "▁"));
         info!("encode prompt ... {:?}", time.elapsed());
 
         let time = Instant::now();

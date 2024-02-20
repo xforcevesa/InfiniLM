@@ -1,4 +1,5 @@
 mod data_type;
+mod fmt;
 mod operator;
 mod tensor;
 
@@ -9,5 +10,5 @@ pub type udim = u32;
 pub type idim = i32;
 
 pub use data_type::DataType;
-pub use operator::{Broadcast, Operator, Slice, Split, Squeeze, Transpose};
+pub use operator::{Broadcast, Operator, Slice, SliceDim, Split, Squeeze, SqueezeOp, Transpose};
 pub use tensor::{Affine, Shape, Tensor};

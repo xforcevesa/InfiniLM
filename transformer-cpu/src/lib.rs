@@ -5,7 +5,7 @@ use cache::LayerCache;
 use common::{upos, utok};
 use kernel::{gather, matmul, rms_norm};
 use model_parameters::{Llama2, Memory};
-use tensor::{DataType, Tensor, Transpose};
+use tensor::{DataType, Split, Tensor, Transpose};
 
 pub extern crate model_parameters;
 
@@ -14,12 +14,14 @@ pub struct Transformer {
 }
 
 impl Transformer {
+    #[inline]
     pub fn new(model: Box<dyn Llama2>) -> Self {
-        let model = match model.data_type() {
-            DataType::BF16 => Box::new(Memory::cast(&*model, DataType::F32)),
-            _ => model,
-        };
-        Self { model }
+        Self {
+            model: match model.data_type() {
+                DataType::BF16 => Box::new(Memory::cast(&*model, DataType::F32)),
+                _ => model,
+            },
+        }
     }
 
     #[inline]
@@ -67,6 +69,10 @@ impl Transformer {
                 let x = &b.apply(&Transpose::new(&[1, 0]))[0];
                 matmul(&mut qkv, w, x);
             }
+            let qkv = qkv.apply(&Split::new(0, &[d as _, dkv as _, dkv as _]));
+            let _q = &qkv[0];
+            let _k = &qkv[1];
+            let _v = &qkv[2];
         }
 
         vec![]

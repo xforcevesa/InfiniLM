@@ -12,7 +12,7 @@ pub trait Operator {
 }
 
 pub use broadcast::Broadcast;
-pub use slice::Slice;
+pub use slice::{Slice, SliceDim};
 pub use split::Split;
-pub use squeeze::Squeeze;
+pub use squeeze::{Squeeze, SqueezeOp};
 pub use transpose::Transpose;

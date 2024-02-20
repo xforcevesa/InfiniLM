@@ -33,7 +33,7 @@ impl<Physical> Tensor<Physical> {
 
     #[inline]
     pub fn strides(&self) -> &[idim] {
-        &self.pattern.strides()
+        self.pattern.strides()
     }
 
     #[inline]

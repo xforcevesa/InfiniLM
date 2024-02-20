@@ -1,10 +1,16 @@
-﻿use common::{slice, utok};
+﻿use common::utok;
 use gemm::{f16, gemm};
 use std::{
     iter::zip,
     ops::{Mul, MulAssign},
 };
 use tensor::{DataType, Tensor};
+
+macro_rules! slice {
+    ($blob:expr; $width:expr; [$line:expr]) => {
+        $blob[$line as usize * $width..][..$width]
+    };
+}
 
 pub(super) fn gather<T, U>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: &[utok])
 where

@@ -5,6 +5,7 @@ use smallvec::{smallvec, SmallVec};
 #[repr(transparent)]
 pub struct Slice(Vec<SliceDim>);
 
+#[derive(Clone, Debug)]
 pub struct SliceDim {
     pub start: udim,
     pub step: idim,
@@ -32,6 +33,13 @@ impl Operator for Slice {
             }
         });
         smallvec![(self.0.iter().map(|d| d.len).collect(), affine)]
+    }
+}
+
+impl Slice {
+    #[inline]
+    pub fn new(dims: &[SliceDim]) -> Self {
+        Slice(dims.to_vec())
     }
 }
 

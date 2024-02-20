@@ -37,6 +37,13 @@ impl Broadcast {
     }
 }
 
+impl Broadcast {
+    #[inline]
+    pub fn new(shape: &[udim]) -> Self {
+        Self(Shape::from_slice(shape))
+    }
+}
+
 #[test]
 fn test() {
     let ans = Broadcast(Shape::from_slice(&[2, 3, 4, 5])).build(&[3, 1, 5]);

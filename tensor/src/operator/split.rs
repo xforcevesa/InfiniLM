@@ -42,6 +42,16 @@ impl Operator for Split {
     }
 }
 
+impl Split {
+    #[inline]
+    pub fn new(axis: udim, segments: &[udim]) -> Self {
+        Self {
+            axis,
+            segments: Shape::from_slice(segments),
+        }
+    }
+}
+
 #[test]
 fn test() {
     let ans = Split {

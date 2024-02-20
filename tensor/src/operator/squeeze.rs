@@ -5,8 +5,9 @@ use smallvec::{smallvec, SmallVec};
 #[repr(transparent)]
 pub struct Squeeze(Vec<SqueezeOp>);
 
+#[derive(Clone, Debug)]
 #[repr(u8)]
-enum SqueezeOp {
+pub enum SqueezeOp {
     Insert,
     Remove,
     Skip,
@@ -47,6 +48,13 @@ impl Operator for Squeeze {
             }
         });
         smallvec![(shape, affine)]
+    }
+}
+
+impl Squeeze {
+    #[inline]
+    pub fn new(op: &[SqueezeOp]) -> Self {
+        Self(op.to_vec())
     }
 }
 
