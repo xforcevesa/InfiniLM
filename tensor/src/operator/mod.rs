@@ -1,9 +1,14 @@
 ﻿mod broadcast;
+mod slice;
 mod transpose;
 
 use crate::{udim, Affine, Shape};
+use smallvec::SmallVec;
 
 pub trait Operator {
-    fn infer_shape(&self, input: &[udim]) -> Shape;
-    fn to_affine(&self, input: &[udim]) -> Affine;
+    fn build(&self, input: &[udim]) -> SmallVec<[(Shape, Affine); 1]>;
 }
+
+pub use broadcast::Broadcast;
+pub use slice::Slice;
+pub use transpose::Transpose;

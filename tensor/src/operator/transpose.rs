@@ -1,51 +1,44 @@
 ﻿use super::Operator;
 use crate::{udim, Affine, Shape};
+use smallvec::{smallvec, SmallVec};
 
 type Permutation = Shape;
 
-pub struct Transpose {
-    perm: Permutation,
-}
+#[repr(transparent)]
+pub struct Transpose(Permutation);
 
 impl Operator for Transpose {
-    #[inline]
-    fn infer_shape(&self, input: &[udim]) -> Shape {
-        debug_assert_eq!(input.len(), self.perm.len());
-        self.perm.iter().map(|&i| input[i as usize]).collect()
-    }
-
-    fn to_affine(&self, input: &[udim]) -> Affine {
-        debug_assert_eq!(input.len(), self.perm.len());
-        let n = self.perm.len();
-        Affine::from_fn(n + 1, n + 1, |r, c| {
-            if c == self.perm.get(r).map_or(r, |&p| p as usize) {
+    fn build(&self, input: &[udim]) -> SmallVec<[(Shape, Affine); 1]> {
+        debug_assert_eq!(input.len(), self.0.len());
+        let shape = self.0.iter().map(|&i| input[i as usize]).collect();
+        let n = self.0.len();
+        let affine = Affine::from_fn(n + 1, n + 1, |r, c| {
+            if c == self.0.get(r).map_or(r, |&p| p as usize) {
                 1
             } else {
                 0
             }
-        })
+        });
+        smallvec![(shape, affine)]
     }
 }
 
 #[test]
 fn test() {
-    let operator = Transpose {
-        perm: Permutation::from_slice(&[0, 2, 1, 3]),
-    };
+    let ans = Transpose(Permutation::from_slice(&[0, 3, 1, 2])).build(&[1, 2, 3, 4]);
+    assert_eq!(ans.len(), 1);
+    assert_eq!(ans[0].0, Shape::from_slice(&[1, 4, 2, 3]));
     assert_eq!(
-        operator.infer_shape(&[1, 2, 3, 4]),
-        Shape::from_slice(&[1, 3, 2, 4])
-    );
-    assert_eq!(
-        operator.to_affine(&[1, 2, 3, 4]),
+        ans[0].1,
         Affine::from_vec(
             5,
             5,
             vec![
+                // column major
                 1, 0, 0, 0, 0, //
                 0, 0, 1, 0, 0, //
-                0, 1, 0, 0, 0, //
                 0, 0, 0, 1, 0, //
+                0, 1, 0, 0, 0, //
                 0, 0, 0, 0, 1, //
             ]
         )

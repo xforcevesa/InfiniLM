@@ -26,13 +26,17 @@ impl<Physical: Clone> Tensor<Physical> {
     }
 
     #[inline]
-    pub fn apply(&self, operator: &impl Operator) -> Self {
-        Self {
-            data_type: self.data_type,
-            shape: operator.infer_shape(&self.shape),
-            pattern: Pattern(operator.to_affine(&self.shape) * &self.pattern.0),
-            physical: self.physical.clone(),
-        }
+    pub fn apply(&self, operator: &impl Operator) -> SmallVec<[Self; 1]> {
+        operator
+            .build(&self.shape)
+            .into_iter()
+            .map(|(shape, affine)| Self {
+                data_type: self.data_type,
+                shape,
+                pattern: Pattern(affine * &self.pattern.0),
+                physical: self.physical.clone(),
+            })
+            .collect()
     }
 }
 
