@@ -2,30 +2,35 @@
 use nalgebra::{DMatrix, DVector};
 use smallvec::SmallVec;
 
+#[derive(Clone, Debug)]
 pub struct Tensor<Physical> {
     data_type: DataType,
     shape: Shape,
     pattern: Pattern,
-    physical: SmallVec<[Physical; 1]>,
+    physical: Physical,
 }
 
 impl<Physical: Clone> Tensor<Physical> {
     #[inline]
-    pub fn new(
-        data_type: DataType,
-        shape: Shape,
-        pattern: Pattern,
-        physical: impl IntoIterator<Item = Physical>,
-    ) -> Self {
+    pub fn new(data_type: DataType, shape: Shape, physical: Physical) -> Self {
         Self {
             data_type,
+            pattern: Pattern::from_shape(&shape),
             shape,
-            pattern,
-            physical: physical.into_iter().collect(),
+            physical,
         }
     }
 
-    #[inline]
+    pub fn reshape(&self, shape: Shape) -> Self {
+        debug_assert_eq!(self.pattern.0, Pattern::from_shape(&self.shape).0);
+        Self {
+            data_type: self.data_type,
+            pattern: Pattern::from_shape(&shape),
+            shape,
+            physical: self.physical.clone(),
+        }
+    }
+
     pub fn apply(&self, operator: &impl Operator) -> SmallVec<[Self; 1]> {
         operator
             .build(&self.shape)
@@ -43,4 +48,17 @@ impl<Physical: Clone> Tensor<Physical> {
 pub type Shape = SmallVec<[udim; 4]>;
 pub type Affine = DMatrix<idim>;
 
+#[derive(Clone, Debug)]
 pub struct Pattern(DVector<idim>);
+
+impl Pattern {
+    pub fn from_shape(shape: &[udim]) -> Self {
+        let n = shape.len();
+        let mut strides = vec![0; n + 1];
+        strides[n - 1] = 1;
+        for i in (1..n).rev() {
+            strides[i - 1] = strides[i] * shape[i] as idim;
+        }
+        Self(DVector::from_vec(strides))
+    }
+}

@@ -27,20 +27,16 @@ impl Operator for Transpose {
 fn test() {
     let ans = Transpose(Permutation::from_slice(&[0, 3, 1, 2])).build(&[1, 2, 3, 4]);
     assert_eq!(ans.len(), 1);
-    assert_eq!(ans[0].0, Shape::from_slice(&[1, 4, 2, 3]));
+    assert_eq!(ans[0].0.as_slice(), &[1, 4, 2, 3]);
     assert_eq!(
-        ans[0].1,
-        Affine::from_vec(
-            5,
-            5,
-            vec![
-                // column major
-                1, 0, 0, 0, 0, //
-                0, 0, 1, 0, 0, //
-                0, 0, 0, 1, 0, //
-                0, 1, 0, 0, 0, //
-                0, 0, 0, 0, 1, //
-            ]
-        )
+        ans[0].1.as_slice(),
+        &[
+            // column major
+            1, 0, 0, 0, 0, //
+            0, 0, 1, 0, 0, //
+            0, 0, 0, 1, 0, //
+            0, 1, 0, 0, 0, //
+            0, 0, 0, 0, 1, //
+        ]
     );
 }

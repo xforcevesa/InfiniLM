@@ -56,19 +56,15 @@ fn test() {
     ])
     .build(&[5, 6, 7]);
     assert_eq!(ans.len(), 1);
-    assert_eq!(ans[0].0, Shape::from_slice(&[2, 4, 3]));
+    assert_eq!(ans[0].0.as_slice(), &[2, 4, 3]);
     assert_eq!(
-        ans[0].1,
-        Affine::from_vec(
-            4,
-            4,
-            vec![
-                // column major
-                1, 0, 0, 2, //
-                0, 1, 0, 0, //
-                0, 0, 2, 1, //
-                0, 0, 0, 1, //
-            ]
-        )
+        ans[0].1.as_slice(),
+        &[
+            // column major
+            1, 0, 0, 2, //
+            0, 1, 0, 0, //
+            0, 0, 2, 1, //
+            0, 0, 0, 1, //
+        ]
     );
 }

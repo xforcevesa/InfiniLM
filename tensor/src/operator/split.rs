@@ -50,49 +50,37 @@ fn test() {
     }
     .build(&[11, 12, 13]);
     assert_eq!(ans.len(), 3);
-    assert_eq!(ans[0].0, Shape::from_slice(&[11, 3, 13]));
-    assert_eq!(ans[1].0, Shape::from_slice(&[11, 4, 13]));
-    assert_eq!(ans[2].0, Shape::from_slice(&[11, 5, 13]));
+    assert_eq!(ans[0].0.as_slice(), &[11, 3, 13]);
+    assert_eq!(ans[1].0.as_slice(), &[11, 4, 13]);
+    assert_eq!(ans[2].0.as_slice(), &[11, 5, 13]);
     assert_eq!(
-        ans[0].1,
-        Affine::from_vec(
-            4,
-            4,
-            vec![
-                // column major
-                1, 0, 0, 0, //
-                0, 1, 0, 0, //
-                0, 0, 1, 0, //
-                0, 0, 0, 1, //
-            ]
-        )
+        ans[0].1.as_slice(),
+        &[
+            // column major
+            1, 0, 0, 0, //
+            0, 1, 0, 0, //
+            0, 0, 1, 0, //
+            0, 0, 0, 1, //
+        ]
     );
     assert_eq!(
-        ans[1].1,
-        Affine::from_vec(
-            4,
-            4,
-            vec![
-                // column major
-                1, 0, 0, 0, //
-                0, 1, 0, 3, //
-                0, 0, 1, 0, //
-                0, 0, 0, 1, //
-            ]
-        )
+        ans[1].1.as_slice(),
+        &[
+            // column major
+            1, 0, 0, 0, //
+            0, 1, 0, 3, //
+            0, 0, 1, 0, //
+            0, 0, 0, 1, //
+        ]
     );
     assert_eq!(
-        ans[2].1,
-        Affine::from_vec(
-            4,
-            4,
-            vec![
-                // column major
-                1, 0, 0, 0, //
-                0, 1, 0, 7, //
-                0, 0, 1, 0, //
-                0, 0, 0, 1, //
-            ]
-        )
+        ans[2].1.as_slice(),
+        &[
+            // column major
+            1, 0, 0, 0, //
+            0, 1, 0, 7, //
+            0, 0, 1, 0, //
+            0, 0, 0, 1, //
+        ]
     );
 }

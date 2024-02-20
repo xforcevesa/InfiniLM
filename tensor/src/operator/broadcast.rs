@@ -41,19 +41,15 @@ impl Broadcast {
 fn test() {
     let ans = Broadcast(Shape::from_slice(&[2, 3, 4, 5])).build(&[3, 1, 5]);
     assert_eq!(ans.len(), 1);
-    assert_eq!(ans[0].0, Shape::from_slice(&[2, 3, 4, 5]));
+    assert_eq!(ans[0].0.as_slice(), &[2, 3, 4, 5]);
     assert_eq!(
-        ans[0].1,
-        Affine::from_vec(
-            5,
-            4,
-            vec![
-                // column major
-                0, 1, 0, 0, 0, //
-                0, 0, 0, 0, 0, //
-                0, 0, 0, 1, 0, //
-                0, 0, 0, 0, 1, //
-            ]
-        )
+        ans[0].1.as_slice(),
+        &[
+            // column major
+            0, 1, 0, 0, 0, //
+            0, 0, 0, 0, 0, //
+            0, 0, 0, 1, 0, //
+            0, 0, 0, 0, 1, //
+        ]
     );
 }

@@ -1,6 +1,7 @@
 ﻿mod broadcast;
 mod slice;
 mod split;
+mod squeeze;
 mod transpose;
 
 use crate::{udim, Affine, Shape};
@@ -13,4 +14,5 @@ pub trait Operator {
 pub use broadcast::Broadcast;
 pub use slice::Slice;
 pub use split::Split;
+pub use squeeze::Squeeze;
 pub use transpose::Transpose;

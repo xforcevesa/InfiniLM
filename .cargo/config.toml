@@ -1,4 +1,5 @@
 ﻿[alias]
 xtask = "run --package xtask --release --"
+debug = "run --package xtask --"
 cast = "xtask cast"
 generate = "xtask generate"
