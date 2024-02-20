@@ -3,7 +3,7 @@ mod safe_tensors;
 
 use crate::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
-use tensor::{udim, Shape, Tensor};
+use tensor::{Shape, Tensor};
 
 pub use safe_tensors::SafeTensorError;
 pub(crate) use safe_tensors::SafeTensorHeaderJson;
@@ -101,28 +101,11 @@ impl Llama2 for Memory {
 
     #[inline]
     fn w_qkv(&self, layer: usize) -> Tensor<Storage> {
-        let q = &self.layers[layer].self_attn_q_proj;
-        let k = &self.layers[layer].self_attn_k_proj;
-        let v = &self.layers[layer].self_attn_v_proj;
-        let d = self.hidden_size() as udim;
-        let dkv =
-            (self.hidden_size() * self.num_key_value_heads() / self.num_attention_heads()) as udim;
-        let dt = self.config.torch_dtype.size();
-        debug_assert_eq!(q.shape(), &[d, d]);
-        debug_assert_eq!(k.shape(), &[dkv, d]);
-        debug_assert_eq!(v.shape(), &[dkv, d]);
-        let size = (q.size() + k.size() + v.size()) * dt;
-        let mut data = vec![0u8; size];
-        let (q_, kv_) = data.split_at_mut(q.size() * dt);
-        let (k_, v_) = kv_.split_at_mut(k.size() * dt);
-        q_.copy_from_slice(q.physical().as_slice());
-        k_.copy_from_slice(k.physical().as_slice());
-        v_.copy_from_slice(v.physical().as_slice());
-        Tensor::new(
-            self.config.torch_dtype,
-            Shape::from_vec(vec![d + dkv + dkv, d]),
-            Storage::from_blob(data),
-        )
+        concat0(&[
+            &self.layers[layer].self_attn_q_proj,
+            &self.layers[layer].self_attn_k_proj,
+            &self.layers[layer].self_attn_v_proj,
+        ])
     }
 
     #[inline]
@@ -174,6 +157,31 @@ impl Llama2 for Memory {
     fn lm_head(&self) -> Tensor<Storage> {
         self.lm_head.clone()
     }
+}
+
+fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
+    assert!(!tensors.is_empty());
+    let data_type = tensors[0].data_type();
+    let mut shape = Shape::from_slice(tensors[0].shape());
+
+    debug_assert!(tensors
+        .iter()
+        .all(|t| t.data_type() == data_type && t.shape()[1..] == shape[1..]));
+
+    for t in &tensors[1..] {
+        shape[0] += t.shape()[0];
+    }
+
+    let size = shape.iter().map(|&d| d as usize).product::<usize>() * data_type.size();
+    let mut data = vec![0u8; size];
+    let mut offset = 0;
+    for t in tensors {
+        let len = t.size() * data_type.size();
+        data[offset..][..len].copy_from_slice(t.physical().as_slice());
+        offset += len;
+    }
+
+    Tensor::new(data_type, shape, Storage::from_blob(data))
 }
 
 #[test]
