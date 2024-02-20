@@ -1,5 +1,5 @@
 ﻿use common::{slice, utok};
-use gemm::f16;
+use gemm::{f16, gemm};
 use std::{
     iter::zip,
     ops::{Mul, MulAssign},
@@ -78,6 +78,80 @@ fn rms_norm_reduce(x: impl Iterator<Item = f32>, theta: f32) -> f32 {
         sum += x * x;
     }
     (sum / (len as f32) + theta).sqrt().recip()
+}
+
+pub(super) fn matmul<T, U, V>(y: &mut Tensor<T>, w: &Tensor<U>, x: &Tensor<V>)
+where
+    T: AsMut<[u8]>,
+    U: AsRef<[u8]>,
+    V: AsRef<[u8]>,
+{
+    let dt = y.data_type();
+    assert_eq!(w.data_type(), dt);
+    assert_eq!(x.data_type(), dt);
+    assert_eq!(y.shape().len(), 2);
+    assert_eq!(w.shape().len(), 2);
+    assert_eq!(x.shape().len(), 2);
+    let m = y.shape()[0];
+    let n = y.shape()[1];
+    let k = w.shape()[1];
+    assert_eq!(w.shape(), &[m, k]);
+    assert_eq!(x.shape(), &[k, n]);
+    let dst = unsafe { y.as_mut_slice().as_mut_ptr().add(y.offset() as usize) };
+    let dst_strides = y.strides();
+    let lhs = unsafe { w.as_slice().as_ptr().add(w.offset() as usize) };
+    let lhs_strides = w.strides();
+    let rhs = unsafe { x.as_slice().as_ptr().add(x.offset() as usize) };
+    let rhs_strides = x.strides();
+    match dt {
+        DataType::F32 => unsafe {
+            gemm(
+                m as _,
+                n as _,
+                k as _,
+                dst.cast::<f32>(),
+                dst_strides[1] as _,
+                dst_strides[0] as _,
+                false,
+                lhs.cast::<f32>(),
+                lhs_strides[1] as _,
+                lhs_strides[0] as _,
+                rhs.cast::<f32>(),
+                rhs_strides[1] as _,
+                rhs_strides[0] as _,
+                0.,
+                1.,
+                false,
+                false,
+                false,
+                gemm::Parallelism::None,
+            )
+        },
+        DataType::F16 => unsafe {
+            gemm(
+                m as _,
+                n as _,
+                k as _,
+                dst.cast::<f16>(),
+                dst_strides[1] as _,
+                dst_strides[0] as _,
+                false,
+                lhs.cast::<f16>(),
+                lhs_strides[1] as _,
+                lhs_strides[0] as _,
+                rhs.cast::<f16>(),
+                rhs_strides[1] as _,
+                rhs_strides[0] as _,
+                f16::from_f32(0.),
+                f16::from_f32(1.),
+                false,
+                false,
+                false,
+                gemm::Parallelism::None,
+            )
+        },
+        _ => unreachable!(),
+    }
 }
 
 #[inline(always)]

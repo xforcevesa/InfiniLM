@@ -15,7 +15,7 @@ impl<Physical> Tensor<Physical> {
         let shape = Shape::from_iter(shape.iter().map(|&d| d as udim));
         Self {
             data_type,
-            pattern: Pattern::from_shape(&shape),
+            pattern: Pattern::from_shape(&shape, 0),
             shape,
             physical,
         }
@@ -29,6 +29,16 @@ impl<Physical> Tensor<Physical> {
     #[inline]
     pub fn shape(&self) -> &[udim] {
         &self.shape
+    }
+
+    #[inline]
+    pub fn strides(&self) -> &[idim] {
+        &self.pattern.strides()
+    }
+
+    #[inline]
+    pub fn offset(&self) -> udim {
+        self.pattern.offset() as _
     }
 
     #[inline]
@@ -48,9 +58,8 @@ impl<Physical> Tensor<Physical> {
 
     pub fn is_contiguous(&self) -> bool {
         let strides = self.pattern.0.as_slice();
-        let n = strides.len();
-        strides[n - 2..] == [1, 0]
-            && (0..n - 2).all(|i| strides[i] == strides[i + 1] * self.shape[i + 1] as idim)
+        let n = self.shape.len() - 1;
+        strides[n] == 1 && (0..n).all(|i| strides[i] == strides[i + 1] * self.shape[i + 1] as idim)
     }
 
     #[inline]
@@ -66,14 +75,14 @@ impl<Physical> Tensor<Physical> {
 
 impl<Physical: Clone> Tensor<Physical> {
     pub fn reshape(&self, shape: Shape) -> Self {
-        debug_assert!(self.is_contiguous());
-        debug_assert_eq!(
+        assert!(self.is_contiguous());
+        assert_eq!(
             self.shape.iter().product::<udim>(),
             shape.iter().product::<udim>(),
         );
         Self {
             data_type: self.data_type,
-            pattern: Pattern::from_shape(&shape),
+            pattern: Pattern::from_shape(&shape, self.pattern.offset()),
             shape,
             physical: self.physical.clone(),
         }
@@ -109,24 +118,34 @@ pub type Shape = SmallVec<[udim; 4]>;
 pub type Affine = DMatrix<idim>;
 
 #[derive(Clone, Debug)]
-pub struct Pattern(DVector<idim>);
+struct Pattern(DVector<idim>);
 
 impl Pattern {
-    pub fn from_shape(shape: &[udim]) -> Self {
+    pub fn from_shape(shape: &[udim], offset: idim) -> Self {
         let n = shape.len();
         let mut strides = vec![0; n + 1];
         strides[n - 1] = 1;
+        strides[n] = offset;
         for i in (1..n).rev() {
             strides[i - 1] = strides[i] * shape[i] as idim;
         }
         Self(DVector::from_vec(strides))
+    }
+
+    #[inline]
+    pub fn strides(&self) -> &[idim] {
+        &self.0.as_slice()[..self.0.len() - 1]
+    }
+
+    #[inline]
+    pub fn offset(&self) -> idim {
+        self.0[self.0.len() - 1]
     }
 }
 
 #[test]
 fn test() {
     use super::Transpose;
-    use smallvec::smallvec;
 
     let t = Tensor::new(DataType::F32, &[2, 3, 4, 5], ());
     assert_eq!(t.shape(), &[2, 3, 4, 5]);
@@ -138,7 +157,7 @@ fn test() {
     assert_eq!(t.pattern.0.as_slice(), &[60, 20, 1, 0]);
     assert_eq!(t.is_contiguous(), true);
 
-    let t = t.apply(&Transpose::new(smallvec![2, 0, 1]));
+    let t = t.apply(&Transpose::new(&[2, 0, 1]));
     assert_eq!(t.len(), 1);
     let t = t.into_iter().next().unwrap();
     assert_eq!(t.shape(), &[20, 2, 3]);

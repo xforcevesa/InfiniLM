@@ -3,9 +3,9 @@ mod kernel;
 
 use cache::LayerCache;
 use common::{upos, utok};
-use kernel::{gather, rms_norm};
+use kernel::{gather, matmul, rms_norm};
 use model_parameters::{Llama2, Memory};
-use tensor::{DataType, Tensor};
+use tensor::{DataType, Tensor, Transpose};
 
 pub extern crate model_parameters;
 
@@ -35,20 +35,37 @@ impl Transformer {
     ) -> Vec<f32> {
         let seq_len = tokens.len();
         let d = self.model.hidden_size();
+        let dkv = d * self.model.num_key_value_heads() / self.model.num_attention_heads();
         let dt = self.model.data_type();
 
-        let mut a = Tensor::new(dt, &[seq_len, d], vec![0u8; seq_len * d * dt.size()]);
+        #[inline]
+        fn tensor(dt: DataType, shape: &[usize]) -> Tensor<Vec<u8>> {
+            Tensor::new(
+                dt,
+                shape,
+                vec![0u8; shape.iter().product::<usize>() * dt.size()],
+            )
+        }
+
+        let mut a = tensor(dt, &[seq_len, d]);
         gather(&mut a, &self.model.embed_tokens(), tokens);
 
-        let mut b = Tensor::new(dt, &[seq_len, d], vec![0u8; seq_len * d * dt.size()]);
-        for l in 0..self.model.num_hidden_layers() {
+        let mut b = tensor(dt, &[seq_len, d]);
+        let mut qkv = tensor(dt, &[d + dkv + dkv, seq_len]);
+        for layer in 0..self.model.num_hidden_layers() {
             {
                 // b <- rms-norm(a)
                 let o = &mut b;
                 let x = &a;
-                let w = &self.model.input_layernorm(l);
+                let w = &self.model.input_layernorm(layer);
                 let theta = self.model.rope_theta();
                 rms_norm(o, x, w, theta);
+            }
+            {
+                // qkv = w_qkv * b
+                let w = &self.model.w_qkv(layer);
+                let x = &b.apply(&Transpose::new(&[1, 0]))[0];
+                matmul(&mut qkv, w, x);
             }
         }
 

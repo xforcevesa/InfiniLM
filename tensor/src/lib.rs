@@ -10,4 +10,4 @@ pub type idim = i32;
 
 pub use data_type::DataType;
 pub use operator::{Broadcast, Operator, Slice, Split, Squeeze, Transpose};
-pub use tensor::{Affine, Pattern, Shape, Tensor};
+pub use tensor::{Affine, Shape, Tensor};
