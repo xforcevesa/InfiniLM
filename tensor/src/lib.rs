@@ -10,5 +10,5 @@ pub type udim = u32;
 pub type idim = i32;
 
 pub use data_type::DataType;
-pub use operator::{Broadcast, Operator, Slice, SliceDim, Split, Squeeze, SqueezeOp, Transpose};
+pub use operator::{Operator, SliceDim};
 pub use tensor::{Affine, Shape, Tensor};

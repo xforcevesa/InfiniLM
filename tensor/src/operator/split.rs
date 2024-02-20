@@ -3,8 +3,8 @@ use crate::{idim, udim, Affine, Shape};
 use smallvec::SmallVec;
 
 pub struct Split {
-    axis: udim,
-    segments: Shape,
+    pub(crate) axis: udim,
+    pub(crate) segments: Shape,
 }
 
 impl Operator for Split {
@@ -39,16 +39,6 @@ impl Operator for Split {
                 Some((shape, affine))
             })
             .collect()
-    }
-}
-
-impl Split {
-    #[inline]
-    pub fn new(axis: udim, segments: &[udim]) -> Self {
-        Self {
-            axis,
-            segments: Shape::from_slice(segments),
-        }
     }
 }
 

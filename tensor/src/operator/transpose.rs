@@ -5,7 +5,7 @@ use smallvec::{smallvec, SmallVec};
 type Permutation = Shape;
 
 #[repr(transparent)]
-pub struct Transpose(Permutation);
+pub struct Transpose(pub(crate) Permutation);
 
 impl Operator for Transpose {
     fn build(&self, input: &[udim]) -> SmallVec<[(Shape, Affine); 1]> {
@@ -23,16 +23,9 @@ impl Operator for Transpose {
     }
 }
 
-impl Transpose {
-    #[inline]
-    pub fn new(permutation: &[udim]) -> Self {
-        Self(Permutation::from_slice(permutation))
-    }
-}
-
 #[test]
 fn test() {
-    let ans = Transpose::new(&[0, 3, 1, 2]).build(&[1, 2, 3, 4]);
+    let ans = Transpose(Permutation::from_slice(&[0, 3, 1, 2])).build(&[1, 2, 3, 4]);
     assert_eq!(ans.len(), 1);
     assert_eq!(ans[0].0.as_slice(), &[1, 4, 2, 3]);
     assert_eq!(

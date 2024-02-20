@@ -107,8 +107,7 @@ impl<Physical: AsRef<[u8]>> fmt::Display for Tensor<Physical> {
 
 #[test]
 fn test_fmt() {
-    use crate::Shape;
-    use crate::{Broadcast, DataType, Slice, SliceDim, Squeeze, SqueezeOp, Tensor, Transpose};
+    use crate::{slice, DataType, Shape, Tensor};
     use std::mem::size_of;
 
     let shape = [2, 3, 4];
@@ -134,39 +133,18 @@ fn test_fmt() {
     let t = t.reshape(Shape::from_slice(&[6, 4]));
     println!("{t}");
 
-    let t = t.apply(&Transpose::new(&[1, 0])).pop().unwrap();
+    let t = t.transpose(&[1, 0]);
     println!("{t}");
 
-    let t = t
-        .apply(&Slice::new(&[
-            SliceDim {
-                start: 0,
-                step: 2,
-                len: 2,
-            },
-            SliceDim {
-                start: 1,
-                step: 2,
-                len: 3,
-            },
-        ]))
-        .pop()
-        .unwrap();
+    let t = t.slice(&[slice![0; 2; 2], slice![1; 2; 3]]);
     println!("{t}");
 
-    let t = t.apply(&Transpose::new(&[1, 0])).pop().unwrap();
+    let t = t.transpose(&[1, 0]);
     println!("{t}");
 
-    let t = t
-        .apply(&Squeeze::new(&[
-            SqueezeOp::Skip,
-            SqueezeOp::Insert,
-            SqueezeOp::Skip,
-        ]))
-        .pop()
-        .unwrap();
+    let t = t.squeeze("_+_");
     println!("{t}");
 
-    let t = t.apply(&Broadcast::new(&[3, 3, 2])).pop().unwrap();
+    let t = t.broadcast(&[3, 3, 2]);
     println!("{t}");
 }

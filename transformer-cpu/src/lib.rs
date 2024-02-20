@@ -5,7 +5,7 @@ use cache::LayerCache;
 use common::{upos, utok};
 use kernel::{gather, matmul, rms_norm};
 use model_parameters::{Llama2, Memory};
-use tensor::{DataType, Split, Tensor, Transpose};
+use tensor::{DataType, Tensor};
 
 pub extern crate model_parameters;
 
@@ -70,10 +70,10 @@ impl Transformer {
             {
                 // qkv = w_qkv * b
                 let w = &self.model.w_qkv(layer);
-                let x = &b.apply(&Transpose::new(&[1, 0]))[0];
+                let x = &b.transpose(&[1, 0]);
                 matmul(&mut qkv, w, x);
             }
-            let qkv = qkv.apply(&Split::new(0, &[d as _, dkv as _, dkv as _]));
+            let qkv = qkv.split(0, &[d as _, dkv as _, dkv as _]);
             let _q = &qkv[0];
             let _k = &qkv[1];
             let _v = &qkv[2];

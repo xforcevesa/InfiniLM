@@ -3,7 +3,7 @@ use crate::{idim, udim, Affine, Shape};
 use smallvec::{smallvec, SmallVec};
 
 #[repr(transparent)]
-pub struct Squeeze(Vec<SqueezeOp>);
+pub struct Squeeze(pub(crate) Vec<SqueezeOp>);
 
 #[derive(Clone, Debug)]
 #[repr(u8)]
@@ -48,13 +48,6 @@ impl Operator for Squeeze {
             }
         });
         smallvec![(shape, affine)]
-    }
-}
-
-impl Squeeze {
-    #[inline]
-    pub fn new(op: &[SqueezeOp]) -> Self {
-        Self(op.to_vec())
     }
 }
 

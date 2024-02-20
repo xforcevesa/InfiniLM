@@ -1,4 +1,8 @@
-﻿use crate::{idim, udim, DataType, Operator};
+﻿use crate::{
+    idim,
+    operator::{Broadcast, Slice, SliceDim, Split, Squeeze, SqueezeOp, Transpose},
+    udim, DataType, Operator,
+};
 use nalgebra::{DMatrix, DVector};
 use smallvec::SmallVec;
 
@@ -100,6 +104,54 @@ impl<Physical: Clone> Tensor<Physical> {
             })
             .collect()
     }
+
+    pub fn broadcast(&self, shape: &[usize]) -> Self {
+        self.apply(&Broadcast(Shape::from_iter(
+            shape.iter().map(|&d| d as udim),
+        )))
+        .into_iter()
+        .next()
+        .unwrap()
+    }
+
+    pub fn slice(&self, dims: &[SliceDim]) -> Self {
+        self.apply(&Slice(dims.to_vec()))
+            .into_iter()
+            .next()
+            .unwrap()
+    }
+
+    pub fn split(&self, axis: usize, segments: &[usize]) -> SmallVec<[Self; 1]> {
+        self.apply(&Split {
+            axis: axis as udim,
+            segments: Shape::from_iter(segments.iter().map(|&d| d as udim)),
+        })
+    }
+
+    pub fn squeeze(&self, ops: &str) -> Self {
+        self.apply(&Squeeze(
+            ops.chars()
+                .map(|s| match s {
+                    '+' => SqueezeOp::Insert,
+                    '-' => SqueezeOp::Remove,
+                    '_' => SqueezeOp::Skip,
+                    _ => unreachable!(),
+                })
+                .collect(),
+        ))
+        .into_iter()
+        .next()
+        .unwrap()
+    }
+
+    pub fn transpose(&self, axes: &[usize]) -> Self {
+        self.apply(&Transpose(SmallVec::from_iter(
+            axes.iter().map(|&i| i as udim),
+        )))
+        .into_iter()
+        .next()
+        .unwrap()
+    }
 }
 
 impl<Physical: AsRef<[u8]>> Tensor<Physical> {
@@ -145,8 +197,6 @@ impl Pattern {
 
 #[test]
 fn test() {
-    use super::Transpose;
-
     let t = Tensor::new(DataType::F32, &[2, 3, 4, 5], ());
     assert_eq!(t.shape(), &[2, 3, 4, 5]);
     assert_eq!(t.pattern.0.as_slice(), &[60, 20, 5, 1, 0]);
@@ -157,9 +207,7 @@ fn test() {
     assert_eq!(t.pattern.0.as_slice(), &[60, 20, 1, 0]);
     assert_eq!(t.is_contiguous(), true);
 
-    let t = t.apply(&Transpose::new(&[2, 0, 1]));
-    assert_eq!(t.len(), 1);
-    let t = t.into_iter().next().unwrap();
+    let t = t.transpose(&[2, 0, 1]);
     assert_eq!(t.shape(), &[20, 2, 3]);
     assert_eq!(t.pattern.0.as_slice(), &[1, 60, 20, 0]);
     assert_eq!(t.is_contiguous(), false);

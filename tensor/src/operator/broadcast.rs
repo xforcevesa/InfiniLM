@@ -3,7 +3,7 @@ use crate::{udim, Affine, Shape};
 use smallvec::SmallVec;
 
 #[repr(transparent)]
-pub struct Broadcast(Shape);
+pub struct Broadcast(pub(crate) Shape);
 
 impl Operator for Broadcast {
     fn build(&self, input: &[udim]) -> SmallVec<[(Shape, Affine); 1]> {
@@ -34,13 +34,6 @@ impl Broadcast {
                 .rev()
                 .zip(self.0.iter().rev())
                 .all(|(&i, &o)| i == 1 || i == o)
-    }
-}
-
-impl Broadcast {
-    #[inline]
-    pub fn new(shape: &[udim]) -> Self {
-        Self(Shape::from_slice(shape))
     }
 }
 
