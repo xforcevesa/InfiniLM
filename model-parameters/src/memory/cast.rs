@@ -43,7 +43,7 @@ fn cast(src: Tensor<Storage>, new_dtype: DataType) -> Tensor<Storage> {
         return src;
     }
 
-    let src_data = src.physical().as_slice();
+    let src_data = src.as_slice();
     let mut data = vec![0u8; src.size() * new_dtype.size()];
 
     macro_rules! cast {

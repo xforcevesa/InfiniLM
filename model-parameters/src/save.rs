@@ -52,7 +52,7 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
         shape: tensor.shape().iter().map(|&d| d as _).collect(),
         data_offsets: {
             let start = offset;
-            offset += tensor.physical().as_slice().len();
+            offset += tensor.as_slice().len();
             (start, offset)
         },
     };
@@ -112,17 +112,17 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
             write.write_all(&[32])?;
         }
     }
-    write.write_all(model.embed_tokens().physical().as_slice())?;
+    write.write_all(model.embed_tokens().as_slice())?;
     for layer in 0..model.num_hidden_layers() {
-        write.write_all(model.input_layernorm(layer).physical().as_slice())?;
-        write.write_all(model.w_qkv(layer).physical().as_slice())?;
-        write.write_all(model.self_attn_o_proj(layer).physical().as_slice())?;
-        write.write_all(model.post_attention_layernorm(layer).physical().as_slice())?;
-        write.write_all(model.mlp_gate(layer).physical().as_slice())?;
-        write.write_all(model.mlp_down(layer).physical().as_slice())?;
-        write.write_all(model.mlp_up(layer).physical().as_slice())?;
+        write.write_all(model.input_layernorm(layer).as_slice())?;
+        write.write_all(model.w_qkv(layer).as_slice())?;
+        write.write_all(model.self_attn_o_proj(layer).as_slice())?;
+        write.write_all(model.post_attention_layernorm(layer).as_slice())?;
+        write.write_all(model.mlp_gate(layer).as_slice())?;
+        write.write_all(model.mlp_down(layer).as_slice())?;
+        write.write_all(model.mlp_up(layer).as_slice())?;
     }
-    write.write_all(model.model_norm().physical().as_slice())?;
-    write.write_all(model.lm_head().physical().as_slice())?;
+    write.write_all(model.model_norm().as_slice())?;
+    write.write_all(model.lm_head().as_slice())?;
     Ok(())
 }

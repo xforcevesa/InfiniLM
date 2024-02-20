@@ -49,7 +49,7 @@ impl Memory {
             debug_assert_eq!(data_type, config.torch_dtype);
             Tensor::new(
                 data_type,
-                info.shape.iter().map(|&d| d as _).collect(),
+                &info.shape,
                 Storage::new(mmap.clone(), start, end - start),
             )
         };

@@ -108,11 +108,7 @@ impl Llama2 for Memory {
         let dt = self.config.torch_dtype.size();
         let mut physical = self.layers[layer].w_qkv.physical().clone();
         physical.range.end = physical.range.start + d * d * dt;
-        Tensor::new(
-            self.config.torch_dtype,
-            Shape::from_slice(&[d as _, d as _]),
-            physical,
-        )
+        Tensor::new(self.config.torch_dtype, &[d, d], physical)
     }
 
     #[inline]
@@ -123,11 +119,7 @@ impl Llama2 for Memory {
         let mut physical = self.layers[layer].w_qkv.physical().clone();
         physical.range.start += d * d * dt;
         physical.range.end = physical.range.start + dkv * d * dt;
-        Tensor::new(
-            self.config.torch_dtype,
-            Shape::from_slice(&[dkv as _, d as _]),
-            physical,
-        )
+        Tensor::new(self.config.torch_dtype, &[dkv, d], physical)
     }
 
     #[inline]
@@ -138,11 +130,7 @@ impl Llama2 for Memory {
         let mut physical = self.layers[layer].w_qkv.physical().clone();
         physical.range.start += (d + dkv) * d * dt;
         physical.range.end = physical.range.start + dkv * d * dt;
-        Tensor::new(
-            self.config.torch_dtype,
-            Shape::from_slice(&[dkv as _, d as _]),
-            physical,
-        )
+        Tensor::new(self.config.torch_dtype, &[dkv, d], physical)
     }
 
     #[inline]
@@ -199,11 +187,12 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     let mut offset = 0;
     for t in tensors {
         let len = t.size() * data_type.size();
-        data[offset..][..len].copy_from_slice(t.physical().as_slice());
+        data[offset..][..len].copy_from_slice(t.as_slice());
         offset += len;
     }
 
-    Tensor::new(data_type, shape, Storage::from_blob(data))
+    let shape = shape.iter().map(|&d| d as usize).collect::<Vec<_>>();
+    Tensor::new(data_type, &shape, Storage::from_blob(data))
 }
 
 #[test]

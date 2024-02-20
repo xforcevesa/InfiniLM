@@ -11,7 +11,8 @@ pub struct Tensor<Physical> {
 }
 
 impl<Physical: Clone> Tensor<Physical> {
-    pub fn new(data_type: DataType, shape: Shape, physical: Physical) -> Self {
+    pub fn new(data_type: DataType, shape: &[usize], physical: Physical) -> Self {
+        let shape = Shape::from_iter(shape.iter().map(|&d| d as udim));
         Self {
             data_type,
             pattern: Pattern::from_shape(&shape),
@@ -33,6 +34,11 @@ impl<Physical: Clone> Tensor<Physical> {
     #[inline]
     pub const fn physical(&self) -> &Physical {
         &self.physical
+    }
+
+    #[inline]
+    pub fn physical_mut(&mut self) -> &mut Physical {
+        &mut self.physical
     }
 
     #[inline]
@@ -85,6 +91,18 @@ impl<Physical: Clone> Tensor<Physical> {
     }
 }
 
+impl<Physical: AsRef<[u8]>> Tensor<Physical> {
+    pub fn as_slice(&self) -> &[u8] {
+        self.physical.as_ref()
+    }
+}
+
+impl<Physical: AsMut<[u8]>> Tensor<Physical> {
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.physical.as_mut()
+    }
+}
+
 pub type Shape = SmallVec<[udim; 4]>;
 pub type Affine = DMatrix<idim>;
 
@@ -108,7 +126,7 @@ fn test() {
     use super::Transpose;
     use smallvec::smallvec;
 
-    let t = Tensor::new(DataType::F32, Shape::from_slice(&[2, 3, 4, 5]), ());
+    let t = Tensor::new(DataType::F32, &[2, 3, 4, 5], ());
     assert_eq!(t.shape(), &[2, 3, 4, 5]);
     assert_eq!(t.pattern.0.as_slice(), &[60, 20, 5, 1, 0]);
     assert_eq!(t.is_contiguous(), true);

@@ -75,17 +75,22 @@ struct ConfigJson {
     pub torch_dtype: DataType,
 }
 
-type Blob = dyn 'static + AsRef<[u8]>;
-
 #[derive(Clone)]
 pub struct Storage {
-    data: Arc<Blob>,
+    data: Arc<dyn AsRef<[u8]>>,
     range: Range<usize>,
+}
+
+impl AsRef<[u8]> for Storage {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        &self.data.as_ref().as_ref()[self.range.clone()]
+    }
 }
 
 impl Storage {
     #[inline]
-    pub fn new(data: Arc<Blob>, offset: usize, len: usize) -> Self {
+    pub fn new(data: Arc<dyn AsRef<[u8]>>, offset: usize, len: usize) -> Self {
         Self {
             data,
             range: offset..offset + len,
@@ -99,10 +104,5 @@ impl Storage {
             data: Arc::new(data),
             range: 0..len,
         }
-    }
-
-    #[inline]
-    pub fn as_slice(&self) -> &[u8] {
-        &self.data.as_ref().as_ref()[self.range.clone()]
     }
 }
