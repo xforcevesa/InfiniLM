@@ -35,11 +35,26 @@ impl<Physical: Clone> Tensor<Physical> {
         &self.physical
     }
 
+    #[inline]
+    pub fn size(&self) -> usize {
+        self.shape.iter().map(|&d| d as usize).product()
+    }
+
     pub fn is_contiguous(&self) -> bool {
         let strides = self.pattern.0.as_slice();
         let n = strides.len();
-        &strides[n - 2..] == &[1, 0]
+        strides[n - 2..] == [1, 0]
             && (0..n - 2).all(|i| strides[i] == strides[i + 1] * self.shape[i + 1] as idim)
+    }
+
+    #[inline]
+    pub unsafe fn cast(&self, dtype: DataType, physical: Physical) -> Self {
+        Self {
+            data_type: dtype,
+            shape: self.shape.clone(),
+            pattern: self.pattern.clone(),
+            physical,
+        }
     }
 
     pub fn reshape(&self, shape: Shape) -> Self {

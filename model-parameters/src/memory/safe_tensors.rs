@@ -1,8 +1,9 @@
-﻿use super::Memory;
-use crate::{ConfigJson, DataType, LayerParamsOffset};
+﻿use super::{Layer, Memory};
+use crate::{ConfigJson, DataType, Storage};
 use memmap2::Mmap;
 use safetensors::{tensor::TensorInfo, Dtype};
 use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
+use tensor::Tensor;
 
 #[derive(Debug)]
 pub enum SafeTensorError {
@@ -10,19 +11,13 @@ pub enum SafeTensorError {
     Serde(serde_json::Error),
 }
 
-impl Memory<Mmap> {
+impl Memory {
     pub fn load_safetensors(model_dir: impl AsRef<Path>) -> Result<Self, SafeTensorError> {
         let dir = model_dir.as_ref();
         let config = File::open(dir.join("config.json")).map_err(SafeTensorError::Io)?;
         let model = File::open(dir.join("model.safetensors")).map_err(SafeTensorError::Io)?;
 
         let config: ConfigJson = serde_json::from_reader(config).map_err(SafeTensorError::Serde)?;
-        let dtype = match config.torch_dtype {
-            DataType::F16 => Dtype::F16,
-            DataType::BF16 => Dtype::BF16,
-            DataType::F32 => Dtype::F32,
-            _ => todo!(),
-        };
 
         let mmap = unsafe { Mmap::map(&model) }.map_err(SafeTensorError::Io)?;
         let len = unsafe { *mmap.as_ptr().cast::<u64>() } as usize;
@@ -31,114 +26,53 @@ impl Memory<Mmap> {
         let header: SafeTensorHeaderJson =
             serde_json::from_slice(header).map_err(SafeTensorError::Serde)?;
 
-        let d = config.hidden_size;
-        let kv_dim = d * config.num_key_value_heads / config.num_attention_heads;
-        let di = config.intermediate_size;
-
-        let mut embed_tokens = 0;
-        let mut layers = (0..config.num_hidden_layers)
-            .map(|_| LayerParamsOffset {
-                input_layernorm: 0,
-                self_attn_q_proj: 0,
-                self_attn_k_proj: 0,
-                self_attn_v_proj: 0,
-                self_attn_o_proj: 0,
-                post_attention_layernorm: 0,
-                mlp_gate: 0,
-                mlp_down: 0,
-                mlp_up: 0,
-            })
-            .collect::<Vec<_>>();
-        let mut model_norm = 0;
-        let mut lm_head = 0;
-
-        let header_offset = BASE_OFFSET + len;
-        for (name, tensor) in header.tensors {
-            let path = name.split('.').collect::<Vec<_>>();
-            let offset = header_offset + tensor.data_offsets.0;
-
-            debug!(target: "import safetensors", "detect {offset:#010x} -> \"{name}\"");
-            match path.as_slice() {
-                ["model", "embed_tokens", "weight"] => {
-                    assert_eq!(&tensor.shape, &[config.vocab_size, d]);
-                    assert_eq!(tensor.dtype, dtype);
-                    embed_tokens = offset;
-                }
-                ["model", "layers", n, path @ .., "weight"] => {
-                    let layer = n.parse::<usize>().unwrap();
-
-                    match path {
-                        ["input_layernorm"] => {
-                            assert_eq!(&tensor.shape, &[d]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].input_layernorm = offset;
-                        }
-                        ["self_attn", "q_proj"] => {
-                            assert_eq!(&tensor.shape, &[d, d]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].self_attn_q_proj = offset;
-                        }
-                        ["self_attn", "k_proj"] => {
-                            assert_eq!(&tensor.shape, &[kv_dim, d]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].self_attn_k_proj = offset;
-                        }
-                        ["self_attn", "v_proj"] => {
-                            assert_eq!(&tensor.shape, &[kv_dim, d]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].self_attn_v_proj = offset;
-                        }
-                        ["self_attn", "o_proj"] => {
-                            assert_eq!(&tensor.shape, &[d, d]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].self_attn_o_proj = offset;
-                        }
-                        ["post_attention_layernorm"] => {
-                            assert_eq!(&tensor.shape, &[d]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].post_attention_layernorm = offset;
-                        }
-                        ["mlp", "gate_proj"] => {
-                            assert_eq!(&tensor.shape, &[di, d]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].mlp_gate = offset;
-                        }
-                        ["mlp", "down_proj"] => {
-                            assert_eq!(&tensor.shape, &[d, di]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].mlp_down = offset;
-                        }
-                        ["mlp", "up_proj"] => {
-                            assert_eq!(&tensor.shape, &[di, d]);
-                            assert_eq!(tensor.dtype, dtype);
-                            layers[layer].mlp_up = offset;
-                        }
-                        [..] => {
-                            warn!(target: "import safetensors", "Unknown tensor path: \"{name}\"")
-                        }
-                    };
-                }
-                ["model", "norm", "weight"] => {
-                    assert_eq!(&tensor.shape, &[d]);
-                    assert_eq!(tensor.dtype, dtype);
-                    model_norm = offset;
-                }
-                ["lm_head", "weight"] => {
-                    assert_eq!(&tensor.shape, &[config.vocab_size, d]);
-                    assert_eq!(tensor.dtype, dtype);
-                    lm_head = offset;
-                }
-                [..] => warn!(target: "import safetensors", "Unknown tensor path: \"{name}\""),
-            }
-        }
+        let mmap = Arc::new(mmap);
+        let tensor = |name: &str| {
+            let info = &header.tensors[name];
+            let (start, end) = info.data_offsets;
+            Tensor::new(
+                match info.dtype {
+                    Dtype::BOOL => DataType::Bool,
+                    Dtype::I8 => DataType::I8,
+                    Dtype::I16 => DataType::I16,
+                    Dtype::I32 => DataType::I32,
+                    Dtype::I64 => DataType::I64,
+                    Dtype::U8 => DataType::U8,
+                    Dtype::U16 => DataType::U16,
+                    Dtype::U32 => DataType::U32,
+                    Dtype::U64 => DataType::U64,
+                    Dtype::F16 => DataType::F16,
+                    Dtype::BF16 => DataType::BF16,
+                    Dtype::F32 => DataType::F32,
+                    Dtype::F64 => DataType::F64,
+                    _ => unreachable!(),
+                },
+                info.shape.iter().map(|&d| d as _).collect(),
+                Storage::new(mmap.clone(), start, end - start),
+            )
+        };
 
         Ok(Self {
+            embed_tokens: tensor("model.embed_tokens.weight"),
+            layers: (0..config.num_hidden_layers)
+                .map(|l| {
+                    let name = |name: &str| format!("model.layers.{l}.{name}.weight");
+                    Layer {
+                        input_layernorm: tensor(&name("input_layernorm")),
+                        self_attn_q_proj: tensor(&name("self_attn.q_proj")),
+                        self_attn_k_proj: tensor(&name("self_attn.k_proj")),
+                        self_attn_v_proj: tensor(&name("self_attn.v_proj")),
+                        self_attn_o_proj: tensor(&name("self_attn.o_proj")),
+                        post_attention_layernorm: tensor(&name("post_attention_layernorm")),
+                        mlp_gate: tensor(&name("mlp.gate_proj")),
+                        mlp_down: tensor(&name("mlp.down_proj")),
+                        mlp_up: tensor(&name("mlp.up_proj")),
+                    }
+                })
+                .collect(),
+            model_norm: tensor("model.norm.weight"),
+            lm_head: tensor("lm_head.weight"),
             config,
-            blob: Arc::new(mmap),
-            embed_tokens,
-            layers,
-            model_norm,
-            lm_head,
         })
     }
 }

@@ -1,23 +1,34 @@
-﻿mod inside_memory;
+﻿mod cast;
 mod safe_tensors;
 
-use crate::{storage::Storage, ConfigJson, DataType, LayerParamsOffset, Llama2};
+use crate::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
+use tensor::Tensor;
+
 pub use safe_tensors::SafeTensorError;
 pub(crate) use safe_tensors::SafeTensorHeaderJson;
-use std::sync::Arc;
-use tensor::{Shape, Tensor};
 
-pub struct Memory<T> {
+pub struct Memory {
     config: ConfigJson,
-    blob: Arc<T>,
-    embed_tokens: usize,
-    layers: Vec<LayerParamsOffset>,
-    model_norm: usize,
-    lm_head: usize,
+    embed_tokens: Tensor<Storage>,
+    layers: Vec<Layer>,
+    model_norm: Tensor<Storage>,
+    lm_head: Tensor<Storage>,
 }
 
-impl<T: 'static + AsRef<[u8]>> Llama2 for Memory<T> {
+struct Layer {
+    input_layernorm: Tensor<Storage>,
+    self_attn_q_proj: Tensor<Storage>,
+    self_attn_k_proj: Tensor<Storage>,
+    self_attn_v_proj: Tensor<Storage>,
+    self_attn_o_proj: Tensor<Storage>,
+    post_attention_layernorm: Tensor<Storage>,
+    mlp_gate: Tensor<Storage>,
+    mlp_down: Tensor<Storage>,
+    mlp_up: Tensor<Storage>,
+}
+
+impl Llama2 for Memory {
     #[inline]
     fn bos_token_id(&self) -> utok {
         self.config.bos_token_id
@@ -80,174 +91,68 @@ impl<T: 'static + AsRef<[u8]>> Llama2 for Memory<T> {
 
     #[inline]
     fn embed_tokens(&self) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dv = self.config.vocab_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[dv as _, d as _]),
-            Storage::new(self.blob.clone(), self.embed_tokens, dv * d * dt),
-        )
+        self.embed_tokens.clone()
     }
 
     #[inline]
     fn input_layernorm(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[d as _]),
-            Storage::new(
-                self.blob.clone(),
-                self.layers[layer].input_layernorm,
-                d * dt,
-            ),
-        )
+        self.layers[layer].input_layernorm.clone()
     }
 
     #[inline]
     fn self_attn_q_proj(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[d as _, d as _]),
-            Storage::new(
-                self.blob.clone(),
-                self.layers[layer].self_attn_q_proj,
-                d * d * dt,
-            ),
-        )
+        self.layers[layer].self_attn_q_proj.clone()
     }
 
     #[inline]
     fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dkv = d * self.config.num_key_value_heads / self.config.num_attention_heads;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[dkv as _, d as _]),
-            Storage::new(
-                self.blob.clone(),
-                self.layers[layer].self_attn_k_proj,
-                dkv * d * dt,
-            ),
-        )
+        self.layers[layer].self_attn_k_proj.clone()
     }
 
     #[inline]
     fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dkv = d * self.config.num_key_value_heads / self.config.num_attention_heads;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[dkv as _, d as _]),
-            Storage::new(
-                self.blob.clone(),
-                self.layers[layer].self_attn_v_proj,
-                dkv * d * dt,
-            ),
-        )
+        self.layers[layer].self_attn_v_proj.clone()
     }
 
     #[inline]
     fn self_attn_o_proj(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[d as _, d as _]),
-            Storage::new(
-                self.blob.clone(),
-                self.layers[layer].self_attn_o_proj,
-                d * d * dt,
-            ),
-        )
+        self.layers[layer].self_attn_o_proj.clone()
     }
 
     #[inline]
     fn post_attention_layernorm(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[d as _]),
-            Storage::new(
-                self.blob.clone(),
-                self.layers[layer].post_attention_layernorm,
-                d * dt,
-            ),
-        )
+        self.layers[layer].post_attention_layernorm.clone()
     }
 
     #[inline]
     fn mlp_gate(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let di = self.config.intermediate_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[di as _, d as _]),
-            Storage::new(self.blob.clone(), self.layers[layer].mlp_gate, di * d * dt),
-        )
+        self.layers[layer].mlp_gate.clone()
     }
 
     #[inline]
     fn mlp_down(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let di = self.config.intermediate_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[d as _, di as _]),
-            Storage::new(self.blob.clone(), self.layers[layer].mlp_down, d * di * dt),
-        )
+        self.layers[layer].mlp_down.clone()
     }
 
     #[inline]
     fn mlp_up(&self, layer: usize) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let di = self.config.intermediate_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[di as _, d as _]),
-            Storage::new(self.blob.clone(), self.layers[layer].mlp_up, di * d * dt),
-        )
+        self.layers[layer].mlp_up.clone()
     }
 
     #[inline]
     fn model_norm(&self) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[d as _]),
-            Storage::new(self.blob.clone(), self.model_norm, d * dt),
-        )
+        self.model_norm.clone()
     }
 
     #[inline]
     fn lm_head(&self) -> Tensor<Storage> {
-        let d = self.config.hidden_size;
-        let dv: usize = self.config.vocab_size;
-        let dt: usize = self.data_type().size();
-        Tensor::new(
-            self.data_type(),
-            Shape::from_slice(&[dv as _, d as _]),
-            Storage::new(self.blob.clone(), self.lm_head, dv * d * dt),
-        )
+        self.lm_head.clone()
     }
 }
 
 #[test]
 fn test_load() {
     use std::time::Instant;
-
-    // set env for POWERSHELL: `$env:RUST_LOG="INFO";`
-    env_logger::init();
 
     let t0 = Instant::now();
     let safetensors = Memory::load_safetensors("../../TinyLlama-1.1B-Chat-v1.0");

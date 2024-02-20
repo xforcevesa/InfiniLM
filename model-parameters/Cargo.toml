@@ -9,13 +9,9 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
-log = "0.4"
 half = "2.3"
 rayon = "1.8"
 memmap2 = "0.9"
 safetensors = "0.4"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-
-[dev-dependencies]
-env_logger = "0.11"

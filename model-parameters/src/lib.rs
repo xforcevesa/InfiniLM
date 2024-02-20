@@ -1,15 +1,11 @@
-mod data_type;
 mod memory;
 mod save;
-mod storage;
-
-#[macro_use]
-extern crate log;
 
 use common::utok;
-use storage::Storage;
+use std::{ops::Range, sync::Arc};
 use tensor::{DataType, Tensor};
 
+pub use memory::{Memory, SafeTensorError};
 pub use save::save;
 
 pub trait Llama2 {
@@ -62,8 +58,6 @@ pub trait Llama2 {
     fn lm_head(&self) -> Tensor<Storage>;
 }
 
-pub use memory::{Memory, SafeTensorError};
-
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct ConfigJson {
     pub bos_token_id: utok,
@@ -80,14 +74,25 @@ struct ConfigJson {
     pub torch_dtype: DataType,
 }
 
-struct LayerParamsOffset {
-    input_layernorm: usize,
-    self_attn_q_proj: usize,
-    self_attn_k_proj: usize,
-    self_attn_v_proj: usize,
-    self_attn_o_proj: usize,
-    post_attention_layernorm: usize,
-    mlp_gate: usize,
-    mlp_down: usize,
-    mlp_up: usize,
+type Blob = dyn 'static + AsRef<[u8]>;
+
+#[derive(Clone)]
+pub struct Storage {
+    data: Arc<Blob>,
+    range: Range<usize>,
+}
+
+impl Storage {
+    #[inline]
+    pub fn new(data: Arc<Blob>, offset: usize, len: usize) -> Self {
+        Self {
+            data,
+            range: offset..offset + len,
+        }
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data.as_ref().as_ref()[self.range.clone()]
+    }
 }
