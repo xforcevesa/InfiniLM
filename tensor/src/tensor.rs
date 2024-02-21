@@ -67,6 +67,9 @@ impl<Physical> Tensor<Physical> {
         strides[n] == 1 && (0..n).all(|i| strides[i] == strides[i + 1] * self.shape[i + 1] as idim)
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that the `physical` matches shape, pattern of `self` and the new `dtype`.
     #[inline]
     pub unsafe fn set_physical<U>(&self, dtype: DataType, physical: U) -> Tensor<U> {
         Tensor {
@@ -162,11 +165,11 @@ impl<Physical: AsRef<[u8]>> Tensor<Physical> {
     }
 
     pub fn reform_to(&self, dst: &mut [u8]) {
-        let offset = self.offset() as usize;
         let dt = self.data_type.size();
         let src = &self.as_slice();
 
         if self.is_contiguous() {
+            let offset = self.offset() as usize;
             dst.copy_from_slice(&src[offset * dt..][..dst.len()]);
         } else {
             let pattern = &self.pattern.0;
@@ -174,10 +177,8 @@ impl<Physical: AsRef<[u8]>> Tensor<Physical> {
             let ptr = dst.as_mut_ptr() as usize;
             (0..n).into_par_iter().for_each(|i| {
                 let j = pattern.dot(&expand_indices(i, &idx_strides));
-                let j = j as usize * dt;
-                let i = i as usize * dt;
-                unsafe { std::slice::from_raw_parts_mut((ptr + i) as *mut u8, dt) }
-                    .copy_from_slice(&src[j..][..dt]);
+                unsafe { std::slice::from_raw_parts_mut((ptr + i as usize * dt) as *mut u8, dt) }
+                    .copy_from_slice(&src[j as usize * dt..][..dt]);
             });
         }
     }
