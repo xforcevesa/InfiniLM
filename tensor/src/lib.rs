@@ -1,5 +1,6 @@
 mod data_type;
 mod fmt;
+mod iter;
 mod operator;
 mod tensor;
 

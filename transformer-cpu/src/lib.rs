@@ -53,7 +53,6 @@ impl Transformer {
 
         let mut a = tensor(dt, &[seq_len, d]);
         gather(&mut a, &self.model.embed_tokens(), tokens);
-
         // println!("gather: {a}");
 
         let mut b = tensor(dt, &[seq_len, d]);
