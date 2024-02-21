@@ -178,17 +178,17 @@ where
     let (len, batch) = t.shape().split_last().unwrap();
     let (n, idx_strides) = idx_strides(batch);
     let len = *len as usize / 2;
+    let mul = 2. / head_size as f32;
     for i in 0..n {
         let indices = expand_indices(i, &idx_strides, &[0, 1]);
-        let pos = pos + indices[indices.len() - 3] as upos;
+        let pos = (pos + indices[indices.len() - 3] as upos) as f32;
         let ptr = t
             .get_mut_ptr(&indices.as_view())
             .unwrap()
             .cast::<(f16, f16)>();
         let slice = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
         for (j, (a, b)) in slice.iter_mut().enumerate() {
-            let rem = (j as udim * 2) % head_size;
-            let freq = theta.powf(rem as f32 / head_size as f32).recip() * pos as f32;
+            let freq = pos / theta.powf((j as f32 * mul).fract());
             let (sin, cos) = freq.sin_cos();
             let a_ = a.to_f32();
             let b_ = b.to_f32();
