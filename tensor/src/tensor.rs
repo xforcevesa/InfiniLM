@@ -1,12 +1,11 @@
 ﻿use crate::{
     idim,
-    iter::IndicesIterator,
     operator::{Broadcast, Slice, SliceDim, Split, Squeeze, SqueezeOp, Transpose},
     udim, DataType, Operator,
 };
 use nalgebra::{DMatrix, DVector};
+use rayon::iter::*;
 use smallvec::SmallVec;
-use std::iter::zip;
 
 #[derive(Clone, Debug)]
 pub struct Tensor<Physical> {
@@ -170,14 +169,16 @@ impl<Physical: AsRef<[u8]>> Tensor<Physical> {
         if self.is_contiguous() {
             dst.copy_from_slice(&src[offset * dt..][..dst.len()]);
         } else {
-            let strides = self.strides();
-            for (i, indices) in IndicesIterator::new(&self.shape) {
-                let j = offset as isize
-                    + zip(indices, strides)
-                        .map(|(idx, &s)| idx as isize * s as isize)
-                        .sum::<isize>();
-                dst[(i as usize * dt)..][..dt].copy_from_slice(&src[(j as usize * dt)..][..dt]);
-            }
+            let pattern = &self.pattern.0;
+            let (n, idx_strides) = idx_strides(&self.shape);
+            let ptr = dst.as_mut_ptr() as usize;
+            (0..n).into_par_iter().for_each(|i| {
+                let j = pattern.dot(&expand_indices(i, &idx_strides));
+                let j = j as usize * dt;
+                let i = i as usize * dt;
+                unsafe { std::slice::from_raw_parts_mut((ptr + i) as *mut u8, dt) }
+                    .copy_from_slice(&src[j..][..dt]);
+            });
         }
     }
 }
@@ -215,6 +216,26 @@ impl Pattern {
     pub fn offset(&self) -> idim {
         self.0[self.0.len() - 1]
     }
+}
+
+pub(crate) fn idx_strides(shape: &[udim]) -> (udim, Vec<udim>) {
+    let mut idx_strides = vec![0; shape.len()];
+    idx_strides[shape.len() - 1] = 1;
+    for i in (1..shape.len()).rev() {
+        idx_strides[i - 1] = idx_strides[i] * shape[i];
+    }
+    (shape[0] * idx_strides[0], idx_strides)
+}
+
+pub(crate) fn expand_indices(i: udim, idx_strides: &[udim]) -> DVector<idim> {
+    let mut rem = i as idim;
+    let mut ans = vec![0 as idim; idx_strides.len() + 1];
+    for (i, &s) in idx_strides.iter().enumerate() {
+        ans[i] = rem / s as idim;
+        rem %= s as idim;
+    }
+    ans[idx_strides.len()] = 1;
+    DVector::from_vec(ans)
 }
 
 #[test]

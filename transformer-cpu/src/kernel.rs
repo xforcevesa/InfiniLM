@@ -130,7 +130,7 @@ where
                 false,
                 false,
                 false,
-                gemm::Parallelism::None,
+                gemm::Parallelism::Rayon(0),
             )
         },
         DataType::F16 => unsafe {
@@ -153,7 +153,7 @@ where
                 false,
                 false,
                 false,
-                gemm::Parallelism::None,
+                gemm::Parallelism::Rayon(0),
             )
         },
         _ => unreachable!(),

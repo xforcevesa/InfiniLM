@@ -1,4 +1,8 @@
-﻿use crate::{idim, iter::IndicesIterator, udim, DataType, Tensor};
+﻿use crate::{
+    idim,
+    tensor::{expand_indices, idx_strides},
+    udim, DataType, Tensor,
+};
 use half::{bf16, f16};
 use std::fmt;
 
@@ -26,13 +30,16 @@ fn write_tensor<T: fmt::LowerExp>(
             let (strides, tail) = strides.split_at(batch.len());
             let rs = tail[0];
             let cs = tail[1];
-            for (_, indices) in IndicesIterator::new(batch) {
+            let (n, idx_strides) = idx_strides(batch);
+            for i in 0..n {
+                let indices = expand_indices(i, &idx_strides);
+                let indices = &indices.as_slice()[..indices.len() - 1];
                 writeln!(
                     to,
                     "<{rows}x{cols}>[{}]",
                     indices
                         .iter()
-                        .map(udim::to_string)
+                        .map(idim::to_string)
                         .collect::<Vec<_>>()
                         .join(", "),
                 )?;
