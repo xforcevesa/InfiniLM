@@ -185,7 +185,7 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     let mut data = vec![0u8; shape.iter().product::<udim>() as usize * data_type.size()];
     let mut offset = 0;
     for t in tensors {
-        let len = t.size() * data_type.size();
+        let len = t.bytes_size();
         t.reform_to(&mut data[offset..][..len]);
         offset += len;
     }

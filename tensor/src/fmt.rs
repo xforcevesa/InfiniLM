@@ -143,11 +143,9 @@ fn test_fmt() {
     let t = t.broadcast(&[3, 3, 2]);
     println!("{t}");
 
-    let mut t_ = Tensor::new(
-        t.data_type(),
-        t.shape(),
-        vec![0u8; t.data_type().size() * t.size()],
-    );
-    t.reform_to(t_.as_slice_mut());
-    println!("{t_}");
+    {
+        let mut physical = vec![0u8; t.bytes_size()];
+        t.reform_to(&mut physical);
+        println!("{}", Tensor::new(t.data_type(), t.shape(), physical));
+    }
 }

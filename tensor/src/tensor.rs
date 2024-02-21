@@ -62,6 +62,11 @@ impl<Physical> Tensor<Physical> {
     }
 
     #[inline]
+    pub fn bytes_size(&self) -> usize {
+        self.size() * self.data_type.size()
+    }
+
+    #[inline]
     pub fn is_contiguous(&self) -> bool {
         self.is_contiguous_internal(self.shape.len())
     }
@@ -180,16 +185,6 @@ impl<Physical: AsRef<[u8]>> Tensor<Physical> {
     pub fn as_ptr(&self) -> *const u8 {
         let ptr = self.physical.as_ref().as_ptr();
         unsafe { ptr.add(self.offset() as usize * self.data_type.size()) }
-    }
-
-    pub fn get_ptr(&self, indices: &DVectorView<idim>) -> Option<*const u8> {
-        let i = self.pattern.0.dot(&indices) as usize * self.data_type.size();
-        let physical = self.physical.as_ref();
-        if i < physical.len() {
-            Some(unsafe { physical.as_ptr().add(i) })
-        } else {
-            None
-        }
     }
 
     pub fn reform_to(&self, dst: &mut [u8]) {

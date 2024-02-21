@@ -88,7 +88,7 @@ impl Memory {
                                     let nh = config.num_key_value_heads as udim;
                                     let s = t.shape();
 
-                                    t.reshape(&[nh, 2, s[0] / nh / 2, s[1]])
+                                    t.reshape(&[nh, s[0] / nh * s[1]])
                                 };
                                 let d = config.hidden_size as udim;
                                 let t = concat0(&[&q, &k, &v]);
