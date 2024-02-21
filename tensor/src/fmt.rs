@@ -32,8 +32,7 @@ fn write_tensor<T: fmt::LowerExp>(
             let cs = tail[1];
             let (n, idx_strides) = idx_strides(batch);
             for i in 0..n {
-                let indices = expand_indices(i, &idx_strides);
-                let indices = &indices.as_slice()[..indices.len() - 1];
+                let indices = expand_indices(i, &idx_strides, &[]);
                 writeln!(
                     to,
                     "<{rows}x{cols}>[{}]",

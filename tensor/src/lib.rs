@@ -11,4 +11,4 @@ pub type idim = i32;
 
 pub use data_type::DataType;
 pub use operator::{Operator, SliceDim};
-pub use tensor::{Affine, Shape, Tensor};
+pub use tensor::{expand_indices, idx_strides, Affine, Shape, Tensor};
