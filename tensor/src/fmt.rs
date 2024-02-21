@@ -96,7 +96,7 @@ impl<Physical: AsRef<[u8]>> fmt::Display for Tensor<Physical> {
 
 #[test]
 fn test_fmt() {
-    use crate::{slice, DataType, Shape, Tensor};
+    use crate::{slice, DataType, Tensor};
     use std::mem::size_of;
 
     let shape = [2, 3, 4];
@@ -116,10 +116,10 @@ fn test_fmt() {
     let t = Tensor::new(DataType::F32, &shape, data);
     println!("{t}");
 
-    let t = t.reshape(Shape::from_slice(&[2, 3, 2, 2]));
+    let t = t.reshape(&[2, 3, 2, 2]);
     println!("{t}");
 
-    let t = t.reshape(Shape::from_slice(&[6, 4]));
+    let t = t.reshape(&[6, 4]);
     println!("{t}");
 
     let t = t.transpose(&[1, 0]);

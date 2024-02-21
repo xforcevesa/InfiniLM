@@ -67,10 +67,32 @@ impl Memory {
                             if header.tensors.contains_key(&qkv) {
                                 tensor(&qkv)
                             } else {
-                                let q = tensor(&name("self_attn.q_proj"));
-                                let k = tensor(&name("self_attn.k_proj"));
-                                let v = tensor(&name("self_attn.v_proj"));
-                                concat0(&[&q, &k, &v])
+                                let q = {
+                                    let t = tensor(&name("self_attn.q_proj"));
+                                    let nh = config.num_attention_heads as udim;
+                                    let s = t.shape();
+
+                                    t.reshape(&[nh, 2, s[0] / nh / 2, s[1]])
+                                        .transpose(&[0, 2, 1, 3])
+                                };
+                                let k = {
+                                    let t = tensor(&name("self_attn.k_proj"));
+                                    let nh = config.num_key_value_heads as udim;
+                                    let s = t.shape();
+
+                                    t.reshape(&[nh, 2, s[0] / nh / 2, s[1]])
+                                        .transpose(&[0, 2, 1, 3])
+                                };
+                                let v = {
+                                    let t = tensor(&name("self_attn.v_proj"));
+                                    let nh = config.num_key_value_heads as udim;
+                                    let s = t.shape();
+
+                                    t.reshape(&[nh, 2, s[0] / nh / 2, s[1]])
+                                };
+                                let d = config.hidden_size as udim;
+                                let t = concat0(&[&q, &k, &v]);
+                                t.reshape(&[t.size() as udim / d, d])
                             }
                         },
                         self_attn_o_proj: tensor(&name("self_attn.o_proj")),

@@ -80,12 +80,13 @@ impl<Physical> Tensor<Physical> {
 }
 
 impl<Physical: Clone> Tensor<Physical> {
-    pub fn reshape(&self, shape: Shape) -> Self {
+    pub fn reshape(&self, shape: &[udim]) -> Self {
         assert!(self.is_contiguous());
         assert_eq!(
             self.shape.iter().product::<udim>(),
             shape.iter().product::<udim>(),
         );
+        let shape = Shape::from_slice(shape);
         Self {
             data_type: self.data_type,
             pattern: Pattern::from_shape(&shape, self.pattern.offset()),
@@ -223,7 +224,7 @@ fn test() {
     assert_eq!(t.pattern.0.as_slice(), &[60, 20, 5, 1, 0]);
     assert_eq!(t.is_contiguous(), true);
 
-    let t = t.reshape(Shape::from_slice(&[2, 3, 20]));
+    let t = t.reshape(&[2, 3, 20]);
     assert_eq!(t.shape(), &[2, 3, 20]);
     assert_eq!(t.pattern.0.as_slice(), &[60, 20, 1, 0]);
     assert_eq!(t.is_contiguous(), true);

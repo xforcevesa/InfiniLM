@@ -3,7 +3,7 @@ mod safe_tensors;
 
 use crate::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
-use tensor::{Shape, Tensor};
+use tensor::{udim, Shape, Tensor};
 
 pub use safe_tensors::SafeTensorError;
 pub(crate) use safe_tensors::SafeTensorHeaderJson;
@@ -172,18 +172,17 @@ impl Llama2 for Memory {
 fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     assert!(!tensors.is_empty());
     let data_type = tensors[0].data_type();
-    let mut shape = Shape::from_slice(tensors[0].shape());
+    let len = tensors[0].shape()[1..].iter().product::<udim>();
 
-    debug_assert!(tensors
-        .iter()
-        .all(|t| t.data_type() == data_type && t.shape()[1..] == shape[1..]));
+    assert!({
+        tensors
+            .iter()
+            .skip(1)
+            .all(|t| t.data_type() == data_type && t.shape()[1..].iter().product::<udim>() == len)
+    });
 
-    for t in &tensors[1..] {
-        shape[0] += t.shape()[0];
-    }
-
-    let size = shape.iter().map(|&d| d as usize).product::<usize>() * data_type.size();
-    let mut data = vec![0u8; size];
+    let shape = Shape::from_slice(&[tensors.iter().map(|t| t.shape()[0]).sum(), len]);
+    let mut data = vec![0u8; shape.iter().product::<udim>() as usize * data_type.size()];
     let mut offset = 0;
     for t in tensors {
         let len = t.size() * data_type.size();

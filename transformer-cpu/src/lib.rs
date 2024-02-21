@@ -48,8 +48,7 @@ impl Transformer {
                 vec![0u8; shape.iter().product::<udim>() as usize * dt.size()],
             )
         }
-
-        println!("tokens: {tokens:?}");
+        // println!("tokens: {tokens:?}");
 
         let mut a = tensor(dt, &[seq_len, d]);
         gather(&mut a, &self.model.embed_tokens(), tokens);
@@ -69,12 +68,12 @@ impl Transformer {
             // qkv = w_qkv * b
             matmul(&mut qkv, &self.model.w_qkv(layer), &b.transpose(&[1, 0]));
             let qkv = qkv.split(0, &[d as _, dkv as _, dkv as _]);
-            let q = &qkv[0];
-            let k = &qkv[1];
-            let v = &qkv[2];
-            println!("layer {layer} q: {q}");
-            println!("layer {layer} k: {k}");
-            println!("layer {layer} v: {v}");
+            let _q = &qkv[0];
+            let _k = &qkv[1];
+            let _v = &qkv[2];
+            // println!("layer {layer} q: {q}");
+            // println!("layer {layer} k: {k}");
+            // println!("layer {layer} v: {v}");
         }
 
         vec![]
