@@ -174,7 +174,7 @@ pub(super) fn rotary_embedding<T>(t: &mut Tensor<T>, head_size: udim, pos: upos,
 where
     T: AsMut<[u8]>,
 {
-    assert!(t.is_partial_contiguous(1));
+    assert!(t.contiguous_len() > 0);
     let (len, batch) = t.shape().split_last().unwrap();
     let (n, idx_strides) = idx_strides(batch);
     let len = *len as usize / 2;

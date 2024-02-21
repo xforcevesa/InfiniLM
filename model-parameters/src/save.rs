@@ -39,7 +39,7 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
         shape: tensor.shape().iter().map(|&d| d as _).collect(),
         data_offsets: {
             let start = offset;
-            offset += tensor.as_slice().len();
+            offset += tensor.bytes_size();
             (start, offset)
         },
     };

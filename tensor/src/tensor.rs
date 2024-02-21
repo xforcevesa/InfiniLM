@@ -68,19 +68,25 @@ impl<Physical> Tensor<Physical> {
 
     #[inline]
     pub fn is_contiguous(&self) -> bool {
-        self.is_contiguous_internal(self.shape.len())
+        self.contiguous_len() == self.shape.len()
     }
 
-    #[inline]
-    pub fn is_partial_contiguous(&self, n: usize) -> bool {
-        self.is_contiguous_internal(n.min(self.shape.len()))
-    }
-
-    fn is_contiguous_internal(&self, n: usize) -> bool {
-        let skip = self.shape.len() - n;
-        let shape = &self.shape[skip..];
-        let strides = &self.pattern.0.as_slice()[skip..][..n];
-        strides[n - 1] == 1 && (1..n).all(|i| strides[i - 1] == strides[i] * shape[i] as idim)
+    /// 连续维度的数量。
+    pub fn contiguous_len(&self) -> usize {
+        self.pattern
+            .strides()
+            .iter()
+            .enumerate()
+            .rev()
+            .scan(1 as idim, |mul, (i, &s)| {
+                if s == *mul {
+                    *mul *= self.shape[i] as idim;
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .count()
     }
 
     /// # Safety
@@ -189,19 +195,23 @@ impl<Physical: AsRef<[u8]>> Tensor<Physical> {
 
     pub fn reform_to(&self, dst: &mut [u8]) {
         let dt = self.data_type.size();
-        let src = &self.as_slice();
-
-        if self.is_contiguous() {
-            let offset = self.offset() as usize;
-            dst.copy_from_slice(&src[offset * dt..][..dst.len()]);
+        let src = &self.physical.as_ref()[self.offset() as usize * dt..];
+        // 计算结尾连续维度数量
+        let contiguous = self.contiguous_len();
+        if contiguous == self.shape.len() {
+            // 所有维度都连续，直接拷贝所有数据
+            dst.copy_from_slice(&src[..dst.len()]);
         } else {
-            let pattern = &self.pattern.0;
-            let (n, idx_strides) = idx_strides(&self.shape);
+            // 一部分维度连续，迭代不连续的部分
+            let (iter, contiguous) = self.shape.split_at(self.shape.len() - contiguous);
+            let (n, idx_strides) = idx_strides(iter);
+            let len = contiguous.iter().product::<udim>() as usize * dt;
+            let pattern = self.pattern.0.view_range(..iter.len(), ..);
             let ptr = dst.as_mut_ptr() as usize;
             (0..n).into_par_iter().for_each(|i| {
-                let j = pattern.dot(&expand_indices(i, &idx_strides, &[1]));
-                unsafe { std::slice::from_raw_parts_mut((ptr + i as usize * dt) as *mut u8, dt) }
-                    .copy_from_slice(&src[j as usize * dt..][..dt]);
+                let j = pattern.dot(&expand_indices(i, &idx_strides, &[]));
+                unsafe { std::slice::from_raw_parts_mut((ptr + i as usize * len) as *mut u8, len) }
+                    .copy_from_slice(&src[j as usize * dt..][..len]);
             });
         }
     }
@@ -284,15 +294,18 @@ fn test() {
     let t = Tensor::new(DataType::F32, &[2, 3, 4, 5], ());
     assert_eq!(t.shape(), &[2, 3, 4, 5]);
     assert_eq!(t.pattern.0.as_slice(), &[60, 20, 5, 1, 0]);
+    assert_eq!(t.contiguous_len(), 4);
     assert_eq!(t.is_contiguous(), true);
 
     let t = t.reshape(&[2, 3, 20]);
     assert_eq!(t.shape(), &[2, 3, 20]);
     assert_eq!(t.pattern.0.as_slice(), &[60, 20, 1, 0]);
+    assert_eq!(t.contiguous_len(), 3);
     assert_eq!(t.is_contiguous(), true);
 
-    let t = t.transpose(&[2, 0, 1]);
-    assert_eq!(t.shape(), &[20, 2, 3]);
-    assert_eq!(t.pattern.0.as_slice(), &[1, 60, 20, 0]);
+    let t = t.transpose(&[1, 0, 2]);
+    assert_eq!(t.shape(), &[3, 2, 20]);
+    assert_eq!(t.pattern.0.as_slice(), &[20, 60, 1, 0]);
+    assert_eq!(t.contiguous_len(), 1);
     assert_eq!(t.is_contiguous(), false);
 }
