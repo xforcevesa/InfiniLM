@@ -20,7 +20,7 @@ where
     debug_assert_eq!(x.data_type(), table.data_type());
     debug_assert_eq!(x.shape().last(), table.shape().last());
 
-    let x = x.as_mut_slice();
+    let x = x.as_slice_mut();
     let table = table.as_slice();
     debug_assert_eq!(x.len() % tokens.len(), 0);
 
@@ -42,7 +42,7 @@ where
     debug_assert_eq!(o.shape(), x.shape());
     debug_assert_eq!(&[*o.shape().last().unwrap()], w.shape());
 
-    let o = o.as_mut_slice();
+    let o = o.as_slice_mut();
     let x = x.as_slice();
     let w = w.as_slice();
 
@@ -70,7 +70,7 @@ where
             f16::from_f32(rms_norm_reduce(x.iter().copied().map(f16::to_f32), epsilon))
         }),
         DataType::F32 => op(o, x, w, |x| rms_norm_reduce(x.iter().copied(), epsilon)),
-        _ => unreachable!(),
+        _ => unreachable!("unsupported data type \"{dt:?}\""),
     }
 }
 
@@ -103,7 +103,7 @@ where
     let k = w.shape()[1];
     assert_eq!(w.shape(), &[m, k]);
     assert_eq!(x.shape(), &[k, n]);
-    let dst = unsafe { y.as_mut_slice().as_mut_ptr().add(y.offset() as usize) };
+    let dst = unsafe { y.as_slice_mut().as_mut_ptr().add(y.offset() as usize) };
     let dst_strides = y.strides();
     let lhs = unsafe { w.as_slice().as_ptr().add(w.offset() as usize) };
     let lhs_strides = w.strides();

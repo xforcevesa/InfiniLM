@@ -11,20 +11,7 @@ use tensor::Tensor;
 pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
     let dir = dir.as_ref();
     fs::create_dir_all(dir)?;
-    let config = serde_json::to_string_pretty(&ConfigJson {
-        bos_token_id: model.bos_token_id(),
-        eos_token_id: model.eos_token_id(),
-        hidden_size: model.hidden_size(),
-        intermediate_size: model.intermediate_size(),
-        max_position_embeddings: model.max_position_embeddings(),
-        num_attention_heads: model.num_attention_heads(),
-        num_hidden_layers: model.num_hidden_layers(),
-        num_key_value_heads: model.num_key_value_heads(),
-        vocab_size: model.vocab_size(),
-        rms_norm_eps: model.rms_norm_eps(),
-        rope_theta: model.rope_theta(),
-        torch_dtype: model.data_type(),
-    })?;
+    let config = serde_json::to_string_pretty(&ConfigJson::from(model))?;
     fs::write(dir.join("config.json"), config)?;
 
     let mut offset = 0usize;

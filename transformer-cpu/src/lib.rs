@@ -5,7 +5,7 @@ use cache::LayerCache;
 use common::{upos, utok};
 use kernel::{gather, matmul, rms_norm};
 use model_parameters::{Llama2, Memory};
-use tensor::{DataType, Tensor};
+use tensor::{udim, DataType, Tensor};
 
 pub extern crate model_parameters;
 
@@ -35,17 +35,17 @@ impl Transformer {
         _cache: Option<&mut [LayerCache]>,
         _pos: upos,
     ) -> Vec<f32> {
-        let seq_len = tokens.len();
-        let d = self.model.hidden_size();
-        let dkv = d * self.model.num_key_value_heads() / self.model.num_attention_heads();
+        let seq_len = tokens.len() as udim;
+        let d = self.model.hidden_size() as udim;
+        let dkv = self.model.kv_hidden_size() as udim;
         let dt = self.model.data_type();
 
         #[inline]
-        fn tensor(dt: DataType, shape: &[usize]) -> Tensor<Vec<u8>> {
+        fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Vec<u8>> {
             Tensor::new(
                 dt,
                 shape,
-                vec![0u8; shape.iter().product::<usize>() * dt.size()],
+                vec![0u8; shape.iter().product::<udim>() as usize * dt.size()],
             )
         }
 

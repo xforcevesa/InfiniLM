@@ -1,10 +1,12 @@
 ﻿use crate::{
     idim,
+    iter::IndicesIterator,
     operator::{Broadcast, Slice, SliceDim, Split, Squeeze, SqueezeOp, Transpose},
     udim, DataType, Operator,
 };
 use nalgebra::{DMatrix, DVector};
 use smallvec::SmallVec;
+use std::iter::zip;
 
 #[derive(Clone, Debug)]
 pub struct Tensor<Physical> {
@@ -15,7 +17,7 @@ pub struct Tensor<Physical> {
 }
 
 impl<Physical> Tensor<Physical> {
-    pub fn new(data_type: DataType, shape: &[usize], physical: Physical) -> Self {
+    pub fn new(data_type: DataType, shape: &[udim], physical: Physical) -> Self {
         let shape = Shape::from_iter(shape.iter().map(|&d| d as udim));
         Self {
             data_type,
@@ -67,8 +69,8 @@ impl<Physical> Tensor<Physical> {
     }
 
     #[inline]
-    pub unsafe fn cast(&self, dtype: DataType, physical: Physical) -> Self {
-        Self {
+    pub unsafe fn set_physical<U>(&self, dtype: DataType, physical: U) -> Tensor<U> {
+        Tensor {
             data_type: dtype,
             shape: self.shape.clone(),
             pattern: self.pattern.clone(),
@@ -158,10 +160,29 @@ impl<Physical: AsRef<[u8]>> Tensor<Physical> {
     pub fn as_slice(&self) -> &[u8] {
         self.physical.as_ref()
     }
+
+    pub fn reform_to(&self, dst: &mut [u8]) {
+        let offset = self.offset() as usize;
+        let dt = self.data_type.size();
+        let src = &self.as_slice();
+
+        if self.is_contiguous() {
+            dst.copy_from_slice(&src[offset * dt..][..dst.len()]);
+        } else {
+            let strides = self.strides();
+            for (i, indices) in IndicesIterator::new(&self.shape) {
+                let j = offset as isize
+                    + zip(indices, strides)
+                        .map(|(idx, &s)| idx as isize * s as isize)
+                        .sum::<isize>();
+                dst[(i as usize * dt)..][..dt].copy_from_slice(&src[(j as usize * dt)..][..dt]);
+            }
+        }
+    }
 }
 
 impl<Physical: AsMut<[u8]>> Tensor<Physical> {
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+    pub fn as_slice_mut(&mut self) -> &mut [u8] {
         self.physical.as_mut()
     }
 }

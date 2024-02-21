@@ -108,29 +108,29 @@ impl Llama2 for Memory {
         let dt = self.config.torch_dtype.size();
         let mut physical = self.layers[layer].w_qkv.physical().clone();
         physical.range.end = physical.range.start + d * d * dt;
-        Tensor::new(self.config.torch_dtype, &[d, d], physical)
+        Tensor::new(self.config.torch_dtype, &[d as _, d as _], physical)
     }
 
     #[inline]
     fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage> {
         let d = self.config.hidden_size;
-        let dkv = d * self.config.num_key_value_heads / self.config.num_attention_heads;
+        let dkv = self.kv_hidden_size();
         let dt = self.config.torch_dtype.size();
         let mut physical = self.layers[layer].w_qkv.physical().clone();
         physical.range.start += d * d * dt;
         physical.range.end = physical.range.start + dkv * d * dt;
-        Tensor::new(self.config.torch_dtype, &[dkv, d], physical)
+        Tensor::new(self.config.torch_dtype, &[dkv as _, d as _], physical)
     }
 
     #[inline]
     fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage> {
         let d = self.config.hidden_size;
-        let dkv = d * self.config.num_key_value_heads / self.config.num_attention_heads;
+        let dkv = self.kv_hidden_size();
         let dt = self.config.torch_dtype.size();
         let mut physical = self.layers[layer].w_qkv.physical().clone();
         physical.range.start += (d + dkv) * d * dt;
         physical.range.end = physical.range.start + dkv * d * dt;
-        Tensor::new(self.config.torch_dtype, &[dkv, d], physical)
+        Tensor::new(self.config.torch_dtype, &[dkv as _, d as _], physical)
     }
 
     #[inline]
@@ -187,11 +187,10 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     let mut offset = 0;
     for t in tensors {
         let len = t.size() * data_type.size();
-        data[offset..][..len].copy_from_slice(t.as_slice());
+        t.reform_to(&mut data[offset..][..len]);
         offset += len;
     }
 
-    let shape = shape.iter().map(|&d| d as usize).collect::<Vec<_>>();
     Tensor::new(data_type, &shape, Storage::from_blob(data))
 }
 

@@ -26,11 +26,11 @@ fn write_tensor<T: fmt::LowerExp>(
             let (strides, tail) = strides.split_at(batch.len());
             let rs = tail[0];
             let cs = tail[1];
-            for which in IndicesIterator::new(batch) {
+            for (_, indices) in IndicesIterator::new(batch) {
                 writeln!(
                     to,
                     "<{rows}x{cols}>[{}]",
-                    which
+                    indices
                         .iter()
                         .map(udim::to_string)
                         .collect::<Vec<_>>()
@@ -38,7 +38,7 @@ fn write_tensor<T: fmt::LowerExp>(
                 )?;
                 let ptr = unsafe {
                     ptr.offset(
-                        which
+                        indices
                             .iter()
                             .zip(strides)
                             .map(|(&a, &b)| a as isize * b as isize)
@@ -136,4 +136,12 @@ fn test_fmt() {
 
     let t = t.broadcast(&[3, 3, 2]);
     println!("{t}");
+
+    let mut t_ = Tensor::new(
+        t.data_type(),
+        t.shape(),
+        vec![0u8; t.data_type().size() * t.size()],
+    );
+    t.reform_to(t_.as_slice_mut());
+    println!("{t_}");
 }

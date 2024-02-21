@@ -22,23 +22,24 @@ impl IndicesIterator {
 }
 
 impl Iterator for IndicesIterator {
-    type Item = Vec<udim>;
+    type Item = (udim, Vec<udim>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i >= self.end {
+        let i = self.i;
+        if i >= self.end {
             None
         } else {
+            self.i += 1;
             let ans = self
                 .idx_strides
                 .iter()
-                .scan(self.i, |rem, &s| {
+                .scan(i, |rem, &s| {
                     let q = *rem / s;
                     *rem %= s;
                     Some(q)
                 })
                 .collect();
-            self.i += 1;
-            Some(ans)
+            Some((i, ans))
         }
     }
 }

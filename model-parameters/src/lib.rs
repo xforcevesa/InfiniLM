@@ -22,10 +22,15 @@ pub trait Llama2 {
     fn rope_theta(&self) -> f32;
     fn data_type(&self) -> DataType;
 
+    #[inline]
+    fn kv_hidden_size(&self) -> usize {
+        self.hidden_size() * self.num_key_value_heads() / self.num_attention_heads()
+    }
+
     fn size(&self) -> usize {
         let d = self.hidden_size();
         let dv = self.vocab_size();
-        let dkv = d * self.num_key_value_heads() / self.num_attention_heads();
+        let dkv = self.kv_hidden_size();
         let di = self.intermediate_size();
         let l = self.num_hidden_layers();
 
@@ -73,6 +78,25 @@ struct ConfigJson {
     pub rms_norm_eps: f32,
     pub rope_theta: f32,
     pub torch_dtype: DataType,
+}
+
+impl From<&dyn Llama2> for ConfigJson {
+    fn from(model: &dyn Llama2) -> Self {
+        Self {
+            bos_token_id: model.bos_token_id(),
+            eos_token_id: model.eos_token_id(),
+            hidden_size: model.hidden_size(),
+            intermediate_size: model.intermediate_size(),
+            max_position_embeddings: model.max_position_embeddings(),
+            num_attention_heads: model.num_attention_heads(),
+            num_hidden_layers: model.num_hidden_layers(),
+            num_key_value_heads: model.num_key_value_heads(),
+            vocab_size: model.vocab_size(),
+            rms_norm_eps: model.rms_norm_eps(),
+            rope_theta: model.rope_theta(),
+            torch_dtype: model.data_type(),
+        }
+    }
 }
 
 #[derive(Clone)]

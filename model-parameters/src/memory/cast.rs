@@ -7,18 +7,8 @@ impl Memory {
     pub fn cast(src: &dyn Llama2, new_dtype: DataType) -> Self {
         Self {
             config: ConfigJson {
-                bos_token_id: src.bos_token_id(),
-                eos_token_id: src.eos_token_id(),
-                hidden_size: src.hidden_size(),
-                intermediate_size: src.intermediate_size(),
-                max_position_embeddings: src.max_position_embeddings(),
-                num_attention_heads: src.num_attention_heads(),
-                num_hidden_layers: src.num_hidden_layers(),
-                num_key_value_heads: src.num_key_value_heads(),
-                vocab_size: src.vocab_size(),
-                rms_norm_eps: src.rms_norm_eps(),
-                rope_theta: src.rope_theta(),
                 torch_dtype: new_dtype,
+                ..ConfigJson::from(src)
             },
             embed_tokens: cast(src.embed_tokens(), new_dtype),
             layers: (0..src.num_hidden_layers())
@@ -86,5 +76,5 @@ fn cast(src: Tensor<Storage>, new_dtype: DataType) -> Tensor<Storage> {
     }
 
     let pysical = Storage::from_blob(data);
-    unsafe { src.cast(new_dtype, pysical) }
+    unsafe { src.set_physical(new_dtype, pysical) }
 }

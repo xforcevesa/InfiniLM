@@ -3,7 +3,7 @@ use crate::{memory::concat0, ConfigJson, DataType, Storage};
 use memmap2::Mmap;
 use safetensors::{tensor::TensorInfo, Dtype};
 use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
-use tensor::Tensor;
+use tensor::{udim, Tensor};
 
 #[derive(Debug)]
 pub enum SafeTensorError {
@@ -50,7 +50,7 @@ impl Memory {
             debug_assert_eq!(data_type, config.torch_dtype);
             Tensor::new(
                 data_type,
-                &info.shape,
+                &info.shape.iter().map(|&d| d as udim).collect::<Vec<_>>(),
                 Storage::new(mmap.clone(), offset + start, end - start),
             )
         };
