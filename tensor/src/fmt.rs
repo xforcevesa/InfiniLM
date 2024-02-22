@@ -6,75 +6,32 @@
 use half::{bf16, f16};
 use std::{fmt, ops::Deref};
 
-fn write_tensor<T: fmt::LowerExp>(
-    to: &mut fmt::Formatter<'_>,
-    ptr: *const T,
-    shape: &[udim],
-    strides: &[idim],
-) -> fmt::Result {
-    assert_eq!(shape.len(), strides.len());
-    match shape {
-        [] => {
-            writeln!(to, "<>")?;
-            write_matrix(to, ptr, (1, 1), (1, 1))
-        }
-        [len] => {
-            writeln!(to, "<{len}>")?;
-            write_matrix(to, ptr, (*len, 1), (strides[0], 1))
-        }
-        [rows, cols] => {
-            writeln!(to, "<{rows}x{cols}>")?;
-            write_matrix(to, ptr, (*rows, *cols), (strides[0], strides[1]))
-        }
-        [batch @ .., rows, cols] => {
-            let (strides, tail) = strides.split_at(batch.len());
-            let rs = tail[0];
-            let cs = tail[1];
-            let (n, idx_strides) = idx_strides(batch);
-            for i in 0..n {
-                let indices = expand_indices(i, &idx_strides, &[]);
-                writeln!(
-                    to,
-                    "<{rows}x{cols}>[{}]",
-                    indices
-                        .iter()
-                        .map(idim::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                )?;
-                let ptr = unsafe {
-                    ptr.offset(
-                        indices
-                            .iter()
-                            .zip(strides)
-                            .map(|(&a, &b)| a as isize * b as isize)
-                            .sum(),
-                    )
-                };
-                write_matrix(to, ptr, (*rows, *cols), (rs, cs))?;
-            }
-            Ok(())
-        }
+pub trait DataFmt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
+}
+
+impl DataFmt for f16 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:>9.3e}", self.to_f32())
     }
 }
 
-fn write_matrix<T: fmt::LowerExp>(
-    to: &mut fmt::Formatter<'_>,
-    ptr: *const T,
-    shape: (udim, udim),
-    strides: (idim, idim),
-) -> fmt::Result {
-    let rows = shape.0 as usize;
-    let cols = shape.1 as usize;
-    let rs = strides.0 as usize;
-    let cs = strides.1 as usize;
-    for r in 0..rows {
-        for c in 0..cols {
-            write!(to, "{:>9.3e} ", unsafe { &*ptr.add(r * rs + c * cs) })?;
-        }
-        writeln!(to)?;
+impl DataFmt for bf16 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:>9.3e}", self.to_f32())
     }
-    Ok(())
+}
+
+impl DataFmt for f32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:>9.3e}", self)
+    }
+}
+
+impl DataFmt for f64 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:>9.3e}", self)
+    }
 }
 
 impl<Physical: Deref<Target = [u8]>> fmt::Display for Tensor<Physical> {
@@ -94,21 +51,85 @@ impl<Physical: Deref<Target = [u8]>> fmt::Display for Tensor<Physical> {
     }
 }
 
+fn write_tensor<T: DataFmt>(
+    f: &mut fmt::Formatter<'_>,
+    ptr: *const T,
+    shape: &[udim],
+    strides: &[idim],
+) -> fmt::Result {
+    assert_eq!(shape.len(), strides.len());
+    match shape {
+        [] => {
+            writeln!(f, "<>")?;
+            write_matrix(f, ptr, (1, 1), (1, 1))
+        }
+        [len] => {
+            writeln!(f, "<{len}>")?;
+            write_matrix(f, ptr, (*len, 1), (strides[0], 1))
+        }
+        [rows, cols] => {
+            writeln!(f, "<{rows}x{cols}>")?;
+            write_matrix(f, ptr, (*rows, *cols), (strides[0], strides[1]))
+        }
+        [batch @ .., rows, cols] => {
+            let (strides, tail) = strides.split_at(batch.len());
+            let rs = tail[0];
+            let cs = tail[1];
+            let (n, idx_strides) = idx_strides(batch);
+            for i in 0..n {
+                let indices = expand_indices(i, &idx_strides, &[]);
+                writeln!(
+                    f,
+                    "<{rows}x{cols}>[{}]",
+                    indices
+                        .iter()
+                        .map(idim::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )?;
+                let ptr = unsafe {
+                    ptr.offset(
+                        indices
+                            .iter()
+                            .zip(strides)
+                            .map(|(&a, &b)| a as isize * b as isize)
+                            .sum(),
+                    )
+                };
+                write_matrix(f, ptr, (*rows, *cols), (rs, cs))?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn write_matrix<T: DataFmt>(
+    f: &mut fmt::Formatter<'_>,
+    ptr: *const T,
+    shape: (udim, udim),
+    strides: (idim, idim),
+) -> fmt::Result {
+    let rows = shape.0 as usize;
+    let cols = shape.1 as usize;
+    let rs = strides.0 as usize;
+    let cs = strides.1 as usize;
+    for r in 0..rows {
+        for c in 0..cols {
+            unsafe { &*ptr.add(r * rs + c * cs) }.fmt(f)?;
+            write!(f, " ")?;
+        }
+        writeln!(f)?;
+    }
+    Ok(())
+}
+
 #[test]
 fn test_fmt() {
     use crate::{slice, DataType, Tensor};
     use std::mem::size_of;
 
     let shape = [2, 3, 4];
-    let data = [
-        0.0f32, 1., 2., 3., //
-        04., 05., 06., 07., //
-        08., 09., 10., 11., //
-        //
-        12., 13., 14., 15., //
-        16., 17., 18., 19., //
-        20., 21., 22., 23., //
-    ];
+    let data = Vec::from_iter((0..24).map(|x| x as f32));
     let data = unsafe {
         std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len() * size_of::<f32>())
     };
