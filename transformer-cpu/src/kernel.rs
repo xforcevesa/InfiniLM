@@ -170,15 +170,15 @@ where
     }
 }
 
-pub(super) fn rotary_embedding<T>(t: &mut Tensor<T>, head_size: udim, pos: upos, theta: f32)
+pub(super) fn rotary_embedding<T>(t: &mut Tensor<T>, head_dim: udim, pos: upos, theta: f32)
 where
     T: DerefMut<Target = [u8]>,
 {
     assert!(t.contiguous_len() > 0);
     let (len, batch) = t.shape().split_last().unwrap();
-    let (n, idx_strides) = idx_strides(batch);
     let len = *len as usize / 2;
-    let mul = 2. / head_size as f32;
+    let (n, idx_strides) = idx_strides(batch);
+    let mul = 2. / head_dim as f32;
     for i in 0..n {
         let indices = expand_indices(i, &idx_strides, &[0, 1]);
         let pos = (pos + indices[indices.len() - 3] as upos) as f32;
