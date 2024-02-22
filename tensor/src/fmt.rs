@@ -4,7 +4,7 @@
     udim, DataType, Tensor,
 };
 use half::{bf16, f16};
-use std::fmt;
+use std::{fmt, ops::Deref};
 
 fn write_tensor<T: fmt::LowerExp>(
     to: &mut fmt::Formatter<'_>,
@@ -77,17 +77,11 @@ fn write_matrix<T: fmt::LowerExp>(
     Ok(())
 }
 
-impl<Physical: AsRef<[u8]>> fmt::Display for Tensor<Physical> {
+impl<Physical: Deref<Target = [u8]>> fmt::Display for Tensor<Physical> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let offset = self.offset() as usize;
         macro_rules! write_tensor {
             ($ty:ty) => {
-                write_tensor(
-                    f,
-                    unsafe { self.as_slice().as_ptr().cast::<$ty>().add(offset) },
-                    self.shape(),
-                    self.strides(),
-                )
+                write_tensor(f, self.as_ptr().cast::<$ty>(), self.shape(), self.strides())
             };
         }
         match self.data_type() {

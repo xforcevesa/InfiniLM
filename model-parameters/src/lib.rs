@@ -2,7 +2,10 @@ mod memory;
 mod save;
 
 use common::utok;
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::{Deref, Range},
+    sync::Arc,
+};
 use tensor::{DataType, Tensor};
 
 pub use memory::{Memory, SafeTensorError};
@@ -105,9 +108,11 @@ pub struct Storage {
     range: Range<usize>,
 }
 
-impl AsRef<[u8]> for Storage {
+impl Deref for Storage {
+    type Target = [u8];
+
     #[inline]
-    fn as_ref(&self) -> &[u8] {
+    fn deref(&self) -> &Self::Target {
         &self.data.as_ref().as_ref()[self.range.clone()]
     }
 }

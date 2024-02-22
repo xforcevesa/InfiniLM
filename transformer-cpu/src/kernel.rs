@@ -2,7 +2,7 @@
 use gemm::{f16, gemm};
 use std::{
     iter::zip,
-    ops::{Mul, MulAssign},
+    ops::{Deref, DerefMut, Mul, MulAssign},
 };
 use tensor::{expand_indices, idx_strides, udim, DataType, Tensor};
 
@@ -14,8 +14,8 @@ macro_rules! slice {
 
 pub(super) fn gather<T, U>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: &[utok])
 where
-    T: AsMut<[u8]>,
-    U: AsRef<[u8]>,
+    T: DerefMut<Target = [u8]>,
+    U: Deref<Target = [u8]>,
 {
     debug_assert_eq!(x.data_type(), table.data_type());
     debug_assert_eq!(x.shape().last(), table.shape().last());
@@ -32,9 +32,9 @@ where
 
 pub(super) fn rms_norm<T, U, V>(o: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
 where
-    T: AsMut<[u8]>,
-    U: AsRef<[u8]>,
-    V: AsRef<[u8]>,
+    T: DerefMut<Target = [u8]>,
+    U: Deref<Target = [u8]>,
+    V: Deref<Target = [u8]>,
 {
     let dt = o.data_type();
     debug_assert_eq!(x.data_type(), dt);
@@ -88,9 +88,9 @@ fn rms_norm_reduce(x: impl Iterator<Item = f32>, epsilon: f32) -> f32 {
 
 pub(super) fn matmul<T, U, V>(c: &mut Tensor<T>, a: &Tensor<U>, b: &Tensor<V>)
 where
-    T: AsMut<[u8]>,
-    U: AsRef<[u8]>,
-    V: AsRef<[u8]>,
+    T: DerefMut<Target = [u8]>,
+    U: Deref<Target = [u8]>,
+    V: Deref<Target = [u8]>,
 {
     let dt = c.data_type();
     assert_eq!(a.data_type(), dt);
@@ -172,7 +172,7 @@ where
 
 pub(super) fn rotary_embedding<T>(t: &mut Tensor<T>, head_size: udim, pos: upos, theta: f32)
 where
-    T: AsMut<[u8]>,
+    T: DerefMut<Target = [u8]>,
 {
     assert!(t.contiguous_len() > 0);
     let (len, batch) = t.shape().split_last().unwrap();

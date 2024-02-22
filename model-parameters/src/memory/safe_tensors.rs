@@ -67,32 +67,22 @@ impl Memory {
                             if header.tensors.contains_key(&qkv) {
                                 tensor(&qkv)
                             } else {
-                                let q = {
-                                    let t = tensor(&name("self_attn.q_proj"));
-                                    let nh = config.num_attention_heads as udim;
-                                    let s = t.shape();
-
-                                    t.reshape(&[nh, 2, s[0] / nh / 2, s[1]])
-                                        .transpose(&[0, 2, 1, 3])
-                                };
-                                let k = {
-                                    let t = tensor(&name("self_attn.k_proj"));
-                                    let nh = config.num_key_value_heads as udim;
-                                    let s = t.shape();
-
-                                    t.reshape(&[nh, 2, s[0] / nh / 2, s[1]])
-                                        .transpose(&[0, 2, 1, 3])
-                                };
-                                let v = {
-                                    let t = tensor(&name("self_attn.v_proj"));
-                                    let nh = config.num_key_value_heads as udim;
-                                    let s = t.shape();
-
-                                    t.reshape(&[nh, s[0] / nh * s[1]])
-                                };
                                 let d = config.hidden_size as udim;
-                                let t = concat0(&[&q, &k, &v]);
-                                t.reshape(&[t.size() as udim / d, d])
+                                let nkvh = config.num_key_value_heads as udim;
+                                let nh = config.num_attention_heads as udim;
+                                let dkv = d * nkvh / nh;
+                                let sq = &[nh, 2, d / nh / 2, d];
+                                let skv = &[nkvh, 2, dkv / nkvh / 2, d];
+                                let perm = &[0, 2, 1, 3];
+
+                                let q = tensor(&name("self_attn.q_proj"))
+                                    .reshape(sq)
+                                    .transpose(perm);
+                                let k = tensor(&name("self_attn.k_proj"))
+                                    .reshape(skv)
+                                    .transpose(perm);
+                                let v = tensor(&name("self_attn.v_proj")).reshape(skv);
+                                concat0(&[&q, &k, &v]).reshape(&[d + dkv + dkv, d])
                             }
                         },
                         self_attn_o_proj: tensor(&name("self_attn.o_proj")),

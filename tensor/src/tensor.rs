@@ -6,6 +6,7 @@
 use nalgebra::{DMatrix, DVector, DVectorView};
 use rayon::iter::*;
 use smallvec::SmallVec;
+use std::ops::{Deref, DerefMut};
 
 #[derive(Clone, Debug)]
 pub struct Tensor<Physical> {
@@ -39,11 +40,6 @@ impl<Physical> Tensor<Physical> {
     #[inline]
     pub fn strides(&self) -> &[idim] {
         self.pattern.strides()
-    }
-
-    #[inline]
-    pub fn offset(&self) -> udim {
-        self.pattern.offset() as _
     }
 
     #[inline]
@@ -100,6 +96,11 @@ impl<Physical> Tensor<Physical> {
             pattern: self.pattern.clone(),
             physical,
         }
+    }
+
+    #[inline]
+    fn byte_offset(&self) -> usize {
+        self.pattern.offset() as usize * self.data_type.size()
     }
 }
 
@@ -181,27 +182,31 @@ impl<Physical: Clone> Tensor<Physical> {
     }
 }
 
-impl<Physical: AsRef<[u8]>> Tensor<Physical> {
+impl<Physical: Deref<Target = [u8]>> Tensor<Physical> {
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        self.physical.as_ref()
+        debug_assert!(self.is_contiguous());
+        let off = self.byte_offset();
+        let len = self.bytes_size();
+        &self.physical[off..][..len]
     }
 
     #[inline]
     pub fn as_ptr(&self) -> *const u8 {
-        let ptr = self.physical.as_ref().as_ptr();
-        unsafe { ptr.add(self.offset() as usize * self.data_type.size()) }
+        let ptr = self.physical.as_ptr();
+        let offset = self.byte_offset();
+        unsafe { ptr.add(offset) }
     }
 
     pub fn reform_to(&self, dst: &mut [u8]) {
-        let dt = self.data_type.size();
-        let src = &self.physical.as_ref()[self.offset() as usize * dt..];
+        let src = &self.physical[self.byte_offset()..];
         // 计算结尾连续维度数量
         let contiguous = self.contiguous_len();
         if contiguous == self.shape.len() {
             // 所有维度都连续，直接拷贝所有数据
             dst.copy_from_slice(&src[..dst.len()]);
         } else {
+            let dt = self.data_type.size();
             // 一部分维度连续，迭代不连续的部分
             let (iter, contiguous) = self.shape.split_at(self.shape.len() - contiguous);
             let (n, idx_strides) = idx_strides(iter);
@@ -217,20 +222,24 @@ impl<Physical: AsRef<[u8]>> Tensor<Physical> {
     }
 }
 
-impl<Physical: AsMut<[u8]>> Tensor<Physical> {
+impl<Physical: DerefMut<Target = [u8]>> Tensor<Physical> {
     #[inline]
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        self.physical.as_mut()
+        debug_assert!(self.is_contiguous());
+        let off = self.byte_offset();
+        let len = self.bytes_size();
+        &mut self.physical[off..][..len]
     }
 
     #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        let ptr = self.physical.as_mut().as_mut_ptr();
-        unsafe { ptr.add(self.offset() as usize * self.data_type.size()) }
+        let ptr = self.physical.as_mut_ptr();
+        let offset = self.byte_offset();
+        unsafe { ptr.add(offset) }
     }
 
     pub fn get_mut_ptr(&mut self, indices: &DVectorView<idim>) -> Option<*mut u8> {
-        let i = self.pattern.0.dot(&indices) as usize * self.data_type.size();
+        let i = self.pattern.0.dot(indices) as usize * self.data_type.size();
         let physical = self.physical.as_mut();
         if i < physical.len() {
             Some(unsafe { physical.as_mut_ptr().add(i) })
