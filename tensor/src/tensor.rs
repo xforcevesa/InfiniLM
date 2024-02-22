@@ -1,9 +1,10 @@
 ﻿use crate::{
-    idim,
+    expand_indices, idim, idx_strides,
     operator::{Broadcast, Slice, SliceDim, Split, Squeeze, SqueezeOp, Transpose},
-    udim, DataType, Operator,
+    pattern::Pattern,
+    udim, DataType, Operator, Shape,
 };
-use nalgebra::{DMatrix, DVector, DVectorView};
+use nalgebra::DVectorView;
 use rayon::iter::*;
 use smallvec::SmallVec;
 use std::ops::{Deref, DerefMut};
@@ -45,11 +46,6 @@ impl<Physical> Tensor<Physical> {
     #[inline]
     pub const fn physical(&self) -> &Physical {
         &self.physical
-    }
-
-    #[inline]
-    pub fn physical_mut(&mut self) -> &mut Physical {
-        &mut self.physical
     }
 
     #[inline]
@@ -102,10 +98,8 @@ impl<Physical> Tensor<Physical> {
     fn byte_offset(&self) -> usize {
         self.pattern.offset() as usize * self.data_type.size()
     }
-}
 
-impl<Physical: Clone> Tensor<Physical> {
-    pub fn reshape(&self, shape: &[udim]) -> Self {
+    pub fn reshape(self, shape: &[udim]) -> Self {
         assert!(self.is_contiguous());
         assert_eq!(
             self.shape.iter().product::<udim>(),
@@ -116,10 +110,12 @@ impl<Physical: Clone> Tensor<Physical> {
             data_type: self.data_type,
             pattern: Pattern::from_shape(&shape, self.pattern.offset()),
             shape,
-            physical: self.physical.clone(),
+            physical: self.physical,
         }
     }
+}
 
+impl<Physical: Clone> Tensor<Physical> {
     pub fn apply(&self, operator: &impl Operator) -> SmallVec<[Self; 1]> {
         operator
             .build(&self.shape)
@@ -182,6 +178,40 @@ impl<Physical: Clone> Tensor<Physical> {
     }
 }
 
+pub trait Storage {
+    type Access<'a>
+    where
+        Self: 'a;
+    type AccessMut<'a>
+    where
+        Self: 'a;
+
+    fn access(&self) -> Self::Access<'_>;
+    fn access_mut(&mut self) -> Self::AccessMut<'_>;
+}
+
+impl<Physical: Storage> Tensor<Physical> {
+    #[inline]
+    pub fn access(&self) -> Tensor<Physical::Access<'_>> {
+        Tensor {
+            data_type: self.data_type,
+            shape: self.shape.clone(),
+            pattern: self.pattern.clone(),
+            physical: self.physical.access(),
+        }
+    }
+
+    #[inline]
+    pub fn access_mut(&mut self) -> Tensor<Physical::AccessMut<'_>> {
+        Tensor {
+            data_type: self.data_type,
+            shape: self.shape.clone(),
+            pattern: self.pattern.clone(),
+            physical: self.physical.access_mut(),
+        }
+    }
+}
+
 impl<Physical: Deref<Target = [u8]>> Tensor<Physical> {
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
@@ -224,78 +254,22 @@ impl<Physical: Deref<Target = [u8]>> Tensor<Physical> {
 
 impl<Physical: DerefMut<Target = [u8]>> Tensor<Physical> {
     #[inline]
-    pub fn as_slice_mut(&mut self) -> &mut [u8] {
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
         debug_assert!(self.is_contiguous());
         let off = self.byte_offset();
         let len = self.bytes_size();
         &mut self.physical[off..][..len]
     }
 
-    #[inline]
-    pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        let ptr = self.physical.as_mut_ptr();
-        let offset = self.byte_offset();
-        unsafe { ptr.add(offset) }
+    pub fn locate_start_mut(&mut self) -> *mut u8 {
+        let off = self.byte_offset();
+        (&mut self.physical[off]) as _
     }
 
-    pub fn get_mut_ptr(&mut self, indices: &DVectorView<idim>) -> Option<*mut u8> {
+    pub fn locate_mut(&mut self, indices: &DVectorView<idim>) -> Option<*mut u8> {
         let i = self.pattern.0.dot(indices) as usize * self.data_type.size();
-        let physical = self.physical.as_mut();
-        if i < physical.len() {
-            Some(unsafe { physical.as_mut_ptr().add(i) })
-        } else {
-            None
-        }
+        self.physical.get_mut(i).map(|r| r as _)
     }
-}
-
-pub type Shape = SmallVec<[udim; 4]>;
-pub type Affine = DMatrix<idim>;
-
-#[derive(Clone, Debug)]
-struct Pattern(DVector<idim>);
-
-impl Pattern {
-    pub fn from_shape(shape: &[udim], offset: idim) -> Self {
-        let n = shape.len();
-        let mut strides = vec![0; n + 1];
-        strides[n - 1] = 1;
-        strides[n] = offset;
-        for i in (1..n).rev() {
-            strides[i - 1] = strides[i] * shape[i] as idim;
-        }
-        Self(DVector::from_vec(strides))
-    }
-
-    #[inline]
-    pub fn strides(&self) -> &[idim] {
-        &self.0.as_slice()[..self.0.len() - 1]
-    }
-
-    #[inline]
-    pub fn offset(&self) -> idim {
-        self.0[self.0.len() - 1]
-    }
-}
-
-pub fn idx_strides(shape: &[udim]) -> (udim, Vec<udim>) {
-    let mut idx_strides = vec![0; shape.len()];
-    idx_strides[shape.len() - 1] = 1;
-    for i in (1..shape.len()).rev() {
-        idx_strides[i - 1] = idx_strides[i] * shape[i];
-    }
-    (shape[0] * idx_strides[0], idx_strides)
-}
-
-pub fn expand_indices(i: udim, idx_strides: &[udim], tail: &[idim]) -> DVector<idim> {
-    let mut rem = i as idim;
-    let mut ans = vec![0 as idim; idx_strides.len() + tail.len()];
-    for (i, &s) in idx_strides.iter().enumerate() {
-        ans[i] = rem / s as idim;
-        rem %= s as idim;
-    }
-    ans[idx_strides.len()..].copy_from_slice(tail);
-    DVector::from_vec(ans)
 }
 
 #[test]

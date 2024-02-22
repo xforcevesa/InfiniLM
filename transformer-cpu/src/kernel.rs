@@ -20,7 +20,7 @@ where
     debug_assert_eq!(x.data_type(), table.data_type());
     debug_assert_eq!(x.shape().last(), table.shape().last());
 
-    let x = x.as_slice_mut();
+    let x = x.as_mut_slice();
     let table = table.as_slice();
     debug_assert_eq!(x.len() % tokens.len(), 0);
 
@@ -42,7 +42,7 @@ where
     debug_assert_eq!(o.shape(), x.shape());
     debug_assert_eq!(&[*o.shape().last().unwrap()], w.shape());
 
-    let o = o.as_slice_mut();
+    let o = o.as_mut_slice();
     let x = x.as_slice();
     let w = w.as_slice();
 
@@ -104,7 +104,7 @@ where
     assert_eq!(a.shape(), &[m, k]);
     assert_eq!(b.shape(), &[k, n]);
 
-    let dst = c.as_mut_ptr();
+    let dst = c.locate_start_mut();
     let dst_strides = c.strides();
     let dst_cs = dst_strides[1] as isize;
     let dst_rs = dst_strides[0] as isize;
@@ -183,7 +183,7 @@ where
         let indices = expand_indices(i, &idx_strides, &[0, 1]);
         let pos = (pos + indices[indices.len() - 3] as upos) as f32;
         let ptr = t
-            .get_mut_ptr(&indices.as_view())
+            .locate_mut(&indices.as_view())
             .unwrap()
             .cast::<(f16, f16)>();
         let slice = unsafe { std::slice::from_raw_parts_mut(ptr, len) };

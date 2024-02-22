@@ -1,10 +1,12 @@
 mod cache;
 mod kernel;
+mod storage;
 
 use cache::LayerCache;
 use common::{upos, utok};
 use kernel::{gather, matmul, rms_norm, rotary_embedding};
 use model_parameters::{Llama2, Memory};
+use storage::Storage;
 use tensor::{udim, DataType, Tensor};
 
 pub extern crate model_parameters;
@@ -42,17 +44,17 @@ impl Transformer {
         let dt = self.model.data_type();
 
         #[inline]
-        fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Vec<u8>> {
+        fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
             Tensor::new(
                 dt,
                 shape,
-                vec![0u8; shape.iter().product::<udim>() as usize * dt.size()],
+                Storage::new(shape.iter().product::<udim>() as usize * dt.size()),
             )
         }
         // println!("tokens: {tokens:?}");
 
         let mut a = tensor(dt, &[seq_len, d]);
-        gather(&mut a, &self.model.embed_tokens(), tokens);
+        gather(&mut a.access_mut(), &self.model.embed_tokens(), tokens);
         // println!("gather: {a}");
 
         let mut b = tensor(dt, &[seq_len, d]);
@@ -60,23 +62,27 @@ impl Transformer {
         for layer in 0..self.model.num_hidden_layers() {
             // b <- rms-norm(a)
             rms_norm(
-                &mut b,
-                &a,
+                &mut b.access_mut(),
+                &a.access(),
                 &self.model.input_layernorm(layer),
                 self.model.rms_norm_eps(),
             );
             // println!("layer {layer} rms norm: {b}");
             // qkv = b * w_qkv
-            matmul(&mut qkv, &b, &self.model.w_qkv(layer).transpose(&[1, 0]));
+            matmul(
+                &mut qkv.access_mut(),
+                &b.access(),
+                &self.model.w_qkv(layer).transpose(&[1, 0]),
+            );
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             // println!("layer {layer} q: {}", qkv[0]);
             // println!("layer {layer} k: {}", qkv[1]);
             // println!("layer {layer} v: {}", qkv[2]);
             let theta = self.model.rope_theta();
-            rotary_embedding(&mut qkv[0], dh, pos, theta);
-            rotary_embedding(&mut qkv[1], dh, pos, theta);
-            // println!("layer {layer} rot q: {}", qkv[0]);
-            // println!("layer {layer} rot k: {}", qkv[1]);
+            rotary_embedding(&mut qkv[0].access_mut(), dh, pos, theta);
+            rotary_embedding(&mut qkv[1].access_mut(), dh, pos, theta);
+            // println!("layer {layer} rot q: {}", qkv[0].access());
+            // println!("layer {layer} rot k: {}", qkv[1].access());
         }
 
         vec![]

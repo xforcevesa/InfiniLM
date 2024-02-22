@@ -1,8 +1,4 @@
-﻿use crate::{
-    idim,
-    tensor::{expand_indices, idx_strides},
-    udim, DataType, Tensor,
-};
+﻿use crate::{expand_indices, idim, idx_strides, udim, DataType, Tensor};
 use half::{bf16, f16};
 use std::{fmt, ops::Deref};
 
