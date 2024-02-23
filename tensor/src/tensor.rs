@@ -103,6 +103,7 @@ impl<Physical> Tensor<Physical> {
     }
 
     pub fn reshape(self, shape: &[udim]) -> Self {
+        assert_eq!(self.size() as udim, shape.iter().product::<udim>());
         if self.is_contiguous() {
             // reshape: 张量物理连续，直接修改形状和模式
             assert_eq!(
@@ -161,7 +162,6 @@ impl<Physical> Tensor<Physical> {
             // split: 原本的一个维度拆成多个，支持拆分物理连续的那一个维度
             let axis = same_head;
             let insert_dims = &target[axis..target.len() - same_tail];
-            assert_eq!(current[axis], insert_dims.iter().product::<udim>());
 
             let mut i = 0;
             let mut j = 0;
@@ -350,6 +350,16 @@ impl<Physical: Deref<Target = [u8]>> Tensor<Physical> {
         let off = self.byte_offset();
         let len = self.bytes_size();
         &self.physical[off..][..len]
+    }
+
+    pub fn locate_start(&self) -> *const u8 {
+        let off = self.byte_offset();
+        (&self.physical[off]) as _
+    }
+
+    pub fn locate(&self, indices: &DVectorView<idim>) -> Option<*const u8> {
+        let i = self.pattern.0.dot(indices) as usize * self.data_type.size();
+        self.physical.get(i).map(|r| r as _)
     }
 
     #[inline]

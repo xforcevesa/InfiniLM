@@ -34,7 +34,12 @@ impl<Physical: Deref<Target = [u8]>> fmt::Display for Tensor<Physical> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         macro_rules! write_tensor {
             ($ty:ty) => {
-                write_tensor(f, self.as_ptr().cast::<$ty>(), self.shape(), self.strides())
+                write_tensor(
+                    f,
+                    self.locate_start().cast::<$ty>(),
+                    self.shape(),
+                    self.strides(),
+                )
             };
         }
         match self.data_type() {
@@ -121,14 +126,11 @@ fn write_matrix<T: DataFmt>(
 
 #[test]
 fn test_fmt() {
-    use crate::{slice, DataType, Tensor};
-    use std::mem::size_of;
+    use crate::{reslice, slice, DataType, Tensor};
 
     let shape = [2, 3, 4];
     let data = Vec::from_iter((0..24).map(|x| x as f32));
-    let data = unsafe {
-        std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len() * size_of::<f32>())
-    };
+    let data = reslice(&data);
 
     let t = Tensor::new(DataType::F32, &shape, data);
     println!("{t}");

@@ -1,10 +1,10 @@
-﻿use common::{upos, utok};
+﻿use common::utok;
 use gemm::{f16, gemm};
 use std::{
     iter::zip,
     ops::{Deref, DerefMut, Mul, MulAssign},
 };
-use tensor::{expand_indices, idx_strides, udim, DataType, Tensor};
+use tensor::{expand_indices, idx_strides, reslice, reslice_mut, udim, DataType, Tensor};
 
 macro_rules! slice {
     ($blob:expr; $width:expr; [$line:expr]) => {
@@ -52,9 +52,9 @@ where
         w: &[u8],
         reduce: impl Fn(&[T]) -> T,
     ) {
-        let o: &mut [T] = unsafe { slice_as_mut(o) };
-        let x: &[T] = unsafe { slice_as(x) };
-        let w: &[T] = unsafe { slice_as(w) };
+        let o: &mut [T] = reslice_mut(o);
+        let x: &[T] = reslice(x);
+        let w: &[T] = reslice(w);
         let d = w.len();
 
         for i in 0..x.len() / w.len() {
@@ -109,12 +109,12 @@ where
     let dst_cs = dst_strides[1] as isize;
     let dst_rs = dst_strides[0] as isize;
 
-    let lhs = a.as_ptr();
+    let lhs = a.locate_start();
     let lhs_strides = a.strides();
     let lhs_cs = lhs_strides[1] as isize;
     let lhs_rs = lhs_strides[0] as isize;
 
-    let rhs = b.as_ptr();
+    let rhs = b.locate_start();
     let rhs_strides = b.strides();
     let rhs_cs = rhs_strides[1] as isize;
     let rhs_rs = rhs_strides[0] as isize;
@@ -170,46 +170,39 @@ where
     }
 }
 
-pub(super) fn rotary_embedding<T>(t: &mut Tensor<T>, head_dim: udim, pos: upos, theta: f32)
+pub(super) fn rotary_embedding<T, U>(t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32)
 where
     T: DerefMut<Target = [u8]>,
+    U: Deref<Target = [u8]>,
 {
-    assert!(t.contiguous_len() > 0);
-    let (len, batch) = t.shape().split_last().unwrap();
-    let len = *len as usize / 2;
+    assert!(t.contiguous_len() >= 2);
+    let (batch, dim) = t.shape().split_at(t.shape().len() - 2);
+    assert_eq!(batch, pos.shape());
+    let nh = dim[0] as usize; // n heads
+    let hd = dim[1] as usize; // head dim
+
     let (n, idx_strides) = idx_strides(batch);
-    let mul = 2. / head_dim as f32;
     for i in 0..n {
-        let indices = expand_indices(i, &idx_strides, &[0, 1]);
-        let pos = (pos + indices[indices.len() - 3] as upos) as f32;
+        let pos = pos
+            .locate(&expand_indices(i, &idx_strides, &[1]).as_view())
+            .unwrap()
+            .cast::<udim>();
+        let pos = unsafe { *pos } as f32;
         let ptr = t
-            .locate_mut(&indices.as_view())
+            .locate_mut(&expand_indices(i, &idx_strides, &[0, 0, 1]).as_view())
             .unwrap()
             .cast::<(f16, f16)>();
-        let slice = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
-        for (j, (a, b)) in slice.iter_mut().enumerate() {
-            let freq = pos / theta.powf((j as f32 * mul).fract());
-            let (sin, cos) = freq.sin_cos();
-            let a_ = a.to_f32();
-            let b_ = b.to_f32();
-            *a = f16::from_f32(a_ * cos - b_ * sin);
-            *b = f16::from_f32(a_ * sin + b_ * cos);
+        let slice = unsafe { std::slice::from_raw_parts_mut(ptr, nh * hd / 2) };
+        for j in 0..nh {
+            for (k, slice) in slice!(slice; hd / 2; [j]).iter_mut().enumerate() {
+                let freq = pos / theta.powf(k as f32 * 2. / hd as f32);
+                let (sin, cos) = freq.sin_cos();
+                let (a, b) = slice;
+                let a_ = a.to_f32();
+                let b_ = b.to_f32();
+                *a = f16::from_f32(a_ * cos - b_ * sin);
+                *b = f16::from_f32(a_ * sin + b_ * cos);
+            }
         }
     }
-}
-
-#[inline(always)]
-unsafe fn slice_as<T, U>(x: &[U]) -> &[T] {
-    let (head, body, tail) = x.align_to::<T>();
-    debug_assert!(head.is_empty());
-    debug_assert!(tail.is_empty());
-    body
-}
-
-#[inline(always)]
-unsafe fn slice_as_mut<T, U>(x: &mut [U]) -> &mut [T] {
-    let (head, body, tail) = x.align_to_mut::<T>();
-    debug_assert!(head.is_empty());
-    debug_assert!(tail.is_empty());
-    body
 }

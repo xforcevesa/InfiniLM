@@ -7,7 +7,7 @@ use common::{upos, utok};
 use kernel::{gather, matmul, rms_norm, rotary_embedding};
 use model_parameters::{Llama2, Memory};
 use storage::Storage;
-use tensor::{udim, DataType, Tensor};
+use tensor::{reslice, udim, DataType, Tensor};
 
 pub extern crate model_parameters;
 
@@ -39,8 +39,10 @@ impl Transformer {
     ) -> Vec<f32> {
         let seq_len = tokens.len() as udim;
         let d = self.model.hidden_size() as udim;
-        let dkv = self.model.kv_hidden_size() as udim;
-        let dh = d / self.model.num_attention_heads() as udim;
+        let nh = self.model.num_attention_heads() as udim;
+        let nkvh = self.model.num_key_value_heads() as udim;
+        let dh = d / nh;
+        let dkv = nkvh * dh;
         let dt = self.model.data_type();
 
         #[inline]
@@ -75,14 +77,19 @@ impl Transformer {
                 &self.model.w_qkv(layer).transpose(&[1, 0]),
             );
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
-            // println!("layer {layer} q: {}", qkv[0]);
-            // println!("layer {layer} k: {}", qkv[1]);
-            // println!("layer {layer} v: {}", qkv[2]);
+            let mut _v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
+            let mut k = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
+            let mut q = qkv.pop().unwrap().reshape(&[seq_len, nh, dh]);
+            // println!("layer {layer} q: {}", q.access());
+            // println!("layer {layer} k: {}", k.access());
+            // println!("layer {layer} v: {}", v.access());
+            let pos = (pos..pos + seq_len).collect::<Vec<udim>>();
+            let pos = Tensor::new(DataType::U32, &[seq_len], reslice::<udim, u8>(&pos));
             let theta = self.model.rope_theta();
-            rotary_embedding(&mut qkv[0].access_mut(), dh, pos, theta);
-            rotary_embedding(&mut qkv[1].access_mut(), dh, pos, theta);
-            // println!("layer {layer} rot q: {}", qkv[0].access());
-            // println!("layer {layer} rot k: {}", qkv[1].access());
+            rotary_embedding(&mut q.access_mut(), &pos, theta);
+            rotary_embedding(&mut k.access_mut(), &pos, theta);
+            // println!("layer {layer} rot q: {}", q.access());
+            // println!("layer {layer} rot k: {}", k.access());
         }
 
         vec![]
