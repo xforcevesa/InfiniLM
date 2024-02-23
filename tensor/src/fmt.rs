@@ -8,25 +8,41 @@ pub trait DataFmt {
 
 impl DataFmt for f16 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:>9.3e}", self.to_f32())
+        if self == &f16::ZERO {
+            write!(f, " ________")
+        } else {
+            write!(f, "{:>9.3e}", self.to_f32())
+        }
     }
 }
 
 impl DataFmt for bf16 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:>9.3e}", self.to_f32())
+        if self == &bf16::ZERO {
+            write!(f, " ________")
+        } else {
+            write!(f, "{:>9.3e}", self.to_f32())
+        }
     }
 }
 
 impl DataFmt for f32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:>9.3e}", self)
+        if self == &0. {
+            write!(f, " ________")
+        } else {
+            write!(f, "{:>9.3e}", self)
+        }
     }
 }
 
 impl DataFmt for f64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:>9.3e}", self)
+        if self == &0. {
+            write!(f, " ________")
+        } else {
+            write!(f, "{:>9.3e}", self)
+        }
     }
 }
 

@@ -41,14 +41,15 @@ impl Transformer {
         let dt = self.model.data_type();
         let epsilon = self.model.rms_norm_eps();
         let theta = self.model.rope_theta();
-        let att_slice = &[slice![all], slice![pos; 1; seq_len], slice![all]];
+        let cat_slice = &[slice![all], slice![pos; 1;       seq_len], slice![all]];
+        let att_slice = &[slice![all], slice![  0; 1; pos + seq_len], slice![all]];
         let pos = (pos..pos + seq_len).collect::<Vec<udim>>();
         let pos = Tensor::new(DataType::U32, &[seq_len], reslice::<udim, u8>(&pos));
         // println!("tokens: {tokens:?}");
 
         let mut a = tensor(dt, &[seq_len, d]);
         gather(&mut a.access_mut(), &self.model.embed_tokens(), tokens);
-        // println!("gather: {a}");
+        // println!("gather:\n{a}");
 
         let mut b = tensor(dt, &[seq_len, d]);
         let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv]);
@@ -60,7 +61,7 @@ impl Transformer {
                 &self.model.input_layernorm(layer),
                 epsilon,
             );
-            // println!("layer {layer} rms norm: {b}");
+            // println!("layer {layer} rms norm:\n{b}");
             matmul(
                 &mut qkv.access_mut(),
                 &b,
@@ -70,25 +71,28 @@ impl Transformer {
             let v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
             let mut k = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
             let mut q = qkv.pop().unwrap().reshape(&[seq_len, nh, dh]);
-            // println!("layer {layer} q: {}", q.access());
-            // println!("layer {layer} k: {}", k.access());
-            // println!("layer {layer} v: {}", v.access());
+            // println!("layer {layer} q:\n{}", q.access());
+            // println!("layer {layer} k:\n{}", k.access());
+            // println!("layer {layer} v:\n{}", v.access());
             rotary_embedding(&mut q.access_mut(), &pos, theta);
             rotary_embedding(&mut k.access_mut(), &pos, theta);
-            // println!("layer {layer} rot q: {}", q.access());
-            // println!("layer {layer} rot k: {}", k.access());
-            let _q = q.transpose(&[1, 0, 2]);
+            // println!("layer {layer} rot q:\n{}", q.access());
+            // println!("layer {layer} rot k:\n{}", k.access());
+            let q = q.transpose(&[1, 0, 2]);
             let k = k.transpose(&[1, 0, 2]);
             let v = v.transpose(&[1, 0, 2]);
+
             let (k_cache, v_cache) = cache[layer].get();
-            {
-                let mut k_att = k_cache.slice(att_slice);
-                let mut v_att = v_cache.slice(att_slice);
-                k.access().reform_to(&mut k_att.access_mut());
-                v.access().reform_to(&mut v_att.access_mut());
-            }
-            println!("layer {layer} k cache: {}", k_cache.access());
-            println!("layer {layer} v cache: {}", v_cache.access());
+            let mut k_cat = k_cache.slice(cat_slice);
+            let mut v_cat = v_cache.slice(cat_slice);
+            k.access().reform_to(&mut k_cat.access_mut());
+            v.access().reform_to(&mut v_cat.access_mut());
+
+            let k_att = k_cache.slice(att_slice);
+            let v_att = v_cache.slice(att_slice);
+            println!("layer {layer} q attention:\n{}", q.access());
+            println!("layer {layer} k attention:\n{}", k_att.access());
+            println!("layer {layer} v attention:\n{}", v_att.access());
         }
 
         vec![]
