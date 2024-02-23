@@ -219,3 +219,10 @@ where
         }
     }
 }
+
+pub(super) fn softmax<T>(_x: &mut Tensor<T>)
+where
+    T: DerefMut<Target = [u8]>,
+{
+    // TODO
+}
