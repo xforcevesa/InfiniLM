@@ -54,7 +54,6 @@ impl Transformer {
         let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv]);
         for layer in 0..self.model.num_hidden_layers() {
             let mut b = b.access_mut();
-            // b <- rms-norm(a)
             rms_norm(
                 &mut b,
                 &a.access(),
@@ -62,7 +61,6 @@ impl Transformer {
                 epsilon,
             );
             // println!("layer {layer} rms norm: {b}");
-            // qkv = b * w_qkv
             matmul(
                 &mut qkv.access_mut(),
                 &b,
@@ -85,12 +83,12 @@ impl Transformer {
             let (k_cache, v_cache) = cache[layer].get();
             {
                 let mut k_att = k_cache.slice(att_slice);
-                let mut k_att = k_att.access_mut();
-                k.access().reform_to(k_att.as_mut_slice());
                 let mut v_att = v_cache.slice(att_slice);
-                let mut v_att = v_att.access_mut();
-                v.access().reform_to(v_att.as_mut_slice());
+                k.access().reform_to(&mut k_att.access_mut());
+                v.access().reform_to(&mut v_att.access_mut());
             }
+            println!("layer {layer} k cache: {}", k_cache.access());
+            println!("layer {layer} v cache: {}", v_cache.access());
         }
 
         vec![]

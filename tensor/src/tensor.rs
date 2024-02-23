@@ -353,7 +353,10 @@ impl<Physical: Deref<Target = [u8]>> Tensor<Physical> {
         unsafe { ptr.add(offset) }
     }
 
-    pub fn reform_to(&self, dst: &mut [u8]) {
+    /// # Safety
+    ///
+    /// The caller must ensure that the `dst` can be a valid tensor physical.
+    pub unsafe fn reform_to_raw(&self, dst: &mut [u8]) {
         let src = &self.physical[self.byte_offset()..];
         // 计算结尾连续维度数量
         let contiguous = self.contiguous_len();
@@ -372,6 +375,34 @@ impl<Physical: Deref<Target = [u8]>> Tensor<Physical> {
                 let j = pattern.dot(&expand_indices(i, &idx_strides, &[]));
                 unsafe { std::slice::from_raw_parts_mut((ptr + i as usize * len) as *mut u8, len) }
                     .copy_from_slice(&src[j as usize * dt..][..len]);
+            });
+        }
+    }
+
+    pub fn reform_to<U>(&self, dst: &mut Tensor<U>)
+    where
+        U: DerefMut<Target = [u8]>,
+    {
+        assert_eq!(self.data_type, dst.data_type);
+        assert_eq!(self.shape, dst.shape);
+        let contiguous = self.contiguous_len().min(dst.contiguous_len());
+        if contiguous == self.shape.len() {
+            dst.as_mut_slice().copy_from_slice(self.as_slice());
+        } else {
+            let dt = self.data_type.size();
+            // 一部分维度连续，迭代不连续的部分
+            let (iter, contiguous) = self.shape.split_at(self.shape.len() - contiguous);
+            let (n, idx_strides) = idx_strides(iter);
+            let src_pattern = self.pattern.0.view_range(..iter.len(), ..);
+            let dst_pattern = dst.pattern.0.view_range(..iter.len(), ..);
+            let src = self.locate_start() as usize;
+            let dst = dst.locate_start() as usize;
+            let count = contiguous.iter().product::<udim>() as usize * dt;
+            (0..n).into_par_iter().for_each(|i| {
+                let indices = expand_indices(i, &idx_strides, &[]);
+                let src = (src + src_pattern.dot(&indices) as usize * dt) as *const u8;
+                let dst = (dst + dst_pattern.dot(&indices) as usize * dt) as *mut u8;
+                unsafe { std::ptr::copy_nonoverlapping(src, dst, count) };
             });
         }
     }

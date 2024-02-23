@@ -186,7 +186,7 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     let mut offset = 0;
     for t in tensors {
         let len = t.bytes_size();
-        t.reform_to(&mut data[offset..][..len]);
+        unsafe { t.reform_to_raw(&mut data[offset..][..len]) };
         offset += len;
     }
 
