@@ -17,9 +17,8 @@ impl Memory {
                     w_qkv: cast(src.w_qkv(l), new_dtype),
                     self_attn_o_proj: cast(src.self_attn_o_proj(l), new_dtype),
                     post_attention_layernorm: cast(src.post_attention_layernorm(l), new_dtype),
-                    mlp_gate: cast(src.mlp_gate(l), new_dtype),
+                    mlp_gate_up: cast(src.mlp_gate_up(l), new_dtype),
                     mlp_down: cast(src.mlp_down(l), new_dtype),
-                    mlp_up: cast(src.mlp_up(l), new_dtype),
                 })
                 .collect(),
             model_norm: cast(src.model_norm(), new_dtype),

@@ -60,6 +60,7 @@ pub trait Llama2 {
     fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage>;
     fn self_attn_o_proj(&self, layer: usize) -> Tensor<Storage>;
     fn post_attention_layernorm(&self, layer: usize) -> Tensor<Storage>;
+    fn mlp_gate_up(&self, layer: usize) -> Tensor<Storage>;
     fn mlp_gate(&self, layer: usize) -> Tensor<Storage>;
     fn mlp_down(&self, layer: usize) -> Tensor<Storage>;
     fn mlp_up(&self, layer: usize) -> Tensor<Storage>;

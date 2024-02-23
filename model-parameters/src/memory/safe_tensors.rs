@@ -87,9 +87,18 @@ impl Memory {
                         },
                         self_attn_o_proj: tensor(&name("self_attn.o_proj")),
                         post_attention_layernorm: tensor(&name("post_attention_layernorm")),
-                        mlp_gate: tensor(&name("mlp.gate_proj")),
+                        mlp_gate_up: {
+                            let gate_up = name("mlp.gate_up_proj");
+                            if header.tensors.contains_key(&gate_up) {
+                                tensor(&gate_up)
+                            } else {
+                                concat0(&[
+                                    &tensor(&name("mlp.gate_proj")),
+                                    &tensor(&name("mlp.up_proj")),
+                                ])
+                            }
+                        },
                         mlp_down: tensor(&name("mlp.down_proj")),
-                        mlp_up: tensor(&name("mlp.up_proj")),
                     }
                 })
                 .collect(),

@@ -21,9 +21,8 @@ struct Layer {
     w_qkv: Tensor<Storage>,
     self_attn_o_proj: Tensor<Storage>,
     post_attention_layernorm: Tensor<Storage>,
-    mlp_gate: Tensor<Storage>,
+    mlp_gate_up: Tensor<Storage>,
     mlp_down: Tensor<Storage>,
-    mlp_up: Tensor<Storage>,
 }
 
 impl Llama2 for Memory {
@@ -144,8 +143,18 @@ impl Llama2 for Memory {
     }
 
     #[inline]
+    fn mlp_gate_up(&self, layer: usize) -> Tensor<Storage> {
+        self.layers[layer].mlp_gate_up.clone()
+    }
+
+    #[inline]
     fn mlp_gate(&self, layer: usize) -> Tensor<Storage> {
-        self.layers[layer].mlp_gate.clone()
+        let di = self.config.intermediate_size;
+        let d = self.config.hidden_size;
+        let dt = self.config.torch_dtype.size();
+        let mut physical = self.layers[layer].mlp_gate_up.physical().clone();
+        physical.range.end = physical.range.start + di * d * dt;
+        Tensor::new(self.config.torch_dtype, &[di as _, d as _], physical)
     }
 
     #[inline]
@@ -155,7 +164,13 @@ impl Llama2 for Memory {
 
     #[inline]
     fn mlp_up(&self, layer: usize) -> Tensor<Storage> {
-        self.layers[layer].mlp_up.clone()
+        let di = self.config.intermediate_size;
+        let d = self.config.hidden_size;
+        let dt = self.config.torch_dtype.size();
+        let mut physical = self.layers[layer].mlp_gate_up.physical().clone();
+        physical.range.start += di * d * dt;
+        physical.range.end = physical.range.start + di * d * dt;
+        Tensor::new(self.config.torch_dtype, &[di as _, d as _], physical)
     }
 
     #[inline]

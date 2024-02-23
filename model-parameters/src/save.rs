@@ -66,16 +66,12 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
             tensor_info(model.post_attention_layernorm(layer)),
         );
         header.tensors.insert(
-            format!("model.layers.{layer}.mlp.gate_proj.weight"),
-            tensor_info(model.mlp_gate(layer)),
+            format!("model.layers.{layer}.mlp.gate_up_proj.weight"),
+            tensor_info(model.mlp_gate_up(layer)),
         );
         header.tensors.insert(
             format!("model.layers.{layer}.mlp.down_proj.weight"),
             tensor_info(model.mlp_down(layer)),
-        );
-        header.tensors.insert(
-            format!("model.layers.{layer}.mlp.up_proj.weight"),
-            tensor_info(model.mlp_up(layer)),
         );
     }
     header
@@ -105,9 +101,8 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
         write.write_all(model.w_qkv(layer).as_slice())?;
         write.write_all(model.self_attn_o_proj(layer).as_slice())?;
         write.write_all(model.post_attention_layernorm(layer).as_slice())?;
-        write.write_all(model.mlp_gate(layer).as_slice())?;
+        write.write_all(model.mlp_gate_up(layer).as_slice())?;
         write.write_all(model.mlp_down(layer).as_slice())?;
-        write.write_all(model.mlp_up(layer).as_slice())?;
     }
     write.write_all(model.model_norm().as_slice())?;
     write.write_all(model.lm_head().as_slice())?;
