@@ -1,4 +1,5 @@
-﻿use std::{path::PathBuf, time::Instant};
+﻿use common::utok;
+use std::{io::Write, path::PathBuf, time::Instant};
 use tokenizer::{Tokenizer, BPE};
 use transformer_cpu::{model_parameters::Memory, Transformer};
 
@@ -21,7 +22,7 @@ impl GenerateArgs {
         info!("load model ... {:?}", time.elapsed());
 
         let time = Instant::now();
-        let transformer = Transformer::new(model);
+        let mut transformer = Transformer::new(model);
         let mut kv_cache = transformer.new_cache();
         info!("build transformer ... {:?}", time.elapsed());
 
@@ -34,8 +35,32 @@ impl GenerateArgs {
         info!("encode prompt ... {:?}", time.elapsed());
 
         let time = Instant::now();
-        let (_last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
+        let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
         transformer.update(tokens, &mut kv_cache, 0);
         info!("prefill transformer ... {:?}", time.elapsed());
+
+        print!("{}", self.prompt);
+
+        let mut token = *last;
+        let mut pos = tokens.len();
+        loop {
+            let logits = transformer.forward(token, &mut kv_cache, pos as _);
+            let next = argmax(&logits);
+
+            token = next;
+            pos += 1;
+
+            print!("{}", tokenizer.decode(next).replace('▁', " "));
+            std::io::stdout().flush().unwrap();
+        }
     }
+}
+
+fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .unwrap()
+        .0 as _
 }
