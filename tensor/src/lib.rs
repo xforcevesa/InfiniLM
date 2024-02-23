@@ -13,6 +13,7 @@ pub type idim = i32;
 use std::mem::{align_of, size_of};
 
 pub use data_type::DataType;
+pub use nalgebra::DVector;
 pub use operator::{Operator, SliceDim};
 pub use pattern::{expand_indices, idx_strides, Affine, Shape};
 pub use tensor::{Storage, Tensor};

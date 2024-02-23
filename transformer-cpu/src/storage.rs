@@ -10,8 +10,19 @@ pub struct VecRef<'a>(Ref<'a, Vec<u8>>);
 pub struct VecRefMut<'a>(RefMut<'a, Vec<u8>>);
 
 impl tensor::Storage for Storage {
+    type Raw = [u8];
     type Access<'a> = VecRef<'a>;
     type AccessMut<'a> = VecRefMut<'a>;
+
+    #[inline]
+    unsafe fn get_unchecked(&self) -> &Self::Raw {
+        &*self.0.as_ptr()
+    }
+
+    #[inline]
+    unsafe fn get_unchecked_mut(&mut self) -> &mut Self::Raw {
+        &mut *self.0.as_ptr()
+    }
 
     #[inline]
     fn access(&self) -> Self::Access<'_> {
