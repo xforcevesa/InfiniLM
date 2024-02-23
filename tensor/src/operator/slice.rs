@@ -14,6 +14,13 @@ pub struct SliceDim {
 
 #[macro_export]
 macro_rules! slice {
+    [all] => {
+        $crate::SliceDim {
+            start: 0,
+            step: 1,
+            len: udim::MAX,
+        }
+    };
     [$start:expr; $step:expr; $len:expr] => {
         $crate::SliceDim {
             start: $start,
@@ -26,12 +33,21 @@ macro_rules! slice {
 impl Operator for Slice {
     fn build(&self, input: &[udim]) -> SmallVec<[(Shape, Affine); 1]> {
         debug_assert_eq!(input.len(), self.0.len());
-        debug_assert!(self.0.iter().zip(input).all(|(d, &i)| {
-            let range = 0..i as idim;
-            let start = d.start as idim;
-            let end = start + (d.len - 1) as idim * d.step;
-            range.contains(&start) && range.contains(&end)
-        }));
+        debug_assert!(self
+            .0
+            .iter()
+            .zip(input)
+            .all(|(d, &i)| { (0..i).contains(&d.start) }));
+
+        let shape = self
+            .0
+            .iter()
+            .zip(input)
+            .map(|(d, &i)| {
+                let distance = if d.step > 0 { i - d.start } else { d.start };
+                (distance / d.step.unsigned_abs()).min(d.len)
+            })
+            .collect::<Shape>();
 
         let n = self.0.len();
         let affine = Affine::from_fn(n + 1, n + 1, |r, c| {
@@ -43,7 +59,7 @@ impl Operator for Slice {
                 0
             }
         });
-        smallvec![(self.0.iter().map(|d| d.len).collect(), affine)]
+        smallvec![(shape, affine)]
     }
 }
 

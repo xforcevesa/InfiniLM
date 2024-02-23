@@ -1,20 +1,29 @@
-﻿use model_parameters::Llama2;
+﻿use crate::{tensor, Storage};
+use model_parameters::Llama2;
+use tensor::{udim, Tensor};
 
-pub struct LayerCache(Vec<u8>);
+pub struct LayerCache {
+    k: Tensor<Storage>,
+    v: Tensor<Storage>,
+}
 
 impl LayerCache {
     pub fn new_layers(model: &dyn Llama2) -> Vec<Self> {
-        let dkv = model.num_key_value_heads();
-        let ds = model.max_position_embeddings();
-        let dh = model.hidden_size() / model.num_attention_heads();
+        let dt = model.data_type();
+        let nkvh = model.num_key_value_heads() as udim;
+        let hd = (model.hidden_size() / model.num_attention_heads()) as udim;
+        let max_seq_len = model.max_position_embeddings() as udim;
+        let shape = &[nkvh, max_seq_len, hd];
         (0..model.num_hidden_layers())
-            .map(|_| Self(vec![0; 2 * dkv * ds * dh]))
+            .map(|_| Self {
+                k: tensor(dt, shape),
+                v: tensor(dt, shape),
+            })
             .collect()
     }
 
     #[inline]
-    pub fn get(&mut self) -> (&mut [u8], &mut [u8]) {
-        let mid = self.0.len() / 2;
-        self.0.split_at_mut(mid)
+    pub fn get(&mut self) -> (&mut Tensor<Storage>, &mut Tensor<Storage>) {
+        (&mut self.k, &mut self.v)
     }
 }

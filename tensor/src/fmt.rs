@@ -150,7 +150,7 @@ fn test_fmt() {
     let t = t.transpose(&[1, 0]);
     println!("{t}");
 
-    let t = t.squeeze("_+_");
+    let t = t.reshape(&[3, 1, 2]);
     println!("{t}");
 
     let t = t.broadcast(&[3, 3, 2]);

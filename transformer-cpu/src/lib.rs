@@ -7,7 +7,7 @@ use common::{upos, utok};
 use kernel::{gather, matmul, rms_norm, rotary_embedding};
 use model_parameters::{Llama2, Memory};
 use storage::Storage;
-use tensor::{reslice, udim, DataType, Tensor};
+use tensor::{reslice, slice, udim, DataType, Tensor};
 
 pub extern crate model_parameters;
 
@@ -31,12 +31,7 @@ impl Transformer {
         LayerCache::new_layers(&*self.model)
     }
 
-    pub fn update(
-        &self,
-        tokens: &[utok],
-        _cache: Option<&mut [LayerCache]>,
-        pos: upos,
-    ) -> Vec<f32> {
+    pub fn update(&self, tokens: &[utok], cache: &mut [LayerCache], pos: upos) -> Vec<f32> {
         let seq_len = tokens.len() as udim;
         let d = self.model.hidden_size() as udim;
         let nh = self.model.num_attention_heads() as udim;
@@ -44,15 +39,11 @@ impl Transformer {
         let dh = d / nh;
         let dkv = nkvh * dh;
         let dt = self.model.data_type();
-
-        #[inline]
-        fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
-            Tensor::new(
-                dt,
-                shape,
-                Storage::new(shape.iter().product::<udim>() as usize * dt.size()),
-            )
-        }
+        let epsilon = self.model.rms_norm_eps();
+        let theta = self.model.rope_theta();
+        let att_slice = &[slice![all], slice![pos; 1; seq_len], slice![all]];
+        let pos = (pos..pos + seq_len).collect::<Vec<udim>>();
+        let pos = Tensor::new(DataType::U32, &[seq_len], reslice::<udim, u8>(&pos));
         // println!("tokens: {tokens:?}");
 
         let mut a = tensor(dt, &[seq_len, d]);
@@ -62,38 +53,57 @@ impl Transformer {
         let mut b = tensor(dt, &[seq_len, d]);
         let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv]);
         for layer in 0..self.model.num_hidden_layers() {
+            let mut b = b.access_mut();
             // b <- rms-norm(a)
             rms_norm(
-                &mut b.access_mut(),
+                &mut b,
                 &a.access(),
                 &self.model.input_layernorm(layer),
-                self.model.rms_norm_eps(),
+                epsilon,
             );
             // println!("layer {layer} rms norm: {b}");
             // qkv = b * w_qkv
             matmul(
                 &mut qkv.access_mut(),
-                &b.access(),
+                &b,
                 &self.model.w_qkv(layer).transpose(&[1, 0]),
             );
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
-            let mut _v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
+            let v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
             let mut k = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
             let mut q = qkv.pop().unwrap().reshape(&[seq_len, nh, dh]);
             // println!("layer {layer} q: {}", q.access());
             // println!("layer {layer} k: {}", k.access());
             // println!("layer {layer} v: {}", v.access());
-            let pos = (pos..pos + seq_len).collect::<Vec<udim>>();
-            let pos = Tensor::new(DataType::U32, &[seq_len], reslice::<udim, u8>(&pos));
-            let theta = self.model.rope_theta();
             rotary_embedding(&mut q.access_mut(), &pos, theta);
             rotary_embedding(&mut k.access_mut(), &pos, theta);
             // println!("layer {layer} rot q: {}", q.access());
             // println!("layer {layer} rot k: {}", k.access());
+            let _q = q.transpose(&[1, 0, 2]);
+            let k = k.transpose(&[1, 0, 2]);
+            let v = v.transpose(&[1, 0, 2]);
+            let (k_cache, v_cache) = cache[layer].get();
+            {
+                let mut k_att = k_cache.slice(att_slice);
+                let mut k_att = k_att.access_mut();
+                k.access().reform_to(k_att.as_mut_slice());
+                let mut v_att = v_cache.slice(att_slice);
+                let mut v_att = v_att.access_mut();
+                v.access().reform_to(v_att.as_mut_slice());
+            }
         }
 
         vec![]
     }
+}
+
+#[inline]
+fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
+    Tensor::new(
+        dt,
+        shape,
+        Storage::new(shape.iter().product::<udim>() as usize * dt.size()),
+    )
 }
 
 #[test]

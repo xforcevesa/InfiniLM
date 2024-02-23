@@ -1,6 +1,6 @@
 ﻿use crate::{
     expand_indices, idim, idx_strides,
-    operator::{Broadcast, Slice, SliceDim, Split, Squeeze, SqueezeOp, Transpose},
+    operator::{Broadcast, Slice, SliceDim, Split, Transpose},
     pattern::Pattern,
     udim, DataType, Operator, Shape,
 };
@@ -281,22 +281,6 @@ impl<Physical: Clone> Tensor<Physical> {
             axis: axis as udim,
             segments: Shape::from_iter(segments.iter().map(|&d| d as udim)),
         })
-    }
-
-    pub fn squeeze(&self, ops: &str) -> Self {
-        self.apply(&Squeeze(
-            ops.chars()
-                .map(|s| match s {
-                    '+' => SqueezeOp::Insert,
-                    '-' => SqueezeOp::Remove,
-                    '_' => SqueezeOp::Skip,
-                    _ => unreachable!(),
-                })
-                .collect(),
-        ))
-        .into_iter()
-        .next()
-        .unwrap()
     }
 
     pub fn transpose(&self, axes: &[usize]) -> Self {
