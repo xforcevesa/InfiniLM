@@ -95,78 +95,91 @@ where
     let dt = c.data_type();
     assert_eq!(a.data_type(), dt);
     assert_eq!(b.data_type(), dt);
-    assert_eq!(c.shape().len(), 2);
-    assert_eq!(a.shape().len(), 2);
-    assert_eq!(b.shape().len(), 2);
-    let m = c.shape()[0];
-    let n = c.shape()[1];
-    let k = a.shape()[1];
-    assert_eq!(a.shape(), &[m, k]);
-    assert_eq!(b.shape(), &[k, n]);
 
-    let dst = c.locate_start_mut();
-    let dst_strides = c.strides();
+    let rank = c.shape().len();
+    assert_eq!(a.shape().len(), rank);
+    assert_eq!(b.shape().len(), rank);
+
+    let (batch, mn) = c.shape().split_at(rank - 2);
+    let (a_batch, mk) = a.shape().split_at(rank - 2);
+    let (b_batch, kn) = b.shape().split_at(rank - 2);
+    assert_eq!(a_batch, batch);
+    assert_eq!(b_batch, batch);
+
+    let m = mn[0];
+    let n = mn[1];
+    let k = mk[1];
+    assert_eq!(mk, &[m, k]);
+    assert_eq!(kn, &[k, n]);
+
+    let dst_strides = &c.strides()[rank - 2..];
     let dst_cs = dst_strides[1] as isize;
     let dst_rs = dst_strides[0] as isize;
 
-    let lhs = a.locate_start();
-    let lhs_strides = a.strides();
+    let lhs_strides = &a.strides()[rank - 2..];
     let lhs_cs = lhs_strides[1] as isize;
     let lhs_rs = lhs_strides[0] as isize;
 
-    let rhs = b.locate_start();
-    let rhs_strides = b.strides();
+    let rhs_strides = &b.strides()[rank - 2..];
     let rhs_cs = rhs_strides[1] as isize;
     let rhs_rs = rhs_strides[0] as isize;
 
-    match dt {
-        DataType::F32 => unsafe {
-            gemm(
-                m as _,
-                n as _,
-                k as _,
-                dst.cast::<f32>(),
-                dst_cs,
-                dst_rs,
-                false,
-                lhs.cast::<f32>(),
-                lhs_cs,
-                lhs_rs,
-                rhs.cast::<f32>(),
-                rhs_cs,
-                rhs_rs,
-                0.,
-                1.,
-                false,
-                false,
-                false,
-                gemm::Parallelism::Rayon(0),
-            )
-        },
-        DataType::F16 => unsafe {
-            gemm(
-                m as _,
-                n as _,
-                k as _,
-                dst.cast::<f16>(),
-                dst_cs,
-                dst_rs,
-                false,
-                lhs.cast::<f16>(),
-                lhs_cs,
-                lhs_rs,
-                rhs.cast::<f16>(),
-                rhs_cs,
-                rhs_rs,
-                f16::from_f32(0.),
-                f16::from_f32(1.),
-                false,
-                false,
-                false,
-                gemm::Parallelism::Rayon(0),
-            )
-        },
-        _ => unreachable!(),
+    let (batch, idx_strides) = idx_strides(batch);
+    for i in 0..batch {
+        let indices = expand_indices(i, &idx_strides, &[0, 0, 1]);
+        let indices = indices.as_view();
+        let dst = c.locate_mut(&indices).unwrap();
+        let lhs = a.locate(&indices).unwrap();
+        let rhs = b.locate(&indices).unwrap();
+        match dt {
+            DataType::F32 => unsafe {
+                gemm(
+                    m as _,
+                    n as _,
+                    k as _,
+                    dst.cast::<f32>(),
+                    dst_cs,
+                    dst_rs,
+                    false,
+                    lhs.cast::<f32>(),
+                    lhs_cs,
+                    lhs_rs,
+                    rhs.cast::<f32>(),
+                    rhs_cs,
+                    rhs_rs,
+                    0.,
+                    1.,
+                    false,
+                    false,
+                    false,
+                    gemm::Parallelism::Rayon(0),
+                )
+            },
+            DataType::F16 => unsafe {
+                gemm(
+                    m as _,
+                    n as _,
+                    k as _,
+                    dst.cast::<f16>(),
+                    dst_cs,
+                    dst_rs,
+                    false,
+                    lhs.cast::<f16>(),
+                    lhs_cs,
+                    lhs_rs,
+                    rhs.cast::<f16>(),
+                    rhs_cs,
+                    rhs_rs,
+                    f16::from_f32(0.),
+                    f16::from_f32(1.),
+                    false,
+                    false,
+                    false,
+                    gemm::Parallelism::None,
+                )
+            },
+            _ => unreachable!(),
+        }
     }
 }
 

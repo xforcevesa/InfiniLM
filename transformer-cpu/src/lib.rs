@@ -41,8 +41,9 @@ impl Transformer {
         let dt = self.model.data_type();
         let epsilon = self.model.rms_norm_eps();
         let theta = self.model.rope_theta();
-        let cat_slice = &[slice![all], slice![pos; 1;       seq_len], slice![all]];
-        let att_slice = &[slice![all], slice![  0; 1; pos + seq_len], slice![all]];
+        let att_len = pos + seq_len;
+        let cat_slice = &[slice![all], slice![pos; 1; seq_len], slice![all]];
+        let att_slice = &[slice![all], slice![  0; 1; att_len], slice![all]];
         let pos = (pos..pos + seq_len).collect::<Vec<udim>>();
         let pos = Tensor::new(DataType::U32, &[seq_len], reslice::<udim, u8>(&pos));
         // println!("tokens: {tokens:?}");
@@ -82,17 +83,25 @@ impl Transformer {
             let k = k.transpose(&[1, 0, 2]);
             let v = v.transpose(&[1, 0, 2]);
 
+            let mut q_att = tensor(dt, q.shape());
+            q.access().reform_to(&mut q_att.access_mut());
+
             let (k_cache, v_cache) = cache[layer].get();
             let mut k_cat = k_cache.slice(cat_slice);
             let mut v_cat = v_cache.slice(cat_slice);
             k.access().reform_to(&mut k_cat.access_mut());
             v.access().reform_to(&mut v_cat.access_mut());
 
+            let q_att = q_att.reshape(&[nkvh, nh / nkvh * seq_len, dh]);
             let k_att = k_cache.slice(att_slice);
             let v_att = v_cache.slice(att_slice);
-            println!("layer {layer} q attention:\n{}", q.access());
-            println!("layer {layer} k attention:\n{}", k_att.access());
-            println!("layer {layer} v attention:\n{}", v_att.access());
+            // println!("layer {layer} q attention:\n{}", q_att.access());
+            // println!("layer {layer} k attention:\n{}", k_att.access());
+            // println!("layer {layer} v attention:\n{}", v_att.access());
+
+            let mut att = tensor(dt, &[nkvh, nh / nkvh * seq_len, att_len]);
+            let k_att = k_att.transpose(&[0, 2, 1]);
+            matmul(&mut att.access_mut(), &q_att.access(), &k_att.access());
         }
 
         vec![]

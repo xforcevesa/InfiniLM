@@ -32,12 +32,16 @@ pub type Shape = SmallVec<[udim; 4]>;
 pub type Affine = DMatrix<idim>;
 
 pub fn idx_strides(shape: &[udim]) -> (udim, Vec<udim>) {
-    let mut idx_strides = vec![0; shape.len()];
-    idx_strides[shape.len() - 1] = 1;
-    for i in (1..shape.len()).rev() {
-        idx_strides[i - 1] = idx_strides[i] * shape[i];
+    if shape.is_empty() {
+        (1, vec![])
+    } else {
+        let mut idx_strides = vec![0; shape.len()];
+        idx_strides[shape.len() - 1] = 1;
+        for i in (1..shape.len()).rev() {
+            idx_strides[i - 1] = idx_strides[i] * shape[i];
+        }
+        (shape[0] * idx_strides[0], idx_strides)
     }
-    (shape[0] * idx_strides[0], idx_strides)
 }
 
 pub fn expand_indices(i: udim, idx_strides: &[udim], tail: &[idim]) -> DVector<idim> {
