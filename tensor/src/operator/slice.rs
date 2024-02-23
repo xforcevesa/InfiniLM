@@ -45,7 +45,8 @@ impl Operator for Slice {
             .zip(input)
             .map(|(d, &i)| {
                 let distance = if d.step > 0 { i - d.start } else { d.start };
-                (distance / d.step.unsigned_abs()).min(d.len)
+                let step = d.step.unsigned_abs();
+                ((distance + step - 1) / step).min(d.len)
             })
             .collect::<Shape>();
 
