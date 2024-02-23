@@ -39,6 +39,7 @@ impl Transformer {
         let dh = d / nh;
         let dkv = nkvh * dh;
         let head_group = nh / nkvh;
+        let head_div = (dh as f32).sqrt().recip();
         let dt = self.model.data_type();
         let epsilon = self.model.rms_norm_eps();
         let theta = self.model.rope_theta();
@@ -67,11 +68,8 @@ impl Transformer {
                 epsilon,
             );
             // println!("layer {layer} rms norm:\n{b}");
-            matmul(
-                &mut qkv.access_mut(),
-                &b.access_mut(),
-                &self.model.w_qkv(layer).transpose(&[1, 0]),
-            );
+            let w_qkv = self.model.w_qkv(layer).transpose(&[1, 0]);
+            matmul(&mut qkv.access_mut(), 0., &b.access_mut(), &w_qkv, 1.);
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             let v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
             let mut k = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
@@ -103,18 +101,25 @@ impl Transformer {
 
             {
                 let k_att = k_att.transpose(&[0, 2, 1]);
-                matmul(&mut att.access_mut(), &q_att.access(), &k_att.access());
+                matmul(
+                    &mut att.access_mut(),
+                    0.,
+                    &q_att.access(),
+                    &k_att.access(),
+                    head_div,
+                );
                 {
                     let mut att = att.clone().reshape(&[nh, seq_len, att_len]);
                     softmax(&mut att.access_mut());
                 }
-                matmul(&mut c.access_mut(), &att.access(), &v_att.access());
+                matmul(&mut c.access_mut(), 0., &att.access(), &v_att.access(), 1.);
             }
             {
                 let c = c.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
                 let mut b = b.clone().reshape(&[seq_len, nh, dh]);
                 c.access().reform_to(&mut b.access_mut());
             }
+            // println!("layer {layer} after attention:\n{}", b.access());
         }
 
         vec![]
