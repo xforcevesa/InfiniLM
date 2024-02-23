@@ -40,6 +40,7 @@ impl Transformer {
         let dkv = nkvh * dh;
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
+        let di = self.model.intermediate_size() as udim;
         let dt = self.model.data_type();
         let epsilon = self.model.rms_norm_eps();
         let theta = self.model.rope_theta();
@@ -50,26 +51,28 @@ impl Transformer {
         let pos = Tensor::new(DataType::U32, &[seq_len], reslice::<udim, u8>(&pos));
         // println!("tokens: {tokens:?}");
 
-        let mut a = tensor(dt, &[seq_len, d]);
-        let mut b = tensor(dt, &[seq_len, d]);
-        let mut c = tensor(dt, &[nkvh, head_group * seq_len, dh]);
+        let mut x0 = tensor(dt, &[seq_len, d]);
+        let mut x1 = tensor(dt, &[seq_len, d]);
+        let mut x2 = tensor(dt, &[nkvh, head_group * seq_len, dh]);
         let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv]);
         let mut q_att = tensor(dt, &[nh, seq_len, dh]);
         let mut att = tensor(dt, &[nkvh, head_group * seq_len, att_len]);
+        let mut gate_up = tensor(dt, &[seq_len, di]);
 
-        gather(&mut a.access_mut(), &self.model.embed_tokens(), tokens);
-        // println!("gather:\n{a}");
+        gather(&mut x0.access_mut(), &self.model.embed_tokens(), tokens);
+        // println!("gather:\n{}", x0.access());
 
         for layer in 0..self.model.num_hidden_layers() {
+            let input_layernorm = self.model.input_layernorm(layer);
             rms_norm(
-                &mut b.access_mut(),
-                &a.access(),
-                &self.model.input_layernorm(layer),
+                &mut x1.access_mut(),
+                &x0.access(),
+                &input_layernorm,
                 epsilon,
             );
-            // println!("layer {layer} rms norm:\n{b}");
+            // println!("layer {layer} input norm:\n{}", x1.access());
             let w_qkv = self.model.w_qkv(layer).transpose(&[1, 0]);
-            matmul(&mut qkv.access_mut(), 0., &b.access_mut(), &w_qkv, 1.);
+            matmul(&mut qkv.access_mut(), 0., &x1.access_mut(), &w_qkv, 1.);
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             let v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
             let mut k = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
@@ -112,14 +115,27 @@ impl Transformer {
                     let mut att = att.clone().reshape(&[nh, seq_len, att_len]);
                     softmax(&mut att.access_mut());
                 }
-                matmul(&mut c.access_mut(), 0., &att.access(), &v_att.access(), 1.);
+                matmul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
             }
             {
-                let c = c.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
-                let mut b = b.clone().reshape(&[seq_len, nh, dh]);
-                c.access().reform_to(&mut b.access_mut());
+                let x2 = x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
+                let mut x1 = x1.clone().reshape(&[seq_len, nh, dh]);
+                x2.access().reform_to(&mut x1.access_mut());
             }
-            // println!("layer {layer} after attention:\n{}", b.access());
+            // println!("layer {layer} after attention:\n{}", x1.access());
+            let wo = self.model.self_attn_o_proj(layer).transpose(&[1, 0]);
+            matmul(&mut x0.access_mut(), 1., &x1.access(), &wo, 1.);
+            // println!("layer {layer} o_proj:\n{}", x0.access());
+            let post_layernorm = self.model.post_attention_layernorm(layer);
+            rms_norm(&mut x1.access_mut(), &x0.access(), &post_layernorm, epsilon);
+            // println!("layer {layer} post norm:\n{}", x1.access());
+            let w_gate_up = self.model.mlp_gate_up(layer).transpose(&[1, 0]);
+            matmul(&mut gate_up.access_mut(), 0., &x1.access(), &w_gate_up, 1.);
+            let mut gate_up = gate_up.split(1, &[di as _, di as _]);
+            let _up = gate_up.pop().unwrap();
+            let _gate = gate_up.pop().unwrap();
+            // println!("layer {layer} gate:\n{}", gate.access());
+            // println!("layer {layer} up:\n{}", up.access());
         }
 
         vec![]
