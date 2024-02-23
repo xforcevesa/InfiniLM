@@ -4,21 +4,24 @@ mod storage;
 
 use cache::LayerCache;
 use common::{upos, utok};
-use kernel::{gather, matmul, rms_norm, rotary_embedding, softmax, swiglu};
+use gemm::f16;
+use kernel::{gather, matmul, rms_norm, rms_norm_inplace, rotary_embedding, softmax, swiglu};
 use model_parameters::{Llama2, Memory};
 use storage::Storage;
-use tensor::{reslice, slice, udim, DataType, Tensor};
+use tensor::{reslice, reslice_mut, slice, udim, DataType, Tensor};
 
 pub extern crate model_parameters;
 
 pub struct Transformer {
     model: Box<dyn Llama2>,
+    logits: Vec<f32>,
 }
 
 impl Transformer {
     #[inline]
     pub fn new(model: Box<dyn Llama2>) -> Self {
         Self {
+            logits: vec![0.0f32; model.vocab_size()],
             model: match model.data_type() {
                 DataType::BF16 => Box::new(Memory::cast(&*model, DataType::F32)),
                 _ => model,
@@ -31,7 +34,7 @@ impl Transformer {
         LayerCache::new_layers(&*self.model)
     }
 
-    pub fn update(&self, tokens: &[utok], cache: &mut [LayerCache], pos: upos) -> Vec<f32> {
+    pub fn update(&self, tokens: &[utok], cache: &mut [LayerCache], pos: upos) -> Tensor<Storage> {
         let seq_len = tokens.len() as udim;
         let d = self.model.hidden_size() as udim;
         let nh = self.model.num_attention_heads() as udim;
@@ -148,7 +151,40 @@ impl Transformer {
             // println!("layer {layer} down:\n{}", x0.access());
         }
 
-        vec![]
+        x0
+    }
+
+    pub fn forward(&mut self, token: utok, cache: &mut [LayerCache], pos: upos) -> &[f32] {
+        let mut x = self.update(&[token], cache, pos);
+
+        let model_norm = self.model.model_norm();
+        rms_norm_inplace(&mut x.access_mut(), &model_norm, self.model.rms_norm_eps());
+        // println!("pos {pos} model norm:\n{}", x.access());
+
+        let dt = self.model.data_type();
+        let voc = self.model.vocab_size() as udim;
+        matmul(
+            &mut Tensor::new(dt, &[1, voc], reslice_mut(&mut self.logits)),
+            0.,
+            &x.access(),
+            &self.model.lm_head().transpose(&[1, 0]),
+            1.,
+        );
+        // println!("pos {pos} logits:\n{}", logits);
+
+        match self.model.data_type() {
+            DataType::F32 => {}
+            DataType::F16 => {
+                let ptr = self.logits.as_ptr().cast::<f16>();
+                let len = self.model.vocab_size();
+                let src = unsafe { std::slice::from_raw_parts(ptr, len) };
+                for (dst, src) in self.logits.iter_mut().rev().zip(src.iter().rev()) {
+                    *dst = f32::from(*src);
+                }
+            }
+            _ => unreachable!(),
+        }
+        &self.logits
     }
 }
 
