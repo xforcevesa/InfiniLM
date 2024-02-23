@@ -4,7 +4,7 @@ mod storage;
 
 use cache::LayerCache;
 use common::{upos, utok};
-use kernel::{gather, matmul, rms_norm, rotary_embedding, softmax};
+use kernel::{gather, matmul, rms_norm, rotary_embedding, softmax, swiglu};
 use model_parameters::{Llama2, Memory};
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
@@ -57,7 +57,7 @@ impl Transformer {
         let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv]);
         let mut q_att = tensor(dt, &[nh, seq_len, dh]);
         let mut att = tensor(dt, &[nkvh, head_group * seq_len, att_len]);
-        let mut gate_up = tensor(dt, &[seq_len, di]);
+        let mut gate_up = tensor(dt, &[seq_len, di + di]);
 
         gather(&mut x0.access_mut(), &self.model.embed_tokens(), tokens);
         // println!("gather:\n{}", x0.access());
@@ -123,19 +123,29 @@ impl Transformer {
                 x2.access().reform_to(&mut x1.access_mut());
             }
             // println!("layer {layer} after attention:\n{}", x1.access());
+
             let wo = self.model.self_attn_o_proj(layer).transpose(&[1, 0]);
             matmul(&mut x0.access_mut(), 1., &x1.access(), &wo, 1.);
             // println!("layer {layer} o_proj:\n{}", x0.access());
+
             let post_layernorm = self.model.post_attention_layernorm(layer);
             rms_norm(&mut x1.access_mut(), &x0.access(), &post_layernorm, epsilon);
             // println!("layer {layer} post norm:\n{}", x1.access());
+
             let w_gate_up = self.model.mlp_gate_up(layer).transpose(&[1, 0]);
             matmul(&mut gate_up.access_mut(), 0., &x1.access(), &w_gate_up, 1.);
             let mut gate_up = gate_up.split(1, &[di as _, di as _]);
-            let _up = gate_up.pop().unwrap();
-            let _gate = gate_up.pop().unwrap();
+            let up = gate_up.pop().unwrap();
+            let mut gate = gate_up.pop().unwrap();
             // println!("layer {layer} gate:\n{}", gate.access());
             // println!("layer {layer} up:\n{}", up.access());
+
+            swiglu(&mut gate.access_mut(), unsafe { &up.access_unchecked() });
+            // println!("layer {layer} swiglu:\n{}", gate.access());
+
+            let mlp_down = self.model.mlp_down(layer).transpose(&[1, 0]);
+            matmul(&mut x0.access_mut(), 1., &gate.access(), &mlp_down, 1.);
+            // println!("layer {layer} down:\n{}", x0.access());
         }
 
         vec![]
