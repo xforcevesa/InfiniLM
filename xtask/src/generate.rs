@@ -1,4 +1,6 @@
 ﻿use common::utok;
+use log::LevelFilter;
+use simple_logger::SimpleLogger;
 use std::{io::Write, path::PathBuf, time::Instant};
 use tokenizer::{Tokenizer, BPE};
 use transformer_cpu::{model_parameters::Memory, Transformer};
@@ -11,10 +13,26 @@ pub(crate) struct GenerateArgs {
     /// Prompt.
     #[clap(short, long)]
     prompt: String,
+    /// Log level.
+    #[clap(short, long)]
+    log: Option<String>,
 }
 
 impl GenerateArgs {
     pub fn invoke(self) {
+        let log = self
+            .log
+            .and_then(|log| match log.to_lowercase().as_str() {
+                "off" | "none" => Some(LevelFilter::Off),
+                "trace" => Some(LevelFilter::Trace),
+                "debug" => Some(LevelFilter::Debug),
+                "info" => Some(LevelFilter::Info),
+                "error" => Some(LevelFilter::Error),
+                _ => None,
+            })
+            .unwrap_or(LevelFilter::Warn);
+        SimpleLogger::new().with_level(log).init().unwrap();
+
         let model_dir = PathBuf::from(self.model);
 
         let time = Instant::now();

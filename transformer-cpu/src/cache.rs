@@ -3,7 +3,9 @@ use model_parameters::Llama2;
 use tensor::{udim, Tensor};
 
 pub struct LayerCache {
+    /// Key cache, shape = `num_kv_head x max_seq_len x head_dim`.
     k: Tensor<Storage>,
+    /// Value cache, shape = `num_kv_head x max_seq_len x head_dim`.
     v: Tensor<Storage>,
 }
 

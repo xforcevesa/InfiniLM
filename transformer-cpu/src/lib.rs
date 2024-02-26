@@ -56,6 +56,7 @@ impl Transformer {
 
         let mut x0 = tensor(dt, &[seq_len, d]);
         let mut x1 = tensor(dt, &[seq_len, d]);
+        // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
         let mut x2 = tensor(dt, &[nkvh, head_group * seq_len, dh]);
         let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv]);
         let mut q_att = tensor(dt, &[nh, seq_len, dh]);

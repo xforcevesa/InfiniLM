@@ -9,9 +9,6 @@ extern crate clap;
 extern crate log;
 
 fn main() {
-    // set env for POWERSHELL: `$env:RUST_LOG="INFO";`
-    env_logger::init();
-
     use Commands::*;
     match Cli::parse().command {
         Cast(cast) => cast.invode(),
