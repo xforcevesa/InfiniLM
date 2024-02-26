@@ -201,8 +201,7 @@ fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
 #[test]
 fn test_build() {
     use model_parameters::SafeTensorError;
-    use std::io::ErrorKind::NotFound;
-    use std::time::Instant;
+    use std::{io::ErrorKind::NotFound, time::Instant};
 
     let t0 = Instant::now();
     let safetensors = Memory::load_safetensors("../../TinyLlama-1.1B-Chat-v1.0");

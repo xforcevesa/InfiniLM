@@ -5,6 +5,7 @@ members = [
     "model-parameters",
     "tokenizer",
     "transformer-cpu",
+    "transformer-nvidia",
     "xtask",
 ]
 resolver = "2"

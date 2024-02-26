@@ -1,10 +1,12 @@
 ﻿mod cast;
+mod realloc;
 mod safe_tensors;
 
 use crate::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
 use tensor::{udim, Shape, Tensor};
 
+pub use realloc::Allocator;
 pub use safe_tensors::SafeTensorError;
 pub(crate) use safe_tensors::SafeTensorHeaderJson;
 
@@ -210,8 +212,7 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
 
 #[test]
 fn test_load() {
-    use std::io::ErrorKind::NotFound;
-    use std::time::Instant;
+    use std::{io::ErrorKind::NotFound, time::Instant};
 
     let t0 = Instant::now();
     let safetensors = Memory::load_safetensors("../../TinyLlama-1.1B-Chat-v1.0");

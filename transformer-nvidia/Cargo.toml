@@ -1,0 +1,19 @@
+[package]
+name = "transformer-nvidia"
+version = "0.0.0"
+edition = "2021"
+authors = ["YdrMaster <ydrml@hotmail.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+common = { path = "../common" }
+tensor = { path = "../tensor" }
+model-parameters = { path = "../model-parameters" }
+cuda = { git = "https://github.com/YdrMaster/cuda-bench" }
+
+[dev-dependencies]
+tokenizer = { path = "../tokenizer" }
+
+[build-dependencies]
+find_cuda_helper = "0.2"

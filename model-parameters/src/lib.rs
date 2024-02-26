@@ -8,7 +8,7 @@ use std::{
 };
 use tensor::{DataType, Tensor};
 
-pub use memory::{Memory, SafeTensorError};
+pub use memory::{Allocator, Memory, SafeTensorError};
 pub use save::save;
 
 pub trait Llama2 {
@@ -80,6 +80,23 @@ pub trait Llama2 {
     fn model_norm(&self) -> Tensor<Storage>;
     /// Shape = `vocab_size x hidden_size`.
     fn lm_head(&self) -> Tensor<Storage>;
+
+    fn tensors(&self) -> Vec<Tensor<Storage>> {
+        let mut tensors = Vec::with_capacity(self.num_hidden_layers() * 6 + 3);
+        tensors.push(self.embed_tokens());
+        tensors.push(self.embed_tokens());
+        for layer in 0..self.num_hidden_layers() {
+            tensors.push(self.input_layernorm(layer));
+            tensors.push(self.w_qkv(layer));
+            tensors.push(self.self_attn_o_proj(layer));
+            tensors.push(self.post_attention_layernorm(layer));
+            tensors.push(self.mlp_gate_up(layer));
+            tensors.push(self.mlp_down(layer));
+        }
+        tensors.push(self.model_norm());
+        tensors.push(self.lm_head());
+        tensors
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -119,7 +136,7 @@ impl From<&dyn Llama2> for ConfigJson {
 
 #[derive(Clone)]
 pub struct Storage {
-    data: Arc<dyn AsRef<[u8]>>,
+    data: Arc<dyn Deref<Target = [u8]>>,
     range: Range<usize>,
 }
 
@@ -134,7 +151,7 @@ impl Deref for Storage {
 
 impl Storage {
     #[inline]
-    pub fn new(data: Arc<dyn AsRef<[u8]>>, offset: usize, len: usize) -> Self {
+    pub fn new(data: Arc<dyn Deref<Target = [u8]>>, offset: usize, len: usize) -> Self {
         Self {
             data,
             range: offset..offset + len,
@@ -142,11 +159,16 @@ impl Storage {
     }
 
     #[inline]
-    pub fn from_blob(data: impl 'static + AsRef<[u8]>) -> Self {
+    pub fn from_blob(data: impl 'static + Deref<Target = [u8]>) -> Self {
         let len = data.as_ref().len();
         Self {
             data: Arc::new(data),
             range: 0..len,
         }
+    }
+
+    #[inline]
+    pub fn raw_blob(&self) -> &[u8] {
+        &self.data
     }
 }
