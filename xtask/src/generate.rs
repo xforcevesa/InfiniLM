@@ -54,7 +54,9 @@ impl GenerateArgs {
 
         let time = Instant::now();
         let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
-        transformer.update(tokens, &mut kv_cache, 0);
+        if !tokens.is_empty() {
+            transformer.update(tokens, &mut kv_cache, 0);
+        }
         info!("prefill transformer ... {:?}", time.elapsed());
 
         print!("{}", self.prompt);

@@ -201,6 +201,7 @@ fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
 #[test]
 fn test_build() {
     use model_parameters::SafeTensorError;
+    use std::io::ErrorKind::NotFound;
     use std::time::Instant;
 
     let t0 = Instant::now();
@@ -210,7 +211,7 @@ fn test_build() {
 
     let safetensors = match safetensors {
         Ok(m) => m,
-        Err(SafeTensorError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(SafeTensorError::Io(e)) if e.kind() == NotFound => return,
         Err(e) => panic!("{e:?}"),
     };
 

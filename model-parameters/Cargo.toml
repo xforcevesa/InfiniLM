@@ -9,7 +9,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
-half = "2.3"
+half = "2.4"
 rayon = "1.8"
 memmap2 = "0.9"
 safetensors = "0.4"

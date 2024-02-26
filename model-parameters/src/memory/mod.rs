@@ -210,6 +210,7 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
 
 #[test]
 fn test_load() {
+    use std::io::ErrorKind::NotFound;
     use std::time::Instant;
 
     let t0 = Instant::now();
@@ -219,7 +220,7 @@ fn test_load() {
 
     let safetensors = match safetensors {
         Ok(m) => m,
-        Err(SafeTensorError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(SafeTensorError::Io(e)) if e.kind() == NotFound => return,
         Err(e) => panic!("{e:?}"),
     };
 

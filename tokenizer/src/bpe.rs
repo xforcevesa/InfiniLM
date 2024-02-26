@@ -130,7 +130,9 @@ impl Tokenizer for BPE {
             if let Some(i) = i.checked_sub(1) {
                 merges[i] = map_pair(self, &tokens, i);
             }
-            merges[i] = map_pair(self, &tokens, i);
+            if i + 1 < merges.len() {
+                merges[i] = map_pair(self, &tokens, i);
+            }
         }
 
         tokens
