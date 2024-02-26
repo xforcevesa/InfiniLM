@@ -1,12 +1,32 @@
 #![cfg(detected_cuda)]
 
-use cuda::{driver, Context};
+mod parameters;
+
+use cuda::{driver, Context, Stream};
+use model_parameters::{Llama2, Memory};
+use parameters::{LayersParameters, ModelParameters};
 use std::{
     ptr::{null_mut, NonNull},
     sync::Arc,
 };
 
 pub extern crate model_parameters;
+
+pub struct Transformer<'a> {
+    host: &'a Memory,
+    model: ModelParameters,
+    layers: LayersParameters,
+}
+
+impl<'a> Transformer<'a> {
+    pub fn new(host: &'a Memory, stream: &Stream) -> Self {
+        Self {
+            host,
+            model: ModelParameters::new(host, stream),
+            layers: LayersParameters::new(3, host, stream),
+        }
+    }
+}
 
 struct HostAllocator(Arc<Context>);
 
@@ -46,10 +66,22 @@ fn test_load() {
         Err(e) => panic!("{e:?}"),
     };
 
+    dev.set_mempool_threshold(u64::MAX);
     dev.context().apply(|ctx| {
         let t0 = Instant::now();
-        let _model = Memory::realloc_with(&safetensors, HostAllocator(ctx.clone_ctx()));
+        let host = Memory::realloc_with(&safetensors, HostAllocator(ctx.clone_ctx()));
+        drop(safetensors);
         let t1 = Instant::now();
         println!("realloc {:?}", t1 - t0);
+
+        let stream = ctx.stream();
+
+        let t0 = Instant::now();
+        let transformer = Transformer::new(&host, &stream);
+        let t1 = Instant::now();
+        transformer.model.sync();
+        transformer.layers.sync(0);
+        let t2 = Instant::now();
+        println!("model host: {:?}, total: {:?}", t1 - t0, t2 - t0);
     });
 }
