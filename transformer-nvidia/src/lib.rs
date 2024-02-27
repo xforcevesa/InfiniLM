@@ -1,49 +1,85 @@
 #![cfg(detected_cuda)]
-#![allow(dead_code)]
 
 mod parameters;
+mod storage;
 
-use cuda::{driver, Context, Stream};
-use model_parameters::Memory;
+use common::{upos, utok};
+use cuda::Stream;
+use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
-use std::{
-    ptr::{null_mut, NonNull},
-    sync::Arc,
-};
+use storage::DevMem;
+use tensor::{reslice, slice, udim, DataType, Tensor};
 
+pub use storage::PageLockedMemory;
+
+pub extern crate cuda;
 pub extern crate model_parameters;
 
 pub struct Transformer<'a> {
-    host: &'a Memory,
+    host: &'a dyn Llama2,
     model: ModelParameters,
     layers: LayersParameters,
 }
 
 impl<'a> Transformer<'a> {
-    pub fn new(host: &'a Memory, stream: &Stream) -> Self {
+    pub fn new(host: &'a dyn Llama2, stream: &Stream) -> Self {
         Self {
             host,
             model: ModelParameters::new(host, stream),
             layers: LayersParameters::new(3, host, stream),
         }
     }
+
+    #[allow(unused)]
+    pub fn update(
+        &self,
+        tokens: &[utok],
+        /*cache: &mut [LayerCache],*/ pos: upos,
+        transfer: &Stream,
+    ) {
+        let seq_len = tokens.len() as udim;
+        let d = self.host.hidden_size() as udim;
+        let nh = self.host.num_attention_heads() as udim;
+        let nkvh = self.host.num_key_value_heads() as udim;
+        let dh = d / nh;
+        let dkv = nkvh * dh;
+        let head_group = nh / nkvh;
+        let head_div = (dh as f32).sqrt().recip();
+        let di = self.host.intermediate_size() as udim;
+        let dt = self.host.data_type();
+        let epsilon = self.host.rms_norm_eps();
+        let theta = self.host.rope_theta();
+        let att_len = pos + seq_len;
+        let cat_slice = &[slice![all], slice![pos; 1; seq_len], slice![all]];
+        let att_slice = &[slice![all], slice![  0; 1; att_len], slice![all]];
+        let pos = (pos..pos + seq_len).collect::<Vec<udim>>();
+        let pos = Tensor::new(DataType::U32, &[seq_len], reslice::<udim, u8>(&pos));
+        // println!("tokens: {tokens:?}");
+
+        let mut x0 = tensor(dt, &[seq_len, d], transfer);
+        let mut x1 = tensor(dt, &[seq_len, d], transfer);
+        // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
+        let mut x2 = tensor(dt, &[nkvh, head_group * seq_len, dh], transfer);
+        let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv], transfer);
+        let mut q_att = tensor(dt, &[nh, seq_len, dh], transfer);
+        let mut att = tensor(dt, &[nkvh, head_group * seq_len, att_len], transfer);
+        let mut gate_up = tensor(dt, &[seq_len, di + di], transfer);
+        transfer.synchronize();
+
+        // gather(&mut x0.access_mut(), &self.model.embed_tokens(), tokens);
+        // println!("gather:\n{}", x0.access());
+
+        for layer in 0..self.host.num_hidden_layers() {}
+    }
 }
 
-struct HostAllocator(Arc<Context>);
-
-impl model_parameters::Allocator for HostAllocator {
-    #[inline]
-    unsafe fn allocate(&self, size: usize) -> NonNull<u8> {
-        let mut ptr = null_mut();
-        self.0.apply(|_| driver!(cuMemHostAlloc(&mut ptr, size, 0)));
-        NonNull::new(ptr.cast()).unwrap()
-    }
-
-    #[inline]
-    unsafe fn deallocate(&self, ptr: NonNull<u8>) {
-        self.0
-            .apply(|_| driver!(cuMemFreeHost(ptr.as_ptr().cast())));
-    }
+#[inline]
+fn tensor<'a>(dt: DataType, shape: &[udim], stream: &'a Stream) -> Tensor<DevMem<'a>> {
+    Tensor::new(
+        dt,
+        shape,
+        DevMem::new(shape.iter().product::<udim>() as usize * dt.size(), stream),
+    )
 }
 
 #[test]
@@ -82,13 +118,8 @@ fn test_load() {
     dev.set_mempool_threshold(u64::MAX);
     dev.context().apply(|ctx| {
         let time = Instant::now();
-        let host = {
-            let len = safetensors.metadata().unwrap().len() as usize;
-            let mut host_ptr = null_mut();
-            driver!(cuMemHostAlloc(&mut host_ptr, len, 0));
-            unsafe { std::slice::from_raw_parts_mut(host_ptr.cast::<u8>(), len) }
-        };
-        safetensors.read_exact(host).unwrap();
+        let mut host = PageLockedMemory::new(safetensors.metadata().unwrap().len() as _, ctx);
+        safetensors.read_exact(&mut host).unwrap();
         drop(safetensors);
         println!("read to host {:?}", time.elapsed());
 
@@ -96,10 +127,10 @@ fn test_load() {
         let host = Memory::load_safetensors(config, host, false).unwrap();
         println!("load {:?}", time.elapsed());
 
-        let stream = ctx.stream();
+        let cpy = ctx.stream();
 
         let time = Instant::now();
-        let _transformer = Transformer::new(&host, &stream);
+        let _transformer = Transformer::new(&host, &cpy);
         println!("build model host: {:?}", time.elapsed());
     });
 }
