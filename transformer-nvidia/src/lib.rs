@@ -19,12 +19,12 @@ pub extern crate model_parameters;
 
 pub struct Transformer<'a> {
     host: &'a dyn Llama2,
-    model: ModelParameters,
-    layers: LayersParameters,
+    model: ModelParameters<'a>,
+    layers: LayersParameters<'a>,
 }
 
 impl<'a> Transformer<'a> {
-    pub fn new(host: &'a dyn Llama2, stream: &Stream) -> Self {
+    pub fn new(host: &'a dyn Llama2, stream: &'a Stream) -> Self {
         Self {
             host,
             model: ModelParameters::new(host, stream),
@@ -34,14 +34,16 @@ impl<'a> Transformer<'a> {
 
     #[allow(unused)]
     pub fn update(
-        &self,
+        &mut self,
         tokens: &[utok],
-        /*cache: &mut [LayerCache],*/ pos: upos,
+        // cache: &mut [LayerCache],
+        pos: upos,
         compute: &Stream,
         transfer: &Stream,
     ) {
         let seq_len = tokens.len() as udim;
         let d = self.host.hidden_size() as udim;
+        let nlayer = self.host.num_hidden_layers();
         let nh = self.host.num_attention_heads() as udim;
         let nkvh = self.host.num_key_value_heads() as udim;
         let dh = d / nh;
@@ -76,7 +78,10 @@ impl<'a> Transformer<'a> {
         // println!("gather:\n{}", map_tensor(&x0));
 
         compute.wait_for(&e_alloc);
-        for layer in 0..self.host.num_hidden_layers() {}
+        for layer in 0..nlayer {
+            self.layers.load(layer, self.host, transfer);
+            let params = self.layers.sync(layer, compute);
+        }
     }
 }
 

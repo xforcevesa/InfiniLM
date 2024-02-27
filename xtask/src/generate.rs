@@ -215,7 +215,7 @@ fn on_nvidia_gpu(
 
         let time = Instant::now();
         let host = Memory::load_safetensors(config, host, false).unwrap();
-        let transformer = Transformer::new(&host, &cpy);
+        let mut transformer = Transformer::new(&host, &cpy);
         let e_cpy = cpy.record();
         info!("build model host: {:?}", time.elapsed());
 
