@@ -2,16 +2,16 @@
 use model_parameters::Llama2;
 
 pub(crate) struct ModelParameters {
-    embed_tokens: cuda::DevBlob,
     model_norm: cuda::DevBlob,
+    lm_head: cuda::DevBlob,
     sync_event: cuda::Event,
 }
 
 impl ModelParameters {
     pub fn new(host: &dyn Llama2, stream: &Stream) -> Self {
         Self {
-            embed_tokens: stream.from_slice(host.embed_tokens().as_slice()),
             model_norm: stream.from_slice(host.model_norm().as_slice()),
+            lm_head: stream.from_slice(host.lm_head().as_slice()),
             sync_event: stream.record(),
         }
     }
