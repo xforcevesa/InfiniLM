@@ -216,6 +216,7 @@ fn on_nvidia_gpu(
         let transformer = Transformer::new(&host, &cpy);
         info!("build model host: {:?}", time.elapsed());
 
+        let step = step.min(host.max_position_embeddings());
         let time = Instant::now();
         let prompt_tokens = tokenizer.encode(&prompt.trim().replace(' ', "▁"));
         info!("encode prompt ... {:?}", time.elapsed());

@@ -57,6 +57,7 @@ impl<'a> Transformer<'a> {
         // println!("tokens: {tokens:?}");
 
         let mut x0 = tensor(dt, &[seq_len, d], transfer);
+        let e0 = transfer.record();
         let mut x1 = tensor(dt, &[seq_len, d], transfer);
         // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
         let mut x2 = tensor(dt, &[nkvh, head_group * seq_len, dh], transfer);
@@ -64,11 +65,13 @@ impl<'a> Transformer<'a> {
         let mut q_att = tensor(dt, &[nh, seq_len, dh], transfer);
         let mut att = tensor(dt, &[nkvh, head_group * seq_len, att_len], transfer);
         let mut gate_up = tensor(dt, &[seq_len, di + di], transfer);
-        transfer.synchronize();
+        let e_alloc = transfer.record();
 
+        e0.synchronize();
         // gather(&mut x0.access_mut(), &self.model.embed_tokens(), tokens);
         // println!("gather:\n{}", x0.access());
 
+        e_alloc.synchronize();
         for layer in 0..self.host.num_hidden_layers() {}
     }
 }
