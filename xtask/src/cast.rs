@@ -26,7 +26,7 @@ impl CastArgs {
         let model_dir = PathBuf::from(self.model);
 
         let time = Instant::now();
-        let model = Memory::load_safetensors(&model_dir).unwrap();
+        let model = Memory::load_safetensors_from_dir(&model_dir).unwrap();
         println!("load model ... {:?}", time.elapsed());
 
         if model.data_type() == ty {

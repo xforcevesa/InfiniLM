@@ -76,7 +76,7 @@ impl GenerateArgs {
         let model_dir = PathBuf::from(self.model);
 
         let time = Instant::now();
-        let mut model = Box::new(Memory::load_safetensors(&model_dir).unwrap());
+        let mut model = Box::new(Memory::load_safetensors_from_dir(&model_dir).unwrap());
         info!("load model ... {:?}", time.elapsed());
 
         if self.inside_mem {

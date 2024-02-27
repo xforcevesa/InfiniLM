@@ -1,4 +1,5 @@
 #![cfg(detected_cuda)]
+#![allow(dead_code)]
 
 mod parameters;
 
@@ -56,7 +57,7 @@ fn test_load() {
     };
 
     let t0 = Instant::now();
-    let safetensors = Memory::load_safetensors("../../TinyLlama-1.1B-Chat-v1.0_F16");
+    let safetensors = Memory::load_safetensors_from_dir("../../TinyLlama-1.1B-Chat-v1.0_F16");
     let t1 = Instant::now();
     println!("mmap {:?}", t1 - t0);
 

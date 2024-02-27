@@ -215,7 +215,7 @@ fn test_load() {
     use std::{io::ErrorKind::NotFound, time::Instant};
 
     let t0 = Instant::now();
-    let safetensors = Memory::load_safetensors("../../TinyLlama-1.1B-Chat-v1.0");
+    let safetensors = Memory::load_safetensors_from_dir("../../TinyLlama-1.1B-Chat-v1.0");
     let t1 = Instant::now();
     println!("mmap {:?}", t1 - t0);
 
