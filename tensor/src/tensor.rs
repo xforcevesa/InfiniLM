@@ -31,6 +31,24 @@ impl<Physical> Tensor<Physical> {
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that the parts are valid.
+    #[inline]
+    pub unsafe fn from_raw_parts(
+        data_type: DataType,
+        shape: &[udim],
+        pattern: &[idim],
+        physical: Physical,
+    ) -> Self {
+        Self {
+            data_type,
+            shape: shape.iter().copied().collect(),
+            pattern: Pattern(DVector::from_vec(pattern.iter().copied().collect())),
+            physical,
+        }
+    }
+
     #[inline]
     pub const fn data_type(&self) -> DataType {
         self.data_type
@@ -39,6 +57,11 @@ impl<Physical> Tensor<Physical> {
     #[inline]
     pub fn shape(&self) -> &[udim] {
         &self.shape
+    }
+
+    #[inline]
+    pub fn pattern(&self) -> &[idim] {
+        self.pattern.0.as_slice()
     }
 
     #[inline]
@@ -86,14 +109,14 @@ impl<Physical> Tensor<Physical> {
 
     /// # Safety
     ///
-    /// The caller must ensure that the `physical` matches shape, pattern of `self` and the new `dtype`.
+    /// The caller must ensure that the new `physical` matches data_type, shape and pattern of `self`.
     #[inline]
-    pub unsafe fn set_physical<U>(&self, dtype: DataType, physical: U) -> Tensor<U> {
+    pub unsafe fn map_physical<U>(&self, f: impl FnOnce(&Physical) -> U) -> Tensor<U> {
         Tensor {
-            data_type: dtype,
+            data_type: self.data_type.clone(),
             shape: self.shape.clone(),
             pattern: self.pattern.clone(),
-            physical,
+            physical: f(&self.physical),
         }
     }
 

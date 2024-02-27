@@ -210,10 +210,13 @@ fn on_nvidia_gpu(
         info!("read to host {:?}", time.elapsed());
 
         let cpy = ctx.stream();
+        let compute = ctx.stream();
+        let transfer = ctx.stream();
 
         let time = Instant::now();
         let host = Memory::load_safetensors(config, host, false).unwrap();
         let transformer = Transformer::new(&host, &cpy);
+        let e_cpy = cpy.record();
         info!("build model host: {:?}", time.elapsed());
 
         let step = step.min(host.max_position_embeddings());
@@ -224,7 +227,7 @@ fn on_nvidia_gpu(
         let time = Instant::now();
         let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
         if !tokens.is_empty() {
-            transformer.update(tokens, 0, &ctx.stream());
+            transformer.update(tokens, 0, &compute, &transfer);
         }
         info!("prefill transformer ... {:?}", time.elapsed());
 
@@ -233,6 +236,7 @@ fn on_nvidia_gpu(
         let mut _token = *last;
         let mut pos = tokens.len();
         let time = Instant::now();
+        compute.wait_for(&e_cpy);
         while pos < step {
             // let logits = transformer.forward(token, &mut kv_cache, pos as _);
             // let next = argmax(&logits);

@@ -49,7 +49,7 @@ impl DerefMut for PageLockedMemory {
 pub(crate) struct DevMem<'a> {
     ptr: u64,
     len: usize,
-    ctx: &'a Stream<'a>,
+    _stream: &'a Stream<'a>,
 }
 
 impl<'a> DevMem<'a> {
@@ -59,7 +59,21 @@ impl<'a> DevMem<'a> {
         Self {
             ptr: ptr as _,
             len,
-            ctx: stream,
+            _stream: stream,
         }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl AsRaw for DevMem<'_> {
+    type Raw = cuda::bindings::CUdeviceptr;
+
+    #[inline]
+    unsafe fn as_raw(&self) -> Self::Raw {
+        self.ptr
     }
 }

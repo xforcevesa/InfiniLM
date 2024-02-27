@@ -1,10 +1,12 @@
 #![cfg(detected_cuda)]
 
+mod kernel;
 mod parameters;
 mod storage;
 
 use common::{upos, utok};
-use cuda::Stream;
+use cuda::{AsRaw, Stream};
+use kernel::gather;
 use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
 use storage::DevMem;
@@ -35,6 +37,7 @@ impl<'a> Transformer<'a> {
         &self,
         tokens: &[utok],
         /*cache: &mut [LayerCache],*/ pos: upos,
+        compute: &Stream,
         transfer: &Stream,
     ) {
         let seq_len = tokens.len() as udim;
@@ -57,7 +60,7 @@ impl<'a> Transformer<'a> {
         // println!("tokens: {tokens:?}");
 
         let mut x0 = tensor(dt, &[seq_len, d], transfer);
-        let e0 = transfer.record();
+        let e_alloc_x0 = transfer.record();
         let mut x1 = tensor(dt, &[seq_len, d], transfer);
         // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
         let mut x2 = tensor(dt, &[nkvh, head_group * seq_len, dh], transfer);
@@ -67,11 +70,12 @@ impl<'a> Transformer<'a> {
         let mut gate_up = tensor(dt, &[seq_len, di + di], transfer);
         let e_alloc = transfer.record();
 
-        e0.synchronize();
-        // gather(&mut x0.access_mut(), &self.model.embed_tokens(), tokens);
-        // println!("gather:\n{}", x0.access());
+        compute.wait_for(&e_alloc_x0);
+        gather(&mut x0, &self.host.embed_tokens(), tokens, compute);
+        // compute.synchronize();
+        // println!("gather:\n{}", map_tensor(&x0));
 
-        e_alloc.synchronize();
+        compute.wait_for(&e_alloc);
         for layer in 0..self.host.num_hidden_layers() {}
     }
 }
@@ -83,6 +87,18 @@ fn tensor<'a>(dt: DataType, shape: &[udim], stream: &'a Stream) -> Tensor<DevMem
         shape,
         DevMem::new(shape.iter().product::<udim>() as usize * dt.size(), stream),
     )
+}
+
+#[allow(unused)]
+fn map_tensor(tensor: &Tensor<DevMem>) -> Tensor<Vec<u8>> {
+    unsafe {
+        tensor.map_physical(|dev| {
+            let len = dev.len();
+            let mut buf = vec![0; len];
+            cuda::driver!(cuMemcpyDtoH_v2(buf.as_mut_ptr() as _, dev.as_raw(), len));
+            buf
+        })
+    }
 }
 
 #[test]

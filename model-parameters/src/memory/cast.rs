@@ -76,5 +76,5 @@ fn cast(src: Tensor<Storage>, new_dtype: DataType) -> Tensor<Storage> {
     }
 
     let pysical = Storage::from_blob(data);
-    unsafe { src.set_physical(new_dtype, pysical) }
+    unsafe { Tensor::from_raw_parts(new_dtype, src.shape(), src.pattern(), pysical) }
 }
