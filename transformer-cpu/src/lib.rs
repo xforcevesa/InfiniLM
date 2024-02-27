@@ -23,7 +23,7 @@ impl Transformer {
         Self {
             logits: vec![0.0f32; model.vocab_size()],
             model: match model.data_type() {
-                DataType::BF16 => Box::new(Memory::cast(&*model, DataType::F32)),
+                DataType::BF16 | DataType::F32 => Box::new(Memory::cast(&*model, DataType::F16)),
                 _ => model,
             },
         }

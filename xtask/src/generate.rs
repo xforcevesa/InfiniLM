@@ -1,9 +1,15 @@
 ﻿use common::utok;
 use log::LevelFilter;
 use simple_logger::SimpleLogger;
-use std::{io::Write, path::PathBuf, time::Instant};
+use std::{
+    alloc::Layout, collections::HashMap, io::Write, path::PathBuf, ptr::NonNull, sync::Mutex,
+    time::Instant,
+};
 use tokenizer::{Tokenizer, BPE};
-use transformer_cpu::{model_parameters::Memory, Transformer};
+use transformer_cpu::{
+    model_parameters::{Allocator, Llama2, Memory},
+    Transformer,
+};
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
@@ -13,9 +19,43 @@ pub(crate) struct GenerateArgs {
     /// Prompt.
     #[clap(short, long)]
     prompt: String,
+    /// Max steps.
+    #[clap(short, long)]
+    step: Option<usize>,
+    /// Copy model parameters inside memory.
+    #[clap(short, long)]
+    inside_mem: bool,
     /// Log level.
     #[clap(short, long)]
     log: Option<String>,
+}
+
+struct NormalAllocator(Mutex<HashMap<*const u8, usize>>);
+
+impl Allocator for NormalAllocator {
+    unsafe fn allocate(&self, size: usize) -> NonNull<u8> {
+        let ptr = NonNull::new(std::alloc::alloc(Layout::from_size_align_unchecked(
+            size,
+            std::mem::align_of::<usize>(),
+        )))
+        .unwrap();
+        self.0.lock().unwrap().insert(ptr.as_ptr(), size);
+        ptr
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>) {
+        std::alloc::dealloc(
+            ptr.as_ptr(),
+            Layout::from_size_align_unchecked(
+                self.0
+                    .lock()
+                    .unwrap()
+                    .remove(&ptr.as_ptr().cast_const())
+                    .unwrap(),
+                std::mem::align_of::<usize>(),
+            ),
+        )
+    }
 }
 
 impl GenerateArgs {
@@ -36,9 +76,19 @@ impl GenerateArgs {
         let model_dir = PathBuf::from(self.model);
 
         let time = Instant::now();
-        let model = Box::new(Memory::load_safetensors(&model_dir).unwrap());
+        let mut model = Box::new(Memory::load_safetensors(&model_dir).unwrap());
         info!("load model ... {:?}", time.elapsed());
 
+        if self.inside_mem {
+            let time = Instant::now();
+            let allocator = NormalAllocator(Mutex::new(HashMap::new()));
+            model = Box::new(Memory::realloc_with(&*model, allocator));
+            info!("copy model ... {:?}", time.elapsed());
+        }
+        let step = self
+            .step
+            .unwrap_or(usize::MAX)
+            .min(model.max_position_embeddings());
         let time = Instant::now();
         let mut transformer = Transformer::new(model);
         let mut kv_cache = transformer.new_cache();
@@ -63,7 +113,8 @@ impl GenerateArgs {
 
         let mut token = *last;
         let mut pos = tokens.len();
-        loop {
+        let time = Instant::now();
+        while pos < step {
             let logits = transformer.forward(token, &mut kv_cache, pos as _);
             let next = argmax(&logits);
 
@@ -73,6 +124,13 @@ impl GenerateArgs {
             print!("{}", tokenizer.decode(next).replace('▁', " "));
             std::io::stdout().flush().unwrap();
         }
+        println!();
+        let duration = time.elapsed();
+        info!("generate ... {duration:?}");
+        info!(
+            "avg. speed ... {} tokens/s",
+            (pos - tokens.len()) as f32 / duration.as_secs_f32()
+        )
     }
 }
 

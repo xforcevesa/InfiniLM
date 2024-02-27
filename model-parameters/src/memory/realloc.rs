@@ -66,7 +66,7 @@ impl Memory {
                     w_qkv: writer.write(src.w_qkv(layer)),
                     self_attn_o_proj: writer.write(src.self_attn_o_proj(layer)),
                     post_attention_layernorm: writer.write(src.post_attention_layernorm(layer)),
-                    mlp_gate_up: writer.write(src.mlp_gate(layer)),
+                    mlp_gate_up: writer.write(src.mlp_gate_up(layer)),
                     mlp_down: writer.write(src.mlp_down(layer)),
                 })
                 .collect(),

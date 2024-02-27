@@ -3,7 +3,7 @@
 mod parameters;
 
 use cuda::{driver, Context, Stream};
-use model_parameters::{Llama2, Memory};
+use model_parameters::Memory;
 use parameters::{LayersParameters, ModelParameters};
 use std::{
     ptr::{null_mut, NonNull},

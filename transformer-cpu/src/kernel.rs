@@ -209,7 +209,7 @@ pub(super) fn matmul<T, U, V>(
                     false,
                     false,
                     false,
-                    gemm::Parallelism::None,
+                    gemm::Parallelism::Rayon(0),
                 )
             },
             _ => unreachable!(),
