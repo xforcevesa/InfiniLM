@@ -5,8 +5,8 @@ mod parameters;
 mod storage;
 
 use common::{upos, utok};
-use cuda::{AsRaw, Stream};
-use kernel::gather;
+use cuda::{AsRaw, CudaDataType::half, Stream};
+use kernel::{gather, RmsNormalization};
 use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
 use storage::DevMem;
@@ -21,14 +21,18 @@ pub struct Transformer<'a> {
     host: &'a dyn Llama2,
     model: ModelParameters<'a>,
     layers: LayersParameters<'a>,
+
+    rms_norm: RmsNormalization,
 }
 
 impl<'a> Transformer<'a> {
     pub fn new(host: &'a dyn Llama2, stream: &'a Stream) -> Self {
+        let d = host.hidden_size();
         Self {
             host,
             model: ModelParameters::new(host, stream),
             layers: LayersParameters::new(3, host, stream),
+            rms_norm: RmsNormalization::new(half, d, 1024, stream.ctx()),
         }
     }
 
@@ -81,6 +85,17 @@ impl<'a> Transformer<'a> {
         for layer in 0..nlayer {
             self.layers.load(layer, self.host, transfer);
             let params = self.layers.sync(layer, compute);
+
+            self.rms_norm.launch(
+                x1.physical(),
+                x0.physical(),
+                &params.input_layernorm,
+                epsilon,
+                d as usize,
+                compute,
+            );
+            // compute.synchronize();
+            // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
         }
     }
 }
