@@ -108,7 +108,7 @@ fn on_host(
     let prompt = prompt.as_ref();
 
     let time = Instant::now();
-    let mut model = Box::new(Memory::load_safetensors_from_dir(&model_dir).unwrap());
+    let mut model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
     info!("load model ... {:?}", time.elapsed());
 
     if inside_mem {
@@ -141,7 +141,7 @@ fn on_host(
     let time = Instant::now();
     while pos < step {
         let logits = transformer.forward(token, &mut kv_cache, pos as _);
-        let next = argmax(&logits);
+        let next = argmax(logits);
 
         token = next;
         pos += 1;
@@ -233,18 +233,19 @@ fn on_nvidia_gpu(
 
         print!("{prompt}");
 
-        let mut _token = *last;
+        let mut token = *last;
         let mut pos = tokens.len();
         let time = Instant::now();
         compute.wait_for(&e_cpy);
         while pos < step {
             // let logits = transformer.forward(token, &mut kv_cache, pos as _);
             // let next = argmax(&logits);
+            let next = 0;
 
-            // token = next;
+            token = next;
             pos += 1;
 
-            // print!("{}", tokenizer.decode(next).replace('▁', " "));
+            print!("{}", tokenizer.decode(next).replace('▁', " "));
             std::io::stdout().flush().unwrap();
         }
         println!();

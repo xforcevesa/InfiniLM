@@ -44,7 +44,7 @@ impl<Physical> Tensor<Physical> {
         Self {
             data_type,
             shape: shape.iter().copied().collect(),
-            pattern: Pattern(DVector::from_vec(pattern.iter().copied().collect())),
+            pattern: Pattern(DVector::from_vec(pattern.to_vec())),
             physical,
         }
     }
@@ -113,7 +113,7 @@ impl<Physical> Tensor<Physical> {
     #[inline]
     pub unsafe fn map_physical<U>(&self, f: impl FnOnce(&Physical) -> U) -> Tensor<U> {
         Tensor {
-            data_type: self.data_type.clone(),
+            data_type: self.data_type,
             shape: self.shape.clone(),
             pattern: self.pattern.clone(),
             physical: f(&self.physical),

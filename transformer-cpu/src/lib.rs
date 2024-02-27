@@ -66,7 +66,7 @@ impl Transformer {
         gather(&mut x0.access_mut(), &self.model.embed_tokens(), tokens);
         // println!("gather:\n{}", x0.access());
 
-        for layer in 0..self.model.num_hidden_layers() {
+        for (layer, cache) in cache.iter_mut().enumerate() {
             let input_layernorm = self.model.input_layernorm(layer);
             rms_norm(
                 &mut x1.access_mut(),
@@ -92,7 +92,7 @@ impl Transformer {
             let k = k.transpose(&[1, 0, 2]);
             let v = v.transpose(&[1, 0, 2]);
 
-            let (k_cache, v_cache) = cache[layer].get();
+            let (k_cache, v_cache) = cache.get();
             let mut k_cat = k_cache.slice(cat_slice);
             let mut v_cat = v_cache.slice(cat_slice);
             q.access().reform_to(&mut q_att.access_mut());

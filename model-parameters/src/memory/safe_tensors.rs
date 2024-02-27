@@ -17,7 +17,7 @@ impl Memory {
         let config = File::open(model_dir.join("config.json")).map_err(SafeTensorError::Io)?;
         let model = File::open(model_dir.join("model.safetensors")).map_err(SafeTensorError::Io)?;
         let model = unsafe { Mmap::map(&model) }.map_err(SafeTensorError::Io)?;
-        Ok(Self::load_safetensors(config, model, true).map_err(SafeTensorError::Serde)?)
+        Self::load_safetensors(config, model, true).map_err(SafeTensorError::Serde)
     }
 
     pub fn load_safetensors(
