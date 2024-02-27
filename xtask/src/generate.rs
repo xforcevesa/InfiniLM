@@ -25,7 +25,7 @@ pub(crate) struct GenerateArgs {
     /// Copy model parameters inside memory.
     #[clap(short, long)]
     inside_mem: bool,
-    /// Log level.
+    /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(short, long)]
     log: Option<String>,
 }

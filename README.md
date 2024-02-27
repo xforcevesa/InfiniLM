@@ -9,10 +9,10 @@
 ### 启动文本生成
 
 ```plaintext
-cargo generate --model <model> --prompt <prompt> [--log <log>]
+cargo generate --model <model> --prompt <prompt>
 ```
 
-参数：
+必要参数：
 
 - `model`: 存放模型文件的目录，至少包含以下 3 个文件：
   - `config.json`: 模型配置文件；
@@ -20,7 +20,8 @@ cargo generate --model <model> --prompt <prompt> [--log <log>]
   - `tokenizer.model`: 分词器词表；
     > 目前仅支持 32000 词 BPE Tonkenizer。
 - `prompt`: 生成文本的起始文本。
-- `log` (optional, default = "warn"): 日志级别，可为 `off`/`trace`/`debug`/`info`/`warn`/`error`。
+
+其他参数参见 `cargo generate --help`。
 
 ### 转换参数
 
