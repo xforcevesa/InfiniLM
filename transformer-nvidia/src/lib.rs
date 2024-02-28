@@ -5,10 +5,12 @@ mod parameters;
 mod storage;
 
 use common::{upos, utok};
+use cublas::{bindings as cublas_def, cublas};
 use cuda::{AsRaw, CudaDataType::half, Stream};
-use kernel::{gather, RmsNormalization};
+use kernel::{gather, mat_mul, RmsNormalization};
 use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
+use std::ptr::null_mut;
 use storage::DevMem;
 use tensor::{reslice, slice, udim, DataType, Tensor};
 
@@ -23,16 +25,27 @@ pub struct Transformer<'a> {
     layers: LayersParameters<'a>,
 
     rms_norm: RmsNormalization,
+    cublas: cublas_def::cublasHandle_t,
+}
+
+impl Drop for Transformer<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        cublas!(cublasDestroy_v2(self.cublas));
+    }
 }
 
 impl<'a> Transformer<'a> {
     pub fn new(host: &'a dyn Llama2, stream: &'a Stream) -> Self {
         let d = host.hidden_size();
+        let mut cublas_handle = null_mut();
+        cublas!(cublasCreate_v2(&mut cublas_handle));
         Self {
             host,
             model: ModelParameters::new(host, stream),
             layers: LayersParameters::new(3, host, stream),
             rms_norm: RmsNormalization::new(half, d, 1024, stream.ctx()),
+            cublas: cublas_handle,
         }
     }
 
@@ -81,6 +94,7 @@ impl<'a> Transformer<'a> {
         // compute.synchronize();
         // println!("gather:\n{}", map_tensor(&x0));
 
+        cublas!(cublasSetStream_v2(self.cublas, compute.as_raw() as _));
         compute.wait_for(&e_alloc);
         for layer in 0..nlayer {
             self.layers.load(layer, self.host, transfer);
@@ -89,13 +103,23 @@ impl<'a> Transformer<'a> {
             self.rms_norm.launch(
                 x1.physical(),
                 x0.physical(),
-                &params.input_layernorm,
+                params.input_layernorm.physical(),
                 epsilon,
                 d as usize,
                 compute,
             );
             // compute.synchronize();
             // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
+            let w_qkv = params.w_qkv.transpose(&[1, 0]);
+            mat_mul(self.cublas, &qkv, 0., &x1, &w_qkv, 1.);
+            let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
+            let v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
+            let k = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
+            let q = qkv.pop().unwrap().reshape(&[seq_len, nh, dh]);
+            // compute.synchronize();
+            // println!("layer {layer} q:\n{}", map_tensor(&q));
+            // println!("layer {layer} k:\n{}", map_tensor(&k));
+            // println!("layer {layer} v:\n{}", map_tensor(&v));
         }
     }
 }

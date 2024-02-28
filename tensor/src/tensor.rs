@@ -75,6 +75,11 @@ impl<Physical> Tensor<Physical> {
     }
 
     #[inline]
+    pub fn physical_mut(&mut self) -> &mut Physical {
+        &mut self.physical
+    }
+
+    #[inline]
     pub fn size(&self) -> usize {
         self.shape.iter().map(|&d| d as usize).product()
     }
