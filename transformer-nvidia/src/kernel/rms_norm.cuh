@@ -1,5 +1,3 @@
-#define __CUDA_NO_HALF_OPERATORS__
-
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_reduce.cuh>
 

@@ -7,12 +7,12 @@ mod storage;
 use common::{upos, utok};
 use cublas::{bindings as cublas_def, cublas};
 use cuda::{AsRaw, CudaDataType::half, Stream};
-use kernel::{gather, mat_mul, RmsNormalization};
+use kernel::{gather, mat_mul, RmsNormalization, RotaryEmbedding};
 use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
 use std::ptr::null_mut;
 use storage::DevMem;
-use tensor::{reslice, slice, udim, DataType, Tensor};
+use tensor::{slice, udim, DataType, Tensor};
 
 pub use storage::PageLockedMemory;
 
@@ -24,8 +24,9 @@ pub struct Transformer<'a> {
     model: ModelParameters<'a>,
     layers: LayersParameters<'a>,
 
-    rms_norm: RmsNormalization,
     cublas: cublas_def::cublasHandle_t,
+    rms_norm: RmsNormalization,
+    rotary_embedding: RotaryEmbedding,
 }
 
 impl Drop for Transformer<'_> {
@@ -44,12 +45,13 @@ impl<'a> Transformer<'a> {
             host,
             model: ModelParameters::new(host, stream),
             layers: LayersParameters::new(3, host, stream),
-            rms_norm: RmsNormalization::new(half, d, 1024, stream.ctx()),
+
             cublas: cublas_handle,
+            rms_norm: RmsNormalization::new(half, d, 1024, stream.ctx()),
+            rotary_embedding: RotaryEmbedding::new(1024, stream.ctx()),
         }
     }
 
-    #[allow(unused)]
     pub fn update(
         &mut self,
         tokens: &[utok],
@@ -74,23 +76,23 @@ impl<'a> Transformer<'a> {
         let att_len = pos + seq_len;
         let cat_slice = &[slice![all], slice![pos; 1; seq_len], slice![all]];
         let att_slice = &[slice![all], slice![  0; 1; att_len], slice![all]];
-        let pos = (pos..pos + seq_len).collect::<Vec<udim>>();
-        let pos = Tensor::new(DataType::U32, &[seq_len], reslice::<udim, u8>(&pos));
+        let pos = DevMem::from_slice(&(pos..pos + seq_len).collect::<Vec<udim>>(), transfer);
+        let pos = Tensor::new(DataType::U32, &[seq_len], pos);
         // println!("tokens: {tokens:?}");
 
-        let mut x0 = tensor(dt, &[seq_len, d], transfer);
+        let x0 = tensor(dt, &[seq_len, d], transfer);
         let e_alloc_x0 = transfer.record();
-        let mut x1 = tensor(dt, &[seq_len, d], transfer);
+        let x1 = tensor(dt, &[seq_len, d], transfer);
         // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
-        let mut x2 = tensor(dt, &[nkvh, head_group * seq_len, dh], transfer);
-        let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv], transfer);
-        let mut q_att = tensor(dt, &[nh, seq_len, dh], transfer);
-        let mut att = tensor(dt, &[nkvh, head_group * seq_len, att_len], transfer);
-        let mut gate_up = tensor(dt, &[seq_len, di + di], transfer);
+        let x2 = tensor(dt, &[nkvh, head_group * seq_len, dh], transfer);
+        let qkv = tensor(dt, &[seq_len, d + dkv + dkv], transfer);
+        let q_att = tensor(dt, &[nh, seq_len, dh], transfer);
+        let att = tensor(dt, &[nkvh, head_group * seq_len, att_len], transfer);
+        let gate_up = tensor(dt, &[seq_len, di + di], transfer);
         let e_alloc = transfer.record();
 
         compute.wait_for(&e_alloc_x0);
-        gather(&mut x0, &self.host.embed_tokens(), tokens, compute);
+        gather(&x0, &self.host.embed_tokens(), tokens, compute);
         // compute.synchronize();
         // println!("gather:\n{}", map_tensor(&x0));
 
@@ -120,6 +122,17 @@ impl<'a> Transformer<'a> {
             // println!("layer {layer} q:\n{}", map_tensor(&q));
             // println!("layer {layer} k:\n{}", map_tensor(&k));
             // println!("layer {layer} v:\n{}", map_tensor(&v));
+            self.rotary_embedding.launch(&q, &pos, theta, compute);
+            self.rotary_embedding.launch(&k, &pos, theta, compute);
+            println!("layer {layer} rot q:\n{}", map_tensor(&q));
+            println!("layer {layer} rot k:\n{}", map_tensor(&k));
+            let q = q.transpose(&[1, 0, 2]);
+            let k = k.transpose(&[1, 0, 2]);
+            let v = v.transpose(&[1, 0, 2]);
+
+            // let (k_cache, v_cache) = cache.get();
+            // let mut k_cat = k_cache.slice(cat_slice);
+            // let mut v_cat = v_cache.slice(cat_slice);
         }
     }
 }

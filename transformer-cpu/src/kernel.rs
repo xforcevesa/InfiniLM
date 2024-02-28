@@ -225,10 +225,12 @@ where
     U: Deref<Target = [u8]>,
 {
     assert!(t.contiguous_len() >= 2);
-    let (batch, dim) = t.shape().split_at(t.shape().len() - 2);
-    assert_eq!(batch, pos.shape());
-    let nh = dim[0] as usize; // n heads
-    let hd = dim[1] as usize; // head dim
+    let [batch @ .., nh, dh] = t.shape() else {
+        panic!()
+    };
+    assert_eq!(pos.shape(), batch);
+    let nh = *nh as usize;
+    let dh = *dh as usize / 2;
 
     let (n, idx_strides) = idx_strides(batch);
     for i in 0..n {
@@ -241,10 +243,10 @@ where
             .locate_mut(&expand_indices(i, &idx_strides, &[0, 0, 1]).as_view())
             .unwrap()
             .cast::<(f16, f16)>();
-        let slice = unsafe { std::slice::from_raw_parts_mut(ptr, nh * hd / 2) };
+        let slice = unsafe { std::slice::from_raw_parts_mut(ptr, nh * dh) };
         for j in 0..nh {
-            for (k, slice) in slice!(slice; hd / 2; [j]).iter_mut().enumerate() {
-                let freq = pos / theta.powf(k as f32 * 2. / hd as f32);
+            for (k, slice) in slice!(slice; dh ; [j]).iter_mut().enumerate() {
+                let freq = pos / theta.powf(k as f32 / dh as f32);
                 let (sin, cos) = freq.sin_cos();
                 let (a, b) = slice;
                 let a_ = a.to_f32();

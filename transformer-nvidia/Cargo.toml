@@ -11,6 +11,8 @@ common = { path = "../common" }
 tensor = { path = "../tensor" }
 model-parameters = { path = "../model-parameters" }
 cuda = { git = "https://github.com/YdrMaster/cuda-bench" }
+cublas = { git = "https://github.com/YdrMaster/cuda-bench" }
+half = "2.4"
 
 [dev-dependencies]
 tokenizer = { path = "../tokenizer" }
