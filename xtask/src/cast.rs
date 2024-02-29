@@ -29,11 +29,6 @@ impl CastArgs {
         let model = Memory::load_safetensors_from_dir(&model_dir).unwrap();
         println!("load model ... {:?}", time.elapsed());
 
-        if model.data_type() == ty {
-            println!("Model already has target data type");
-            return;
-        }
-
         let target = self.target.map(PathBuf::from).unwrap_or_else(|| {
             model_dir.parent().unwrap().join(format!(
                 "{}_{ty:?}",
