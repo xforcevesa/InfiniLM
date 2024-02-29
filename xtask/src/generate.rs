@@ -10,7 +10,7 @@ use std::{
     sync::Mutex,
     time::Instant,
 };
-use tokenizer::{Tokenizer, BPE};
+use tokenizer::{Tokenizer, VocabTxt, BPE};
 use transformer_cpu::{
     model_parameters::{Allocator, Llama2, Memory},
     Transformer,
@@ -24,6 +24,8 @@ pub(crate) struct GenerateArgs {
     /// Prompt.
     #[clap(short, long)]
     prompt: String,
+    #[clap(short, long)]
+    tokenizer: Option<String>,
     /// Max steps.
     #[clap(short, long)]
     step: Option<usize>,
@@ -31,7 +33,7 @@ pub(crate) struct GenerateArgs {
     #[clap(long)]
     inside_mem: bool,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
-    #[clap(short, long)]
+    #[clap(long)]
     log: Option<String>,
 
     /// Use Nvidia GPU.
@@ -86,7 +88,16 @@ impl GenerateArgs {
         let step = self.step.unwrap_or(usize::MAX);
 
         let time = Instant::now();
-        let tokenizer = BPE::from_model_file(model_dir.join("tokenizer.model")).unwrap();
+        let tokenizer: Box<dyn Tokenizer> =
+            match self.tokenizer.as_ref().map_or("bpe", |s| s.as_str()) {
+                "txt" => Box::new(VocabTxt::from_txt_file(model_dir.join("path")).unwrap()),
+                "bpe" => Box::new(BPE::from_model_file(model_dir.join("tokenizer.model")).unwrap()),
+                path => match Path::new(path).extension() {
+                    Some(ext) if ext == "txt" => Box::new(VocabTxt::from_txt_file(path).unwrap()),
+                    Some(ext) if ext == "model" => Box::new(BPE::from_model_file(path).unwrap()),
+                    _ => panic!("Tokenizer file {path:?} not supported"),
+                },
+            };
         info!("build tokenizer ... {:?}", time.elapsed());
 
         if self.nvidia {
@@ -99,7 +110,7 @@ impl GenerateArgs {
 
 fn on_host(
     model_dir: impl AsRef<Path>,
-    tokenizer: impl Tokenizer,
+    tokenizer: Box<dyn Tokenizer>,
     prompt: impl AsRef<str>,
     step: usize,
     inside_mem: bool,
@@ -166,7 +177,7 @@ fn on_nvidia_gpu(_: impl AsRef<Path>, _: impl Tokenizer, _: impl AsRef<str>, _: 
 #[cfg(detected_cuda)]
 fn on_nvidia_gpu(
     model_dir: impl AsRef<Path>,
-    tokenizer: impl Tokenizer,
+    tokenizer: Box<dyn Tokenizer>,
     prompt: impl AsRef<str>,
     step: usize,
 ) {

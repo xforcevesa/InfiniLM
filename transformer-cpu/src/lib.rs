@@ -4,7 +4,7 @@ mod storage;
 
 use common::{upos, utok};
 use gemm::f16;
-use kernel::{gather, matmul, rms_norm, rms_norm_inplace, rotary_embedding, softmax, swiglu};
+use kernel::{gather, mat_mul, rms_norm, rms_norm_inplace, rotary_embedding, softmax, swiglu};
 use model_parameters::{Llama2, Memory};
 use storage::Storage;
 use tensor::{reslice, reslice_mut, slice, udim, DataType, Tensor};
@@ -76,7 +76,7 @@ impl Transformer {
             );
             // println!("layer {layer} input norm:\n{}", x1.access());
             let w_qkv = self.model.w_qkv(layer).transpose(&[1, 0]);
-            matmul(&mut qkv.access_mut(), 0., &x1.access_mut(), &w_qkv, 1.);
+            mat_mul(&mut qkv.access_mut(), 0., &x1.access_mut(), &w_qkv, 1.);
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             let v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
             let mut k = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
@@ -108,7 +108,7 @@ impl Transformer {
 
             {
                 let k_att = k_att.transpose(&[0, 2, 1]);
-                matmul(
+                mat_mul(
                     &mut att.access_mut(),
                     0.,
                     &q_att.access(),
@@ -121,7 +121,7 @@ impl Transformer {
                     softmax(&mut att.access_mut());
                     // println!("layer {layer} after softmax:\n{}", att.access());
                 }
-                matmul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
+                mat_mul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
             }
             {
                 let x2 = x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
@@ -131,7 +131,7 @@ impl Transformer {
             // println!("layer {layer} after attention:\n{}", x1.access());
 
             let wo = self.model.self_attn_o_proj(layer).transpose(&[1, 0]);
-            matmul(&mut x0.access_mut(), 1., &x1.access(), &wo, 1.);
+            mat_mul(&mut x0.access_mut(), 1., &x1.access(), &wo, 1.);
             // println!("layer {layer} o_proj:\n{}", x0.access());
 
             let post_layernorm = self.model.post_attention_layernorm(layer);
@@ -139,7 +139,7 @@ impl Transformer {
             // println!("layer {layer} post norm:\n{}", x1.access());
 
             let w_gate_up = self.model.mlp_gate_up(layer).transpose(&[1, 0]);
-            matmul(&mut gate_up.access_mut(), 0., &x1.access(), &w_gate_up, 1.);
+            mat_mul(&mut gate_up.access_mut(), 0., &x1.access(), &w_gate_up, 1.);
             let mut gate_up = gate_up.split(1, &[di as _, di as _]);
             let up = gate_up.pop().unwrap();
             let mut gate = gate_up.pop().unwrap();
@@ -150,7 +150,7 @@ impl Transformer {
             // println!("layer {layer} swiglu:\n{}", gate.access());
 
             let mlp_down = self.model.mlp_down(layer).transpose(&[1, 0]);
-            matmul(&mut x0.access_mut(), 1., &gate.access(), &mlp_down, 1.);
+            mat_mul(&mut x0.access_mut(), 1., &gate.access(), &mlp_down, 1.);
             // println!("layer {layer} down:\n{}", x0.access());
         }
 
@@ -166,7 +166,7 @@ impl Transformer {
 
         let dt = self.model.data_type();
         let voc = self.model.vocab_size() as udim;
-        matmul(
+        mat_mul(
             &mut Tensor::new(dt, &[1, voc], reslice_mut(&mut self.logits)),
             0.,
             &x.access(),

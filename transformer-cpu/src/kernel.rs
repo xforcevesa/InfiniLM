@@ -115,7 +115,7 @@ fn rms_norm_reduce(x: impl Iterator<Item = f32>, epsilon: f32) -> f32 {
 /// - c: [N0, N1, ... , N_, m, n]
 /// - a: [N0, N1, ... , N_, m, k]
 /// - b: [N0, N1, ... , N_, k, n]
-pub(super) fn matmul<T, U, V>(
+pub(super) fn mat_mul<T, U, V>(
     c: &mut Tensor<T>,
     beta: f32,
     a: &Tensor<U>,
