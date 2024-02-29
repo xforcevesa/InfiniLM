@@ -67,7 +67,6 @@ extern "C" __global__ void {folding}(
         let &[stride_y, stride_x, 1] = att.strides() else {
             unreachable!();
         };
-        println!("nh = {nh}, seq_len = {seq_len}, att_len = {att_len}, stride_x = {stride_x}, stride_y = {stride_y}");
 
         let grid_dims = (seq_len, nh);
         let (kernel, block_dims) = if att_len <= self.block_size {

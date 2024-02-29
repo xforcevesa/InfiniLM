@@ -8,7 +8,7 @@ mod storage;
 use common::{upos, utok};
 use cublas::{bindings as cublas_def, cublas};
 use cuda::{AsRaw, CudaDataType::half, Stream};
-use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding};
+use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
 use std::ptr::null_mut;
@@ -30,6 +30,7 @@ pub struct Transformer<'a> {
     rotary_embedding: RotaryEmbedding,
     reform: Reform,
     fused_softmax: FusedSoftmax,
+    swiglu: Swiglu,
 }
 
 impl Drop for Transformer<'_> {
@@ -55,10 +56,11 @@ impl<'a> Transformer<'a> {
             layers: LayersParameters::new(3, host, stream),
 
             cublas: cublas_handle,
-            rms_norm: RmsNormalization::new(half, d, block_size, stream.ctx()),
-            rotary_embedding: RotaryEmbedding::new(block_size, stream.ctx()),
-            reform: Reform::new(block_size, 32, stream.ctx()),
-            fused_softmax: FusedSoftmax::new(half, max_seq_len, block_size, stream.ctx()),
+            rms_norm: RmsNormalization::new(half, d, block_size, ctx),
+            rotary_embedding: RotaryEmbedding::new(block_size, ctx),
+            reform: Reform::new(block_size, 32, ctx),
+            fused_softmax: FusedSoftmax::new(half, max_seq_len, block_size, ctx),
+            swiglu: Swiglu::new(half, block_size, ctx),
         }
     }
 
@@ -180,6 +182,40 @@ impl<'a> Transformer<'a> {
             );
             // compute.synchronize();
             // println!("layer {layer} after attention:\n{}", map_tensor(&x1));
+
+            let wo = params.self_attn_o_proj.transpose(&[1, 0]);
+            mat_mul(self.cublas, &x0, 1., &x1, &wo, 1.);
+            // compute.synchronize();
+            // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
+
+            self.rms_norm.launch(
+                x1.physical(),
+                x0.physical(),
+                params.post_attention_layernorm.physical(),
+                epsilon,
+                d as _,
+                compute,
+            );
+            // compute.synchronize();
+            // println!("layer {layer} post norm:\n{}", map_tensor(&x1));
+
+            let w_gate_up = params.mlp_gate_up.transpose(&[1, 0]);
+            mat_mul(self.cublas, &gate_up, 0., &x1, &w_gate_up, 1.);
+            let mut gate_up = gate_up.split(1, &[di as _, di as _]);
+            let up = gate_up.pop().unwrap();
+            let gate = gate_up.pop().unwrap();
+            // compute.synchronize();
+            // println!("layer {layer} gate:\n{}", map_tensor(&gate));
+            // println!("layer {layer} up:\n{}", map_tensor(&up));
+
+            self.swiglu.launch(&gate, &up, compute);
+            // compute.synchronize();
+            // println!("layer {layer} swiglu:\n{}", map_tensor(&gate));
+
+            let mlp_down = params.mlp_down.transpose(&[1, 0]);
+            mat_mul(self.cublas, &x0, 1., &gate, &mlp_down, 1.);
+            // compute.synchronize();
+            // println!("layer {layer} down:\n{}", map_tensor(&x0));
         }
     }
 }

@@ -1,12 +1,12 @@
 ﻿use crate::storage::DevMem;
 use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, KernelFn, Stream};
-use std::ffi::c_void;
+use std::ffi::{c_uint, c_void};
 use tensor::{udim, Tensor};
 
 pub struct Reform {
     f: KernelFn,
-    block_size: udim,
-    warp_size: udim,
+    block_size: c_uint,
+    warp_size: c_uint,
 }
 
 impl Reform {
