@@ -8,7 +8,7 @@ mod storage;
 use common::{upos, utok};
 use cublas::{bindings as cublas_def, cublas};
 use cuda::{AsRaw, CudaDataType::half, Stream};
-use kernel::{gather, mat_mul, Reform, RmsNormalization, RotaryEmbedding};
+use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding};
 use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
 use std::ptr::null_mut;
@@ -29,6 +29,7 @@ pub struct Transformer<'a> {
     rms_norm: RmsNormalization,
     rotary_embedding: RotaryEmbedding,
     reform: Reform,
+    fused_softmax: FusedSoftmax,
 }
 
 impl Drop for Transformer<'_> {
@@ -41,6 +42,8 @@ impl Drop for Transformer<'_> {
 impl<'a> Transformer<'a> {
     pub fn new(host: &'a dyn Llama2, stream: &'a Stream) -> Self {
         let d = host.hidden_size();
+        let max_seq_len = host.max_position_embeddings();
+
         let mut cublas_handle = null_mut();
         cublas!(cublasCreate_v2(&mut cublas_handle));
         let ctx = stream.ctx();
@@ -55,6 +58,7 @@ impl<'a> Transformer<'a> {
             rms_norm: RmsNormalization::new(half, d, block_size, stream.ctx()),
             rotary_embedding: RotaryEmbedding::new(block_size, stream.ctx()),
             reform: Reform::new(block_size, 32, stream.ctx()),
+            fused_softmax: FusedSoftmax::new(half, max_seq_len, block_size, stream.ctx()),
         }
     }
 
@@ -161,15 +165,21 @@ impl<'a> Transformer<'a> {
                 mat_mul(self.cublas, &att, 0., &q_att, &k_att, head_div);
                 {
                     let att = att.clone().reshape(&[nh, seq_len, att_len]);
-                    // softmax(&mut att.access_mut());
+                    // compute.synchronize();
+                    // println!("layer {layer} before softmax:\n{}", map_tensor(&att));
+                    self.fused_softmax.launch(&att, compute);
+                    // compute.synchronize();
+                    // println!("layer {layer} after softmax:\n{}", map_tensor(&att));
                 }
                 mat_mul(self.cublas, &x2, 0., &att, &v_att, 1.);
             }
-            {
-                let x2 = x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
-                let x1 = x1.clone().reshape(&[seq_len, nh, dh]);
-                self.reform.launch(&x1, &x2, compute);
-            }
+            self.reform.launch(
+                &x1.clone().reshape(&[seq_len, nh, dh]),
+                &x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]),
+                compute,
+            );
+            // compute.synchronize();
+            // println!("layer {layer} after attention:\n{}", map_tensor(&x1));
         }
     }
 }

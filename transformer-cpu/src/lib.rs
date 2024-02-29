@@ -117,7 +117,9 @@ impl Transformer {
                 );
                 {
                     let mut att = att.clone().reshape(&[nh, seq_len, att_len]);
+                    // println!("layer {layer} before softmax:\n{}", att.access());
                     softmax(&mut att.access_mut());
+                    // println!("layer {layer} after softmax:\n{}", att.access());
                 }
                 matmul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
             }
