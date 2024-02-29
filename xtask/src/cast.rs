@@ -1,6 +1,6 @@
 ﻿use std::{fs, path::PathBuf, time::Instant};
 use tensor::DataType;
-use transformer_cpu::model_parameters::{save, Llama2, Memory};
+use transformer_cpu::model_parameters::{save, Memory};
 
 #[derive(Args, Default)]
 pub(crate) struct CastArgs {
@@ -45,11 +45,16 @@ impl CastArgs {
         save(&model, &target).unwrap();
         println!("save model ... {:?}", time.elapsed());
 
-        let tokenizer = model_dir.join("tokenizer.model");
-        if tokenizer.is_file() {
-            let time = Instant::now();
-            fs::copy(&tokenizer, target.join("tokenizer.model")).unwrap();
-            println!("copy tokenizer ... {:?}", time.elapsed());
-        }
+        let copy_file = |name: &str| {
+            let src = model_dir.join(name);
+            if src.is_file() {
+                let time = Instant::now();
+                fs::copy(&src, target.join(name)).unwrap();
+                println!("copy {name} ... {:?}", time.elapsed());
+            }
+        };
+
+        copy_file("tokenizer.model");
+        copy_file("vocabs.txt");
     }
 }
