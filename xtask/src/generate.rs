@@ -4,7 +4,7 @@ use simple_logger::SimpleLogger;
 use std::{
     alloc::Layout,
     collections::HashMap,
-    io::Write,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     ptr::NonNull,
     sync::Mutex,
@@ -88,22 +88,37 @@ impl GenerateArgs {
         let step = self.step.unwrap_or(usize::MAX);
 
         let time = Instant::now();
-        let tokenizer: Box<dyn Tokenizer> =
-            match self.tokenizer.as_ref().map_or("bpe", |s| s.as_str()) {
-                "txt" => Box::new(VocabTxt::from_txt_file(model_dir.join("path")).unwrap()),
-                "bpe" => Box::new(BPE::from_model_file(model_dir.join("tokenizer.model")).unwrap()),
-                path => match Path::new(path).extension() {
-                    Some(ext) if ext == "txt" => Box::new(VocabTxt::from_txt_file(path).unwrap()),
-                    Some(ext) if ext == "model" => Box::new(BPE::from_model_file(path).unwrap()),
-                    _ => panic!("Tokenizer file {path:?} not supported"),
-                },
-            };
+        let tokenizer = tokenizer(self.tokenizer, &model_dir);
         info!("build tokenizer ... {:?}", time.elapsed());
 
         if self.nvidia {
-            on_nvidia_gpu(model_dir, tokenizer, self.prompt, step)
+            let preload_layers = if self.inside_mem { usize::MAX } else { 3 };
+            on_nvidia_gpu(model_dir, tokenizer, self.prompt, step, preload_layers)
         } else {
             on_host(model_dir, tokenizer, self.prompt, step, self.inside_mem)
+        }
+    }
+}
+
+fn tokenizer(path: Option<String>, model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer> {
+    match path {
+        Some(path) => match Path::new(&path).extension() {
+            Some(ext) if ext == "txt" => Box::new(VocabTxt::from_txt_file(path).unwrap()),
+            Some(ext) if ext == "model" => Box::new(BPE::from_model_file(path).unwrap()),
+            _ => panic!("Tokenizer file {path:?} not supported"),
+        },
+        None => {
+            match BPE::from_model_file(model_dir.as_ref().join("tokenizer.model")) {
+                Ok(bpe) => return Box::new(bpe),
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => panic!("{e:?}"),
+            }
+            match VocabTxt::from_txt_file(model_dir.as_ref().join("vocabs.txt")) {
+                Ok(voc) => return Box::new(voc),
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => panic!("{e:?}"),
+            }
+            panic!("Tokenizer file not found");
         }
     }
 }
@@ -180,6 +195,7 @@ fn on_nvidia_gpu(
     tokenizer: Box<dyn Tokenizer>,
     prompt: impl AsRef<str>,
     step: usize,
+    preload_layers: usize,
 ) {
     let model_dir = model_dir.as_ref();
     let prompt = prompt.as_ref();
@@ -225,7 +241,7 @@ fn on_nvidia_gpu(
 
         let time = Instant::now();
         let host = Memory::load_safetensors(config, host, false).unwrap();
-        let mut transformer = Transformer::new(&host, &transfer);
+        let mut transformer = Transformer::new(&host, preload_layers, &transfer);
         let kv_cache = transformer.new_cache(&compute);
         info!("build model host: {:?}", time.elapsed());
 

@@ -45,8 +45,9 @@ impl Drop for Transformer<'_> {
 }
 
 impl<'a> Transformer<'a> {
-    pub fn new(host: &'a dyn Llama2, stream: &'a Stream) -> Self {
+    pub fn new(host: &'a dyn Llama2, preload_layers: usize, stream: &'a Stream) -> Self {
         let vocab_size = host.vocab_size();
+        let load_layers = preload_layers.min(host.num_hidden_layers());
 
         let mut cublas_handle = null_mut();
         cublas!(cublasCreate_v2(&mut cublas_handle));
@@ -56,7 +57,7 @@ impl<'a> Transformer<'a> {
         let block_size = 1024;
         Self {
             model: ModelParameters::new(host, stream),
-            layers: LayersParameters::new(3, host, stream),
+            layers: LayersParameters::new(load_layers, host, stream),
 
             cublas: cublas_handle,
             rms_norm: RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
@@ -301,57 +302,4 @@ fn map_tensor(tensor: &Tensor<DevMem>) -> Tensor<Vec<u8>> {
             buf
         })
     }
-}
-
-#[test]
-fn test_load() {
-    use model_parameters::Memory;
-    use std::{
-        fs::File,
-        io::{ErrorKind::NotFound, Read},
-        path::Path,
-        time::Instant,
-    };
-
-    cuda::init();
-    let Some(dev) = cuda::Device::fetch() else {
-        return;
-    };
-
-    let model_dir = Path::new("../../TinyLlama-1.1B-Chat-v1.0_F16");
-    let time = Instant::now();
-
-    let config = File::open(model_dir.join("config.json"));
-    let config = match config {
-        Ok(f) => f,
-        Err(e) if e.kind() == NotFound => return,
-        Err(e) => panic!("{e:?}"),
-    };
-
-    let safetensors = File::open(model_dir.join("model.safetensors"));
-    let mut safetensors = match safetensors {
-        Ok(f) => f,
-        Err(e) if e.kind() == NotFound => return,
-        Err(e) => panic!("{e:?}"),
-    };
-    println!("open file {:?}", time.elapsed());
-
-    dev.set_mempool_threshold(u64::MAX);
-    dev.context().apply(|ctx| {
-        let time = Instant::now();
-        let mut host = PageLockedMemory::new(safetensors.metadata().unwrap().len() as _, ctx);
-        safetensors.read_exact(&mut host).unwrap();
-        drop(safetensors);
-        println!("read to host {:?}", time.elapsed());
-
-        let time = Instant::now();
-        let host = Memory::load_safetensors(config, host, false).unwrap();
-        println!("load {:?}", time.elapsed());
-
-        let cpy = ctx.stream();
-
-        let time = Instant::now();
-        let _transformer = Transformer::new(&host, &cpy);
-        println!("build model host: {:?}", time.elapsed());
-    });
 }
