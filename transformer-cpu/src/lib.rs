@@ -2,7 +2,6 @@ mod cache;
 mod kernel;
 mod storage;
 
-use cache::LayerCache;
 use common::{upos, utok};
 use gemm::f16;
 use kernel::{gather, matmul, rms_norm, rms_norm_inplace, rotary_embedding, softmax, swiglu};
@@ -10,6 +9,7 @@ use model_parameters::{Llama2, Memory};
 use storage::Storage;
 use tensor::{reslice, reslice_mut, slice, udim, DataType, Tensor};
 
+pub use cache::LayerCache;
 pub extern crate model_parameters;
 
 pub struct Transformer {

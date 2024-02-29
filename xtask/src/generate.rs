@@ -216,6 +216,7 @@ fn on_nvidia_gpu(
         let time = Instant::now();
         let host = Memory::load_safetensors(config, host, false).unwrap();
         let mut transformer = Transformer::new(&host, &cpy);
+        let kv_cache = transformer.new_cache(&compute);
         let e_cpy = cpy.record();
         info!("build model host: {:?}", time.elapsed());
 
@@ -227,7 +228,7 @@ fn on_nvidia_gpu(
         let time = Instant::now();
         let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
         if !tokens.is_empty() {
-            transformer.update(tokens, 0, &compute, &transfer);
+            transformer.update(tokens, &kv_cache, 0, &compute, &transfer);
         }
         info!("prefill transformer ... {:?}", time.elapsed());
 

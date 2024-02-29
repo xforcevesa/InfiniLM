@@ -1,5 +1,5 @@
 ﻿use crate::storage::DevMem;
-use cuda::{AsRaw, ContextGuard, KernelFn, Stream};
+use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, KernelFn, Stream};
 use std::ffi::c_void;
 use tensor::{udim, DataType, Tensor};
 
@@ -10,13 +10,13 @@ pub struct RotaryEmbedding {
 
 impl RotaryEmbedding {
     pub fn new(block_size: usize, ctx: &ContextGuard) -> Self {
-        let padding = format!("rotary_embedding_padding_{block_size}");
+        let name = "rotary_embedding_padding";
 
         const ROTARY_EMBEDDING: &str = include_str!("rotary_embedding.cuh");
         let code = format!(
             r#"{ROTARY_EMBEDDING}
 
-extern "C" __global__ void {padding}(
+extern "C" __global__ void {name}(
     half2              *__restrict__ x,
     unsigned int const *__restrict__ pos,
     float theta,
@@ -29,7 +29,7 @@ extern "C" __global__ void {padding}(
 
         ctx.compile(code);
         Self {
-            f: KernelFn::get(padding).unwrap(),
+            f: KernelFn::get(name).unwrap(),
             block_size: block_size as _,
         }
     }
@@ -45,9 +45,10 @@ extern "C" __global__ void {padding}(
         assert_eq!(pos.shape(), &[n]);
         assert!(dh < self.block_size);
 
-        let t_ptr = unsafe { t.physical().as_raw() };
-        let pos_ptr = unsafe { pos.physical().as_raw() };
-        let leading_dim = t.strides()[0] as udim;
+        let t_ptr = (unsafe { t.physical().as_raw() } as isize + t.bytes_offset()) as CUdeviceptr;
+        let pos_ptr =
+            (unsafe { pos.physical().as_raw() } as isize + pos.bytes_offset()) as CUdeviceptr;
+        let leading_dim = t.strides()[0] as udim / 2;
         let params: [*const c_void; 4] = [
             (&t_ptr) as *const _ as _,
             (&pos_ptr) as *const _ as _,

@@ -1,5 +1,6 @@
 #![cfg(detected_cuda)]
 
+mod cache;
 mod kernel;
 mod parameters;
 mod storage;
@@ -7,15 +8,15 @@ mod storage;
 use common::{upos, utok};
 use cublas::{bindings as cublas_def, cublas};
 use cuda::{AsRaw, CudaDataType::half, Stream};
-use kernel::{gather, mat_mul, RmsNormalization, RotaryEmbedding};
+use kernel::{gather, mat_mul, Reform, RmsNormalization, RotaryEmbedding};
 use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
 use std::ptr::null_mut;
 use storage::DevMem;
 use tensor::{slice, udim, DataType, Tensor};
 
+pub use cache::LayerCache;
 pub use storage::PageLockedMemory;
-
 pub extern crate cuda;
 pub extern crate model_parameters;
 
@@ -27,6 +28,7 @@ pub struct Transformer<'a> {
     cublas: cublas_def::cublasHandle_t,
     rms_norm: RmsNormalization,
     rotary_embedding: RotaryEmbedding,
+    reform: Reform,
 }
 
 impl Drop for Transformer<'_> {
@@ -41,28 +43,36 @@ impl<'a> Transformer<'a> {
         let d = host.hidden_size();
         let mut cublas_handle = null_mut();
         cublas!(cublasCreate_v2(&mut cublas_handle));
+        let ctx = stream.ctx();
+        let _dev = ctx.dev();
+        let block_size = 1024;
         Self {
             host,
             model: ModelParameters::new(host, stream),
             layers: LayersParameters::new(3, host, stream),
 
             cublas: cublas_handle,
-            rms_norm: RmsNormalization::new(half, d, 1024, stream.ctx()),
-            rotary_embedding: RotaryEmbedding::new(1024, stream.ctx()),
+            rms_norm: RmsNormalization::new(half, d, block_size, stream.ctx()),
+            rotary_embedding: RotaryEmbedding::new(block_size, stream.ctx()),
+            reform: Reform::new(block_size, 32, stream.ctx()),
         }
+    }
+
+    #[inline]
+    pub fn new_cache<'b>(&self, stream: &'b Stream) -> Vec<LayerCache<'b>> {
+        LayerCache::new_layers(&*self.host, &stream)
     }
 
     pub fn update(
         &mut self,
         tokens: &[utok],
-        // cache: &mut [LayerCache],
+        cache: &[LayerCache],
         pos: upos,
         compute: &Stream,
         transfer: &Stream,
     ) {
         let seq_len = tokens.len() as udim;
         let d = self.host.hidden_size() as udim;
-        let nlayer = self.host.num_hidden_layers();
         let nh = self.host.num_attention_heads() as udim;
         let nkvh = self.host.num_key_value_heads() as udim;
         let dh = d / nh;
@@ -98,7 +108,7 @@ impl<'a> Transformer<'a> {
 
         cublas!(cublasSetStream_v2(self.cublas, compute.as_raw() as _));
         compute.wait_for(&e_alloc);
-        for layer in 0..nlayer {
+        for (layer, cache) in cache.iter().enumerate() {
             self.layers.load(layer, self.host, transfer);
             let params = self.layers.sync(layer, compute);
 
@@ -124,15 +134,42 @@ impl<'a> Transformer<'a> {
             // println!("layer {layer} v:\n{}", map_tensor(&v));
             self.rotary_embedding.launch(&q, &pos, theta, compute);
             self.rotary_embedding.launch(&k, &pos, theta, compute);
-            println!("layer {layer} rot q:\n{}", map_tensor(&q));
-            println!("layer {layer} rot k:\n{}", map_tensor(&k));
+            // compute.synchronize();
+            // println!("layer {layer} rot q:\n{}", map_tensor(&q));
+            // println!("layer {layer} rot k:\n{}", map_tensor(&k));
             let q = q.transpose(&[1, 0, 2]);
             let k = k.transpose(&[1, 0, 2]);
             let v = v.transpose(&[1, 0, 2]);
 
-            // let (k_cache, v_cache) = cache.get();
-            // let mut k_cat = k_cache.slice(cat_slice);
-            // let mut v_cat = v_cache.slice(cat_slice);
+            let (k_cache, v_cache) = cache.get();
+            let k_cat = k_cache.slice(cat_slice);
+            let v_cat = v_cache.slice(cat_slice);
+            self.reform.launch(&q_att, &q, compute);
+            self.reform.launch(&k_cat, &k, compute);
+            self.reform.launch(&v_cat, &v, compute);
+
+            let q_att = q_att.clone().reshape(&[nkvh, head_group * seq_len, dh]);
+            let k_att = k_cache.slice(att_slice);
+            let v_att = v_cache.slice(att_slice);
+            // compute.synchronize();
+            // println!("layer {layer} q attention:\n{}", map_tensor(&q_att));
+            // println!("layer {layer} k attention:\n{}", map_tensor(&k_att));
+            // println!("layer {layer} v attention:\n{}", map_tensor(&v_att));
+
+            {
+                let k_att = k_att.transpose(&[0, 2, 1]);
+                mat_mul(self.cublas, &att, 0., &q_att, &k_att, head_div);
+                {
+                    let att = att.clone().reshape(&[nh, seq_len, att_len]);
+                    // softmax(&mut att.access_mut());
+                }
+                mat_mul(self.cublas, &x2, 0., &att, &v_att, 1.);
+            }
+            {
+                let x2 = x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
+                let x1 = x1.clone().reshape(&[seq_len, nh, dh]);
+                self.reform.launch(&x1, &x2, compute);
+            }
         }
     }
 }

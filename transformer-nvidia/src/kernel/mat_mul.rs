@@ -94,9 +94,7 @@ struct Matrix {
 impl From<&Tensor<DevMem<'_>>> for Matrix {
     fn from(tensor: &Tensor<DevMem>) -> Self {
         let strides = tensor.strides();
-        let base = unsafe { tensor.physical().as_raw() };
-        let offset = tensor.pattern()[tensor.shape().len()] as cuda::bindings::CUdeviceptr;
-        let ptr = (base + offset) as _;
+        let ptr = (unsafe { tensor.physical().as_raw() } as isize + tensor.bytes_offset()) as _;
         match tensor.shape() {
             &[r, c] => Self {
                 batch: 1,

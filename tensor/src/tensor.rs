@@ -70,6 +70,11 @@ impl<Physical> Tensor<Physical> {
     }
 
     #[inline]
+    pub fn bytes_offset(&self) -> isize {
+        self.pattern.offset() as isize * self.data_type.size() as isize
+    }
+
+    #[inline]
     pub const fn physical(&self) -> &Physical {
         &self.physical
     }
