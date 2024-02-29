@@ -74,7 +74,7 @@ impl<'a> Transformer<'a> {
 
     #[inline]
     pub fn new_cache<'b>(&self, stream: &'b Stream) -> Vec<LayerCache<'b>> {
-        LayerCache::new_layers(&*self.host, &stream)
+        LayerCache::new_layers(self.host, stream)
     }
 
     pub fn update<'b>(

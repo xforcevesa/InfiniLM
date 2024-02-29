@@ -35,7 +35,10 @@ impl Memory {
         let mmap = Arc::new(model);
         let offset = BASE_OFFSET + len;
         let tensor = |name: &str| {
-            let info = &header.tensors[name];
+            let info = header
+                .tensors
+                .get(name)
+                .unwrap_or_else(|| panic!("missing tensor: {name}"));
             let (start, end) = info.data_offsets;
             let data_type = match info.dtype {
                 Dtype::BOOL => DataType::Bool,

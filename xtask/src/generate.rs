@@ -24,6 +24,7 @@ pub(crate) struct GenerateArgs {
     /// Prompt.
     #[clap(short, long)]
     prompt: String,
+    /// Tokenizer file.
     #[clap(short, long)]
     tokenizer: Option<String>,
     /// Max steps.
@@ -32,6 +33,9 @@ pub(crate) struct GenerateArgs {
     /// Copy model parameters inside memory.
     #[clap(long)]
     inside_mem: bool,
+    /// Add bos before first token.
+    #[clap(long)]
+    insert_bos: bool,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
@@ -91,11 +95,21 @@ impl GenerateArgs {
         let tokenizer = tokenizer(self.tokenizer, &model_dir);
         info!("build tokenizer ... {:?}", time.elapsed());
 
+        let mut prompt = String::new();
+        if self.insert_bos {
+            prompt.push_str("<s>");
+        }
+        match self.prompt.chars().next() {
+            Some(c) if c.is_ascii_alphabetic() => prompt.push(' '),
+            _ => {}
+        }
+        prompt.push_str(&self.prompt);
+
         if self.nvidia {
             let preload_layers = if self.inside_mem { usize::MAX } else { 3 };
-            on_nvidia_gpu(model_dir, tokenizer, self.prompt, step, preload_layers)
+            on_nvidia_gpu(model_dir, tokenizer, prompt, step, preload_layers)
         } else {
-            on_host(model_dir, tokenizer, self.prompt, step, self.inside_mem)
+            on_host(model_dir, tokenizer, prompt, step, self.inside_mem)
         }
     }
 }
@@ -264,7 +278,7 @@ fn on_nvidia_gpu(
         let time = Instant::now();
         while pos < step {
             let logits = transformer.forward(token, &kv_cache, pos as _, &compute, &transfer);
-            let next = argmax(&logits);
+            let next = argmax(logits);
 
             token = next;
             pos += 1;

@@ -92,11 +92,6 @@ impl Tokenizer for BPE {
 
     fn encode(&self, text: &str) -> Vec<utok> {
         let mut tokens = Vec::new();
-        if let Some(c) = text.chars().next() {
-            if c.is_alphabetic() {
-                tokens.push(self.find_piece("▁").unwrap())
-            }
-        }
 
         text.chars().map(|c| c.to_string()).for_each(|c| {
             if let Some(index) = self.find_piece(&c) {
