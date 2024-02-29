@@ -21,7 +21,7 @@ impl Transformer {
     #[inline]
     pub fn new(model: Box<dyn Llama2>) -> Self {
         Self {
-            logits: vec![0.0f32; model.vocab_size()],
+            logits: vec![0.; model.vocab_size()],
             model: match model.data_type() {
                 DataType::BF16 | DataType::F32 => Box::new(Memory::cast(&*model, DataType::F16)),
                 _ => model,

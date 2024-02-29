@@ -4,9 +4,9 @@ use model_parameters::Llama2;
 use tensor::Tensor;
 
 pub(crate) struct ModelParameters<'a> {
-    model_norm: Tensor<DevMem<'a>>,
-    lm_head: Tensor<DevMem<'a>>,
-    sync_event: cuda::Event,
+    pub(crate) model_norm: Tensor<DevMem<'a>>,
+    pub(crate) lm_head: Tensor<DevMem<'a>>,
+    pub(crate) sync_event: cuda::Event,
 }
 
 impl<'a> ModelParameters<'a> {

@@ -5,6 +5,7 @@ mod kernel;
 mod parameters;
 mod storage;
 
+use ::half::f16;
 use common::{upos, utok};
 use cublas::{bindings as cublas_def, cublas};
 use cuda::{AsRaw, CudaDataType::half, Stream};
@@ -31,6 +32,9 @@ pub struct Transformer<'a> {
     reform: Reform,
     fused_softmax: FusedSoftmax,
     swiglu: Swiglu,
+
+    logits_dev: Tensor<DevMem<'a>>,
+    logits: Vec<f32>,
 }
 
 impl Drop for Transformer<'_> {
@@ -42,25 +46,28 @@ impl Drop for Transformer<'_> {
 
 impl<'a> Transformer<'a> {
     pub fn new(host: &'a dyn Llama2, stream: &'a Stream) -> Self {
-        let d = host.hidden_size();
-        let max_seq_len = host.max_position_embeddings();
+        let vocab_size = host.vocab_size();
 
         let mut cublas_handle = null_mut();
         cublas!(cublasCreate_v2(&mut cublas_handle));
+
         let ctx = stream.ctx();
         let _dev = ctx.dev();
         let block_size = 1024;
         Self {
-            host,
             model: ModelParameters::new(host, stream),
             layers: LayersParameters::new(3, host, stream),
 
             cublas: cublas_handle,
-            rms_norm: RmsNormalization::new(half, d, block_size, ctx),
+            rms_norm: RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
             rotary_embedding: RotaryEmbedding::new(block_size, ctx),
             reform: Reform::new(block_size, 32, ctx),
-            fused_softmax: FusedSoftmax::new(half, max_seq_len, block_size, ctx),
+            fused_softmax: FusedSoftmax::new(half, host.max_position_embeddings(), block_size, ctx),
             swiglu: Swiglu::new(half, block_size, ctx),
+
+            logits_dev: tensor(host.data_type(), &[1, vocab_size as _], stream),
+            logits: vec![0.; vocab_size],
+            host,
         }
     }
 
@@ -69,14 +76,14 @@ impl<'a> Transformer<'a> {
         LayerCache::new_layers(&*self.host, &stream)
     }
 
-    pub fn update(
+    pub fn update<'b>(
         &mut self,
         tokens: &[utok],
         cache: &[LayerCache],
         pos: upos,
         compute: &Stream,
-        transfer: &Stream,
-    ) {
+        transfer: &'b Stream,
+    ) -> Tensor<DevMem<'b>> {
         let seq_len = tokens.len() as udim;
         let d = self.host.hidden_size() as udim;
         let nh = self.host.num_attention_heads() as udim;
@@ -217,6 +224,61 @@ impl<'a> Transformer<'a> {
             // compute.synchronize();
             // println!("layer {layer} down:\n{}", map_tensor(&x0));
         }
+
+        x0
+    }
+
+    pub fn forward(
+        &mut self,
+        token: utok,
+        cache: &[LayerCache],
+        pos: upos,
+        compute: &Stream,
+        transfer: &Stream,
+    ) -> &[f32] {
+        let x = self.update(&[token], cache, pos, compute, transfer);
+
+        compute.wait_for(&self.model.sync_event);
+        self.rms_norm.launch(
+            x.physical(),
+            x.physical(),
+            self.model.model_norm.physical(),
+            self.host.rms_norm_eps(),
+            self.host.hidden_size(),
+            compute,
+        );
+        // compute.synchronize();
+        // println!("pos {pos} model norm:\n{}", map_tensor(&x));
+
+        mat_mul(
+            self.cublas,
+            &self.logits_dev,
+            0.,
+            &x,
+            &self.model.lm_head.transpose(&[1, 0]),
+            1.,
+        );
+        compute.synchronize();
+        cuda::driver!(cuMemcpyDtoH_v2(
+            self.logits.as_mut_ptr() as _,
+            self.logits_dev.physical().as_raw(),
+            self.logits_dev.bytes_size(),
+        ));
+        // println!("pos {pos} logits:\n{:?}", self.logits);
+
+        match self.host.data_type() {
+            DataType::F32 => {}
+            DataType::F16 => {
+                let ptr = self.logits.as_ptr().cast::<f16>();
+                let len = self.host.vocab_size();
+                let src = unsafe { std::slice::from_raw_parts(ptr, len) };
+                for (dst, src) in self.logits.iter_mut().rev().zip(src.iter().rev()) {
+                    *dst = f32::from(*src);
+                }
+            }
+            _ => unreachable!(),
+        }
+        &self.logits
     }
 }
 

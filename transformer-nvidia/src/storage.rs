@@ -49,7 +49,7 @@ impl DerefMut for PageLockedMemory {
 }
 
 #[derive(Clone)]
-pub(crate) struct DevMem<'a> {
+pub struct DevMem<'a> {
     ptr: cuda::bindings::CUdeviceptr,
     len: usize,
     _stream: &'a Stream<'a>,

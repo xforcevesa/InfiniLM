@@ -209,15 +209,13 @@ fn on_nvidia_gpu(
         drop(safetensors);
         info!("read to host {:?}", time.elapsed());
 
-        let cpy = ctx.stream();
         let compute = ctx.stream();
         let transfer = ctx.stream();
 
         let time = Instant::now();
         let host = Memory::load_safetensors(config, host, false).unwrap();
-        let mut transformer = Transformer::new(&host, &cpy);
+        let mut transformer = Transformer::new(&host, &transfer);
         let kv_cache = transformer.new_cache(&compute);
-        let e_cpy = cpy.record();
         info!("build model host: {:?}", time.elapsed());
 
         let step = step.min(host.max_position_embeddings());
@@ -237,11 +235,9 @@ fn on_nvidia_gpu(
         let mut token = *last;
         let mut pos = tokens.len();
         let time = Instant::now();
-        compute.wait_for(&e_cpy);
         while pos < step {
-            // let logits = transformer.forward(token, &mut kv_cache, pos as _);
-            // let next = argmax(&logits);
-            let next = 0;
+            let logits = transformer.forward(token, &kv_cache, pos as _, &compute, &transfer);
+            let next = argmax(&logits);
 
             token = next;
             pos += 1;
