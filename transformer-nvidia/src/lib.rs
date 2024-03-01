@@ -135,7 +135,7 @@ impl<'a> Transformer<'a> {
             );
             // compute.synchronize();
             // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
-            let w_qkv = params.w_qkv.transpose(&[1, 0]);
+            let w_qkv = params.w_qkv.clone().transpose(&[1, 0]);
             mat_mul(self.cublas, &qkv, 0., &x1, &w_qkv, 1.);
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             let v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
@@ -155,15 +155,15 @@ impl<'a> Transformer<'a> {
             let v = v.transpose(&[1, 0, 2]);
 
             let (k_cache, v_cache) = cache.get();
-            let k_cat = k_cache.slice(cat_slice);
-            let v_cat = v_cache.slice(cat_slice);
+            let k_cat = k_cache.clone().slice(cat_slice);
+            let v_cat = v_cache.clone().slice(cat_slice);
             self.reform.launch(&q_att, &q, compute);
             self.reform.launch(&k_cat, &k, compute);
             self.reform.launch(&v_cat, &v, compute);
 
             let q_att = q_att.clone().reshape(&[nkvh, head_group * seq_len, dh]);
-            let k_att = k_cache.slice(att_slice);
-            let v_att = v_cache.slice(att_slice);
+            let k_att = k_cache.clone().slice(att_slice);
+            let v_att = v_cache.clone().slice(att_slice);
             // compute.synchronize();
             // println!("layer {layer} q attention:\n{}", map_tensor(&q_att));
             // println!("layer {layer} k attention:\n{}", map_tensor(&k_att));
@@ -190,7 +190,7 @@ impl<'a> Transformer<'a> {
             // compute.synchronize();
             // println!("layer {layer} after attention:\n{}", map_tensor(&x1));
 
-            let wo = params.self_attn_o_proj.transpose(&[1, 0]);
+            let wo = params.self_attn_o_proj.clone().transpose(&[1, 0]);
             mat_mul(self.cublas, &x0, 1., &x1, &wo, 1.);
             // compute.synchronize();
             // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
@@ -206,7 +206,7 @@ impl<'a> Transformer<'a> {
             // compute.synchronize();
             // println!("layer {layer} post norm:\n{}", map_tensor(&x1));
 
-            let w_gate_up = params.mlp_gate_up.transpose(&[1, 0]);
+            let w_gate_up = params.mlp_gate_up.clone().transpose(&[1, 0]);
             mat_mul(self.cublas, &gate_up, 0., &x1, &w_gate_up, 1.);
             let mut gate_up = gate_up.split(1, &[di as _, di as _]);
             let up = gate_up.pop().unwrap();
@@ -219,7 +219,7 @@ impl<'a> Transformer<'a> {
             // compute.synchronize();
             // println!("layer {layer} swiglu:\n{}", map_tensor(&gate));
 
-            let mlp_down = params.mlp_down.transpose(&[1, 0]);
+            let mlp_down = params.mlp_down.clone().transpose(&[1, 0]);
             mat_mul(self.cublas, &x0, 1., &gate, &mlp_down, 1.);
             // compute.synchronize();
             // println!("layer {layer} down:\n{}", map_tensor(&x0));
@@ -255,7 +255,7 @@ impl<'a> Transformer<'a> {
             &self.logits_dev,
             0.,
             &x,
-            &self.model.lm_head.transpose(&[1, 0]),
+            &self.model.lm_head.clone().transpose(&[1, 0]),
             1.,
         );
         compute.synchronize();

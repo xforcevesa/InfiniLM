@@ -93,15 +93,15 @@ impl Transformer {
             let v = v.transpose(&[1, 0, 2]);
 
             let (k_cache, v_cache) = cache.get();
-            let mut k_cat = k_cache.slice(cat_slice);
-            let mut v_cat = v_cache.slice(cat_slice);
+            let mut k_cat = k_cache.clone().slice(cat_slice);
+            let mut v_cat = v_cache.clone().slice(cat_slice);
             q.access().reform_to(&mut q_att.access_mut());
             k.access().reform_to(&mut k_cat.access_mut());
             v.access().reform_to(&mut v_cat.access_mut());
 
             let q_att = q_att.clone().reshape(&[nkvh, head_group * seq_len, dh]);
-            let k_att = k_cache.slice(att_slice);
-            let v_att = v_cache.slice(att_slice);
+            let k_att = k_cache.clone().slice(att_slice);
+            let v_att = v_cache.clone().slice(att_slice);
             // println!("layer {layer} q attention:\n{}", q_att.access());
             // println!("layer {layer} k attention:\n{}", k_att.access());
             // println!("layer {layer} v attention:\n{}", v_att.access());

@@ -152,7 +152,7 @@ fn read_tokenizer() {
 fn once_upon_a_time() {
     use std::time::Instant;
     if let Ok(bpe) = BPE::from_model_file("../../TinyLlama-1.1B-Chat-v1.0/tokenizer.model") {
-        const PROMPT: &str = "Once▁upon▁a▁time,";
+        const PROMPT: &str = "▁Once▁upon▁a▁time,";
         let tokens = bpe.encode(PROMPT);
         let t0 = Instant::now();
         for _ in 0..10000 {

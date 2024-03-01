@@ -1,8 +1,8 @@
 mod data_type;
 mod fmt;
-mod operator;
 mod pattern;
 mod tensor;
+mod transform;
 
 #[allow(non_camel_case_types)]
 pub type udim = u32;
@@ -14,9 +14,9 @@ use std::mem::{align_of, size_of, size_of_val};
 
 pub use data_type::DataType;
 pub use nalgebra::DVector;
-pub use operator::{Operator, SliceDim};
 pub use pattern::{expand_indices, idx_strides, Affine, Shape};
 pub use tensor::{Storage, Tensor};
+pub use transform::SliceDim;
 
 pub fn reslice<T, U>(src: &[T]) -> &[U] {
     let ptr = src.as_ptr_range();

@@ -199,7 +199,13 @@ fn on_host(
 }
 
 #[cfg(not(detected_cuda))]
-fn on_nvidia_gpu(_: impl AsRef<Path>, _: impl Tokenizer, _: impl AsRef<str>, _: usize) {
+fn on_nvidia_gpu(
+    _: impl AsRef<Path>,
+    _: Box<dyn Tokenizer>,
+    _: impl AsRef<str>,
+    _: usize,
+    _: usize,
+) {
     panic!("Nvidia GPU is not detected");
 }
 
