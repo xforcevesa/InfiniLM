@@ -3,13 +3,14 @@
     ops::{Deref, DerefMut},
     rc::Rc,
 };
+use tensor::PhysicalCell;
 
 #[derive(Clone, Debug)]
 pub struct Storage(Rc<RefCell<Vec<u8>>>);
 pub struct VecRef<'a>(Ref<'a, Vec<u8>>);
 pub struct VecRefMut<'a>(RefMut<'a, Vec<u8>>);
 
-impl tensor::Storage for Storage {
+impl PhysicalCell for Storage {
     type Raw = [u8];
     type Access<'a> = VecRef<'a>;
     type AccessMut<'a> = VecRefMut<'a>;

@@ -2,6 +2,7 @@ mod broadcast;
 mod data_type;
 mod fmt;
 mod pattern;
+mod physical_cell;
 mod reshape;
 mod slice;
 mod split;
@@ -17,8 +18,9 @@ pub type idim = i32;
 pub use data_type::DataType;
 pub use nalgebra::DVector;
 pub use pattern::{expand_indices, idx_strides, Affine, Shape};
+pub use physical_cell::PhysicalCell;
 pub use slice::SliceDim;
-pub use tensor::{Storage, Tensor};
+pub use tensor::Tensor;
 
 use std::mem::{align_of, size_of, size_of_val};
 
