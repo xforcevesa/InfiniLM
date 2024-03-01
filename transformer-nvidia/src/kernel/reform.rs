@@ -91,8 +91,8 @@ extern "C" __global__ void {name}(
         ];
 
         let max_warp_per_block = self.block_size / self.warp_size;
-        let grid_dims = ((c + max_warp_per_block - 1) / max_warp_per_block, r);
-        let block_dims = (self.warp_size, (c + grid_dims.0 - 1) / grid_dims.0);
+        let grid_dims = (r, (c + max_warp_per_block - 1) / max_warp_per_block);
+        let block_dims = ((c + grid_dims.1 - 1) / grid_dims.1, self.warp_size);
         self.f
             .launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }

@@ -52,8 +52,8 @@ impl<'a> Transformer<'a> {
         cublas!(cublasCreate_v2(&mut cublas_handle));
 
         let ctx = stream.ctx();
-        let _dev = ctx.dev();
-        let block_size = 1024;
+        let dev = ctx.dev();
+        let (block_size, _) = dev.max_block_dims();
         Self {
             model: ModelParameters::new(host, stream),
             layers: LayersParameters::new(load_layers, host, stream),

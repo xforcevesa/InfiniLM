@@ -69,7 +69,7 @@ extern "C" __global__ void {folding}(
             unreachable!();
         };
 
-        let grid_dims = (seq_len, nh);
+        let grid_dims = (nh, seq_len);
         let (kernel, block_dims) = if att_len <= self.block_size {
             (&self.padding, att_len)
         } else {

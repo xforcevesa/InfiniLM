@@ -34,6 +34,11 @@ impl Transformer {
         LayerCache::new_layers(&*self.model)
     }
 
+    #[inline]
+    pub fn max_seq_len(&self) -> usize {
+        self.model.max_position_embeddings()
+    }
+
     pub fn update(&self, tokens: &[utok], cache: &mut [LayerCache], pos: upos) -> Tensor<Storage> {
         let seq_len = tokens.len() as udim;
         let d = self.model.hidden_size() as udim;

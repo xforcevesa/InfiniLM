@@ -91,6 +91,7 @@ impl Tokenizer for BPE {
     }
 
     fn encode(&self, text: &str) -> Vec<utok> {
+        let text = text.replace(' ', "▁"); // FIXME: 从 tokenizer.json 读取 normalizer
         let mut tokens = Vec::new();
 
         text.chars().map(|c| c.to_string()).for_each(|c| {

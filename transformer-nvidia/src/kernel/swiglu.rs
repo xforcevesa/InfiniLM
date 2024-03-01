@@ -67,8 +67,8 @@ extern "C" __global__ void {name}(
             a
         }
 
-        let block_dims = gcd(di, self.block_size);
-        let grid_dims = (di / block_dims, seq_len);
+        let block_dims = gcd(self.block_size, di);
+        let grid_dims = (seq_len, di / block_dims);
         self.f
             .launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }

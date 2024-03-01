@@ -1,16 +1,14 @@
-﻿use common::utok;
-use log::LevelFilter;
-use simple_logger::SimpleLogger;
+﻿use crate::common::{argmax, logger_init, tokenizer};
 use std::{
     alloc::Layout,
     collections::HashMap,
-    io::{ErrorKind, Write},
+    io::Write,
     path::{Path, PathBuf},
     ptr::NonNull,
     sync::Mutex,
     time::Instant,
 };
-use tokenizer::{Tokenizer, VocabTxt, BPE};
+use tokenizer::Tokenizer;
 use transformer_cpu::{
     model_parameters::{Allocator, Llama2, Memory},
     Transformer,
@@ -75,18 +73,7 @@ impl Allocator for NormalAllocator {
 
 impl GenerateArgs {
     pub fn invoke(self) {
-        let log = self
-            .log
-            .and_then(|log| match log.to_lowercase().as_str() {
-                "off" | "none" => Some(LevelFilter::Off),
-                "trace" => Some(LevelFilter::Trace),
-                "debug" => Some(LevelFilter::Debug),
-                "info" => Some(LevelFilter::Info),
-                "error" => Some(LevelFilter::Error),
-                _ => None,
-            })
-            .unwrap_or(LevelFilter::Warn);
-        SimpleLogger::new().with_level(log).init().unwrap();
+        logger_init(&self.log);
 
         let model_dir = PathBuf::from(self.model);
         let step = self.step.unwrap_or(usize::MAX);
@@ -114,29 +101,6 @@ impl GenerateArgs {
     }
 }
 
-fn tokenizer(path: Option<String>, model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer> {
-    match path {
-        Some(path) => match Path::new(&path).extension() {
-            Some(ext) if ext == "txt" => Box::new(VocabTxt::from_txt_file(path).unwrap()),
-            Some(ext) if ext == "model" => Box::new(BPE::from_model_file(path).unwrap()),
-            _ => panic!("Tokenizer file {path:?} not supported"),
-        },
-        None => {
-            match BPE::from_model_file(model_dir.as_ref().join("tokenizer.model")) {
-                Ok(bpe) => return Box::new(bpe),
-                Err(e) if e.kind() == ErrorKind::NotFound => {}
-                Err(e) => panic!("{e:?}"),
-            }
-            match VocabTxt::from_txt_file(model_dir.as_ref().join("vocabs.txt")) {
-                Ok(voc) => return Box::new(voc),
-                Err(e) if e.kind() == ErrorKind::NotFound => {}
-                Err(e) => panic!("{e:?}"),
-            }
-            panic!("Tokenizer file not found");
-        }
-    }
-}
-
 fn on_host(
     model_dir: impl AsRef<Path>,
     tokenizer: Box<dyn Tokenizer>,
@@ -157,14 +121,13 @@ fn on_host(
         model = Box::new(Memory::realloc_with(&*model, allocator));
         info!("copy model ... {:?}", time.elapsed());
     }
-    let step = step.min(model.max_position_embeddings());
     let time = Instant::now();
     let mut transformer = Transformer::new(model);
     let mut kv_cache = transformer.new_cache();
     info!("build transformer ... {:?}", time.elapsed());
 
     let time = Instant::now();
-    let prompt_tokens = tokenizer.encode(&prompt.trim().replace(' ', "▁"));
+    let prompt_tokens = tokenizer.encode(&prompt.trim());
     info!("encode prompt ... {:?}", time.elapsed());
 
     let time = Instant::now();
@@ -179,7 +142,7 @@ fn on_host(
     let mut token = *last;
     let mut pos = tokens.len();
     let time = Instant::now();
-    while pos < step {
+    while pos < step.min(transformer.max_seq_len()) {
         let logits = transformer.forward(token, &mut kv_cache, pos as _);
         let next = argmax(logits);
 
@@ -300,13 +263,4 @@ fn on_nvidia_gpu(
             (pos - tokens.len()) as f32 / duration.as_secs_f32()
         )
     });
-}
-
-fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
-    logits
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap()
-        .0 as _
 }

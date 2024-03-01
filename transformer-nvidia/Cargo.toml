@@ -12,10 +12,10 @@ tensor = { path = "../tensor" }
 model-parameters = { path = "../model-parameters" }
 cuda = { git = "https://github.com/YdrMaster/cuda-bench" }
 cublas = { git = "https://github.com/YdrMaster/cuda-bench" }
-half = "2.4"
+half.workspace = true
 
 [dev-dependencies]
 tokenizer = { path = "../tokenizer" }
 
 [build-dependencies]
-find_cuda_helper = "0.2"
+find_cuda_helper.workspace = true

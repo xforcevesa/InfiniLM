@@ -9,9 +9,9 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
-half = "2.4"
+half.workspace = true
 rayon = "1.9"
 memmap2 = "0.9"
 safetensors = "0.4"
-serde_json = "1.0"
-serde = { version = "1.0", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

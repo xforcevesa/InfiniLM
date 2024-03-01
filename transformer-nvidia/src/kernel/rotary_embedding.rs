@@ -62,6 +62,6 @@ extern "C" __global__ void {name}(
         ];
 
         self.f
-            .launch((n, nh), dh / 2, params.as_ptr(), 0, Some(stream))
+            .launch((nh, n), dh / 2, params.as_ptr(), 0, Some(stream))
     }
 }
