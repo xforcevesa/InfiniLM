@@ -1,8 +1,12 @@
+mod broadcast;
 mod data_type;
 mod fmt;
 mod pattern;
+mod reshape;
+mod slice;
+mod split;
 mod tensor;
-mod transform;
+mod transpose;
 
 #[allow(non_camel_case_types)]
 pub type udim = u32;
@@ -10,13 +14,13 @@ pub type udim = u32;
 #[allow(non_camel_case_types)]
 pub type idim = i32;
 
-use std::mem::{align_of, size_of, size_of_val};
-
 pub use data_type::DataType;
 pub use nalgebra::DVector;
 pub use pattern::{expand_indices, idx_strides, Affine, Shape};
+pub use slice::SliceDim;
 pub use tensor::{Storage, Tensor};
-pub use transform::SliceDim;
+
+use std::mem::{align_of, size_of, size_of_val};
 
 pub fn reslice<T, U>(src: &[T]) -> &[U] {
     let ptr = src.as_ptr_range();
