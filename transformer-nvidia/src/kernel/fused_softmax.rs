@@ -1,5 +1,6 @@
-﻿use crate::storage::DevMem;
-use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, KernelFn, Stream};
+﻿use cuda::{
+    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, KernelFn, LocalDevBlob, Stream,
+};
 use std::ffi::{c_uint, c_void};
 use tensor::Tensor;
 
@@ -59,7 +60,7 @@ extern "C" __global__ void {folding}(
         }
     }
 
-    pub fn launch(&self, att: &Tensor<DevMem>, stream: &Stream) {
+    pub fn launch(&self, att: &Tensor<LocalDevBlob>, stream: &Stream) {
         assert!(att.is_contiguous());
         let &[nh, seq_len, att_len] = att.shape() else {
             panic!("Invalid attention shape");

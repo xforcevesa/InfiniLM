@@ -1,5 +1,4 @@
-use crate::DevMem;
-use cuda::{AsRaw, ContextGuard, CudaDataType, KernelFn, Stream};
+use cuda::{AsRaw, ContextGuard, CudaDataType, KernelFn, LocalDevBlob, Stream};
 use std::ffi::{c_uint, c_void};
 
 pub struct RmsNormalization {
@@ -63,9 +62,9 @@ extern "C" __global__ void {folding}(
 
     pub fn launch(
         &self,
-        y: &DevMem,
-        x: &DevMem,
-        w: &DevMem,
+        y: &LocalDevBlob,
+        x: &LocalDevBlob,
+        w: &LocalDevBlob,
         epsilon: f32,
         leading_dim: usize,
         stream: &Stream,

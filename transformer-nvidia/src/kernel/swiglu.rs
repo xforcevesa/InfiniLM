@@ -1,5 +1,6 @@
-﻿use crate::storage::DevMem;
-use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, KernelFn, Stream};
+﻿use cuda::{
+    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, KernelFn, LocalDevBlob, Stream,
+};
 use std::ffi::{c_uint, c_void};
 use tensor::{udim, Tensor};
 
@@ -35,7 +36,7 @@ extern "C" __global__ void {name}(
         }
     }
 
-    pub fn launch(&self, gate: &Tensor<DevMem>, up: &Tensor<DevMem>, stream: &Stream) {
+    pub fn launch(&self, gate: &Tensor<LocalDevBlob>, up: &Tensor<LocalDevBlob>, stream: &Stream) {
         assert_eq!(gate.data_type(), up.data_type());
         assert_eq!(gate.shape(), up.shape());
 

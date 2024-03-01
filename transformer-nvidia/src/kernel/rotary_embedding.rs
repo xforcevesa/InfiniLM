@@ -1,5 +1,4 @@
-﻿use crate::storage::DevMem;
-use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, KernelFn, Stream};
+﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, KernelFn, LocalDevBlob, Stream};
 use std::ffi::{c_uint, c_void};
 use tensor::{udim, DataType, Tensor};
 
@@ -34,7 +33,13 @@ extern "C" __global__ void {name}(
         }
     }
 
-    pub fn launch(&self, t: &Tensor<DevMem>, pos: &Tensor<DevMem>, theta: f32, stream: &Stream) {
+    pub fn launch(
+        &self,
+        t: &Tensor<LocalDevBlob>,
+        pos: &Tensor<LocalDevBlob>,
+        theta: f32,
+        stream: &Stream,
+    ) {
         let &[n, nh, dh] = t.shape() else {
             panic!("Invalid shape");
         };

@@ -1,6 +1,5 @@
-﻿use crate::storage::DevMem;
-use cublas::{bindings::cublasOperation_t, cublas};
-use cuda::AsRaw;
+﻿use cublas::{bindings::cublasOperation_t, cublas};
+use cuda::{AsRaw, LocalDevBlob};
 use half::f16;
 use std::{
     ffi::{c_int, c_longlong, c_void},
@@ -10,10 +9,10 @@ use tensor::{DataType, Tensor};
 
 pub fn mat_mul(
     handle: cublas::bindings::cublasHandle_t,
-    c: &Tensor<DevMem>,
+    c: &Tensor<LocalDevBlob>,
     beta: f32,
-    a: &Tensor<DevMem>,
-    b: &Tensor<DevMem>,
+    a: &Tensor<LocalDevBlob>,
+    b: &Tensor<LocalDevBlob>,
     alpha: f32,
 ) {
     assert_eq!(c.data_type(), DataType::F16);
@@ -91,8 +90,8 @@ struct Matrix {
     ptr: *mut c_void,
 }
 
-impl From<&Tensor<DevMem<'_>>> for Matrix {
-    fn from(tensor: &Tensor<DevMem>) -> Self {
+impl From<&Tensor<LocalDevBlob<'_>>> for Matrix {
+    fn from(tensor: &Tensor<LocalDevBlob>) -> Self {
         let strides = tensor.strides();
         let ptr = (unsafe { tensor.physical().as_raw() } as isize + tensor.bytes_offset()) as _;
         match tensor.shape() {

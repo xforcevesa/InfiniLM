@@ -8,12 +8,11 @@ mod storage;
 use ::half::f16;
 use common::{upos, utok};
 use cublas::{bindings as cublas_def, cublas};
-use cuda::{AsRaw, CudaDataType::half, Stream};
+use cuda::{AsRaw, CudaDataType::half, LocalDevBlob, Stream};
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
 use std::ptr::null_mut;
-use storage::DevMem;
 use tensor::{slice, udim, DataType, Tensor};
 
 pub use cache::LayerCache;
@@ -33,7 +32,7 @@ pub struct Transformer<'a> {
     fused_softmax: FusedSoftmax,
     swiglu: Swiglu,
 
-    logits_dev: Tensor<DevMem<'a>>,
+    logits_dev: Tensor<LocalDevBlob<'a>>,
     logits: Vec<f32>,
 }
 
@@ -84,7 +83,7 @@ impl<'a> Transformer<'a> {
         pos: upos,
         compute: &Stream,
         transfer: &'b Stream,
-    ) -> Tensor<DevMem<'b>> {
+    ) -> Tensor<LocalDevBlob<'b>> {
         let seq_len = tokens.len() as udim;
         let d = self.host.hidden_size() as udim;
         let nh = self.host.num_attention_heads() as udim;
@@ -100,7 +99,7 @@ impl<'a> Transformer<'a> {
         let att_len = pos + seq_len;
         let cat_slice = &[slice![all], slice![pos; 1; seq_len], slice![all]];
         let att_slice = &[slice![all], slice![  0; 1; att_len], slice![all]];
-        let pos = DevMem::from_slice(&(pos..pos + seq_len).collect::<Vec<udim>>(), transfer);
+        let pos = transfer.from_host(&(pos..pos + seq_len).collect::<Vec<udim>>());
         let pos = Tensor::new(DataType::U32, &[seq_len], pos);
         // println!("tokens: {tokens:?}");
 
@@ -284,16 +283,16 @@ impl<'a> Transformer<'a> {
 }
 
 #[inline]
-fn tensor<'a>(dt: DataType, shape: &[udim], stream: &'a Stream) -> Tensor<DevMem<'a>> {
+fn tensor<'a>(dt: DataType, shape: &[udim], stream: &'a Stream) -> Tensor<LocalDevBlob<'a>> {
     Tensor::new(
         dt,
         shape,
-        DevMem::new(shape.iter().product::<udim>() as usize * dt.size(), stream),
+        stream.malloc::<u8>(shape.iter().product::<udim>() as usize * dt.size()),
     )
 }
 
 #[allow(unused)]
-fn map_tensor(tensor: &Tensor<DevMem>) -> Tensor<Vec<u8>> {
+fn map_tensor(tensor: &Tensor<LocalDevBlob>) -> Tensor<Vec<u8>> {
     unsafe {
         tensor.map_physical(|dev| {
             let len = dev.len();

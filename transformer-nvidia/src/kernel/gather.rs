@@ -1,10 +1,9 @@
-﻿use crate::storage::DevMem;
-use common::utok;
-use cuda::{bindings::CUdeviceptr, AsRaw, Stream};
+﻿use common::utok;
+use cuda::{bindings::CUdeviceptr, AsRaw, LocalDevBlob, Stream};
 use std::ops::Deref;
 use tensor::Tensor;
 
-pub fn gather<T>(x: &Tensor<DevMem>, table: &Tensor<T>, tokens: &[utok], stream: &Stream)
+pub fn gather<T>(x: &Tensor<LocalDevBlob>, table: &Tensor<T>, tokens: &[utok], stream: &Stream)
 where
     T: Deref<Target = [u8]>,
 {

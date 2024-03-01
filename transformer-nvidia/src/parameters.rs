@@ -1,11 +1,10 @@
-﻿use crate::DevMem;
-use cuda::Stream;
+﻿use cuda::{LocalDevBlob, Stream};
 use model_parameters::Llama2;
 use tensor::Tensor;
 
 pub(crate) struct ModelParameters<'a> {
-    pub(crate) model_norm: Tensor<DevMem<'a>>,
-    pub(crate) lm_head: Tensor<DevMem<'a>>,
+    pub(crate) model_norm: Tensor<LocalDevBlob<'a>>,
+    pub(crate) lm_head: Tensor<LocalDevBlob<'a>>,
     pub(crate) sync_event: cuda::Event,
 }
 
@@ -13,10 +12,7 @@ impl<'a> ModelParameters<'a> {
     pub fn new(host: &dyn Llama2, stream: &'a Stream) -> Self {
         macro_rules! map {
             ($param:ident) => {
-                unsafe {
-                    host.$param()
-                        .map_physical(|slice| DevMem::from_slice(slice, stream))
-                }
+                unsafe { host.$param().map_physical(|slice| stream.from_host(slice)) }
             };
         }
         Self {
@@ -71,12 +67,12 @@ impl<'a> LayersParameters<'a> {
 }
 
 pub(crate) struct LayerParameter<'a> {
-    pub input_layernorm: Tensor<DevMem<'a>>,
-    pub w_qkv: Tensor<DevMem<'a>>,
-    pub self_attn_o_proj: Tensor<DevMem<'a>>,
-    pub post_attention_layernorm: Tensor<DevMem<'a>>,
-    pub mlp_gate_up: Tensor<DevMem<'a>>,
-    pub mlp_down: Tensor<DevMem<'a>>,
+    pub input_layernorm: Tensor<LocalDevBlob<'a>>,
+    pub w_qkv: Tensor<LocalDevBlob<'a>>,
+    pub self_attn_o_proj: Tensor<LocalDevBlob<'a>>,
+    pub post_attention_layernorm: Tensor<LocalDevBlob<'a>>,
+    pub mlp_gate_up: Tensor<LocalDevBlob<'a>>,
+    pub mlp_down: Tensor<LocalDevBlob<'a>>,
 
     layer: usize,
     sync_event: cuda::Event,
@@ -88,7 +84,7 @@ impl<'a> LayerParameter<'a> {
             ($param:ident) => {
                 unsafe {
                     host.$param(layer)
-                        .map_physical(|slice| DevMem::from_slice(slice, stream))
+                        .map_physical(|slice| stream.from_host(slice))
                 }
             };
         }
@@ -113,7 +109,7 @@ impl<'a> LayerParameter<'a> {
             ($param:ident) => {
                 self.$param
                     .physical_mut()
-                    .copy_in(host.$param(layer).as_slice(), stream)
+                    .copy_in_async(host.$param(layer).as_slice(), stream)
             };
         }
         update!(input_layernorm);

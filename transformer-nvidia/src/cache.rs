@@ -1,13 +1,13 @@
-﻿use crate::{tensor, DevMem};
-use cuda::Stream;
+﻿use crate::tensor;
+use cuda::{LocalDevBlob, Stream};
 use model_parameters::Llama2;
 use tensor::{udim, Tensor};
 
 pub struct LayerCache<'a> {
     /// Key cache, shape = `num_kv_head x max_seq_len x head_dim`.
-    k: Tensor<DevMem<'a>>,
+    k: Tensor<LocalDevBlob<'a>>,
     /// Value cache, shape = `num_kv_head x max_seq_len x head_dim`.
-    v: Tensor<DevMem<'a>>,
+    v: Tensor<LocalDevBlob<'a>>,
 }
 
 impl<'a> LayerCache<'a> {
@@ -26,7 +26,7 @@ impl<'a> LayerCache<'a> {
     }
 
     #[inline]
-    pub fn get(&self) -> (&'a Tensor<DevMem>, &'a Tensor<DevMem>) {
+    pub fn get(&self) -> (&'a Tensor<LocalDevBlob>, &'a Tensor<LocalDevBlob>) {
         (&self.k, &self.v)
     }
 }
