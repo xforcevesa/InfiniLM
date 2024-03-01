@@ -106,12 +106,19 @@ impl<'a> Transformer<'a> {
         let x0 = tensor(dt, &[seq_len, d], transfer);
         let e_alloc_x0 = transfer.record();
         let x1 = tensor(dt, &[seq_len, d], transfer);
-        // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
-        let x2 = tensor(dt, &[nkvh, head_group * seq_len, dh], transfer);
         let qkv = tensor(dt, &[seq_len, d + dkv + dkv], transfer);
-        let q_att = tensor(dt, &[nh, seq_len, dh], transfer);
         let att = tensor(dt, &[nkvh, head_group * seq_len, att_len], transfer);
         let gate_up = tensor(dt, &[seq_len, di + di], transfer);
+
+        let (mut x2, mut q_att) = if seq_len > 1 {
+            (
+                // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
+                Some(tensor(dt, &[nkvh, head_group * seq_len, dh], transfer)),
+                Some(tensor(dt, &[nh, seq_len, dh], transfer)),
+            )
+        } else {
+            (None, None)
+        };
         let e_alloc = transfer.record();
 
         compute.wait_for(&e_alloc_x0);
@@ -157,7 +164,12 @@ impl<'a> Transformer<'a> {
             let (k_cache, v_cache) = cache.get();
             let k_cat = k_cache.clone().slice(cat_slice);
             let v_cat = v_cache.clone().slice(cat_slice);
-            self.reform.launch(&q_att, &q, compute);
+            let q_att = if let Some(q_att) = q_att.as_mut() {
+                self.reform.launch(&q_att, &q, compute);
+                q_att.clone()
+            } else {
+                q.reshape(&[nh, seq_len, dh])
+            };
             self.reform.launch(&k_cat, &k, compute);
             self.reform.launch(&v_cat, &v, compute);
 
@@ -180,15 +192,20 @@ impl<'a> Transformer<'a> {
                     // compute.synchronize();
                     // println!("layer {layer} after softmax:\n{}", map_tensor(&att));
                 }
-                mat_mul(self.cublas, &x2, 0., &att, &v_att, 1.);
+                if let Some(x2) = x2.as_mut() {
+                    mat_mul(self.cublas, &x2, 0., &att, &v_att, 1.);
+                    self.reform.launch(
+                        &x1.clone().reshape(&[seq_len, nh, dh]),
+                        &x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]),
+                        compute,
+                    );
+                } else {
+                    let x2 = x1.clone().reshape(&[nkvh, head_group * seq_len, dh]);
+                    mat_mul(self.cublas, &x2, 0., &att, &v_att, 1.);
+                }
+                // compute.synchronize();
+                // println!("layer {layer} after attention:\n{}", map_tensor(&x1));
             }
-            self.reform.launch(
-                &x1.clone().reshape(&[seq_len, nh, dh]),
-                &x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]),
-                compute,
-            );
-            // compute.synchronize();
-            // println!("layer {layer} after attention:\n{}", map_tensor(&x1));
 
             let wo = params.self_attn_o_proj.clone().transpose(&[1, 0]);
             mat_mul(self.cublas, &x0, 1., &x1, &wo, 1.);

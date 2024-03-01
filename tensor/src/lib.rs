@@ -1,4 +1,5 @@
 mod broadcast;
+mod compatibility;
 mod data_type;
 mod fmt;
 mod pattern;
@@ -15,6 +16,7 @@ pub type udim = u32;
 #[allow(non_camel_case_types)]
 pub type idim = i32;
 
+pub use compatibility::Compatibility;
 pub use data_type::DataType;
 pub use nalgebra::DVector;
 pub use pattern::{expand_indices, idx_strides, Affine, Shape};

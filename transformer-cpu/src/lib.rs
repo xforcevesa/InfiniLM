@@ -56,12 +56,19 @@ impl Transformer {
 
         let mut x0 = tensor(dt, &[seq_len, d]);
         let mut x1 = tensor(dt, &[seq_len, d]);
-        // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
-        let mut x2 = tensor(dt, &[nkvh, head_group * seq_len, dh]);
         let mut qkv = tensor(dt, &[seq_len, d + dkv + dkv]);
-        let mut q_att = tensor(dt, &[nh, seq_len, dh]);
         let mut att = tensor(dt, &[nkvh, head_group * seq_len, att_len]);
         let mut gate_up = tensor(dt, &[seq_len, di + di]);
+
+        let (mut x2, mut q_att) = if seq_len > 1 {
+            (
+                // `seq_len x hidden_size` -reshape-> `seq_len x (num_kv_head x head_group x head_dim)` -transpose(1,2,0,3)-> `num_kv_head x head_group x seq_len x head_dim` -reshape-> `num_kv_head x (head_group x seq_len) x head_dim`
+                Some(tensor(dt, &[nkvh, head_group * seq_len, dh])),
+                Some(tensor(dt, &[nh, seq_len, dh])),
+            )
+        } else {
+            (None, None)
+        };
 
         gather(&mut x0.access_mut(), &self.model.embed_tokens(), tokens);
         // println!("gather:\n{}", x0.access());
@@ -95,7 +102,12 @@ impl Transformer {
             let (k_cache, v_cache) = cache.get();
             let mut k_cat = k_cache.clone().slice(cat_slice);
             let mut v_cat = v_cache.clone().slice(cat_slice);
-            q.access().reform_to(&mut q_att.access_mut());
+            let q_att = if let Some(q_att) = q_att.as_mut() {
+                q.access().reform_to(&mut q_att.access_mut());
+                q_att.clone()
+            } else {
+                q.reshape(&[nh, seq_len, dh])
+            };
             k.access().reform_to(&mut k_cat.access_mut());
             v.access().reform_to(&mut v_cat.access_mut());
 
@@ -121,14 +133,17 @@ impl Transformer {
                     softmax(&mut att.access_mut());
                     // println!("layer {layer} after softmax:\n{}", att.access());
                 }
-                mat_mul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
+                if let Some(x2) = x2.as_mut() {
+                    mat_mul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
+                    let x2 = x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
+                    let mut x1 = x1.clone().reshape(&[seq_len, nh, dh]);
+                    x2.access().reform_to(&mut x1.access_mut());
+                } else {
+                    let mut x2 = x1.clone().reshape(&[nkvh, head_group * seq_len, dh]);
+                    mat_mul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
+                }
+                // println!("layer {layer} after attention:\n{}", x1.access());
             }
-            {
-                let x2 = x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
-                let mut x1 = x1.clone().reshape(&[seq_len, nh, dh]);
-                x2.access().reform_to(&mut x1.access_mut());
-            }
-            // println!("layer {layer} after attention:\n{}", x1.access());
 
             let wo = self.model.self_attn_o_proj(layer).transpose(&[1, 0]);
             mat_mul(&mut x0.access_mut(), 1., &x1.access(), &wo, 1.);
