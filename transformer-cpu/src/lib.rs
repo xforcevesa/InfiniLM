@@ -14,7 +14,6 @@ pub extern crate model_parameters;
 
 pub struct Transformer {
     model: Box<dyn Llama2>,
-    logits: Vec<f32>,
 }
 
 pub struct Request<'a> {
@@ -39,7 +38,6 @@ impl Transformer {
     #[inline]
     pub fn new(model: Box<dyn Llama2>) -> Self {
         Self {
-            logits: vec![0.; model.vocab_size()],
             model: match model.data_type() {
                 DataType::BF16 | DataType::F32 => Box::new(Memory::cast(&*model, DataType::F16)),
                 _ => model,
@@ -97,7 +95,7 @@ impl Transformer {
             let len = request.tokens.len() as u32;
             pos.extend(request.pos..(request.pos + len));
         }
-        let pos = Tensor::new(DataType::U32, &[nt], reslice::<udim, u8>(&pos));
+        let pos = Tensor::new(DataType::U32, &[nt], reslice(&pos));
 
         let mut x0 = tensor(dt, &[nt, d]);
         let mut x1 = tensor(dt, &[nt, d]);
@@ -216,12 +214,11 @@ impl Transformer {
         x0
     }
 
-    pub fn forward(&mut self, token: utok, cache: &mut [LayerCache], pos: upos) -> &[f32] {
-        let mut x = self.update(&mut [Request {
-            tokens: &[token],
-            cache,
-            pos,
-        }]);
+    pub fn decode(&mut self, requests: &mut [Request]) -> Vec<f16> {
+        assert!(requests.iter().all(|r| r.seq_len() == 1));
+        let batch = requests.len() as udim;
+
+        let mut x = self.update(requests);
 
         let model_norm = self.model.model_norm();
         rms_norm_inplace(&mut x.access_mut(), &model_norm, self.model.rms_norm_eps());
@@ -229,28 +226,13 @@ impl Transformer {
 
         let dt = self.model.data_type();
         let voc = self.model.vocab_size() as udim;
-        mat_mul(
-            &mut Tensor::new(dt, &[1, voc], reslice_mut(&mut self.logits)),
-            0.,
-            &x.access(),
-            &self.model.lm_head().transpose(&[1, 0]),
-            1.,
-        );
-        // println!("pos {pos} logits:\n{}", logits);
+        let mut buf = vec![f16::ZERO; (batch * voc) as usize];
+        let mut logits = Tensor::new(dt, &[batch, voc], reslice_mut(&mut buf));
+        let lm_head = self.model.lm_head().transpose(&[1, 0]);
+        mat_mul(&mut logits, 0., &x.access(), &lm_head, 1.);
+        // println!("pos {pos} logits:\n{}", logits.access());
 
-        match self.model.data_type() {
-            DataType::F32 => {}
-            DataType::F16 => {
-                let ptr = self.logits.as_ptr().cast::<f16>();
-                let len = self.model.vocab_size();
-                let src = unsafe { std::slice::from_raw_parts(ptr, len) };
-                for (dst, src) in self.logits.iter_mut().rev().zip(src.iter().rev()) {
-                    *dst = f32::from(*src);
-                }
-            }
-            _ => unreachable!(),
-        }
-        &self.logits
+        buf
     }
 }
 

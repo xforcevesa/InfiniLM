@@ -245,7 +245,7 @@ impl<'a> Transformer<'a> {
         x0
     }
 
-    pub fn forward(
+    pub fn decode(
         &mut self,
         token: utok,
         cache: &[LayerCache],

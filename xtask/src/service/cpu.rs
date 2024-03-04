@@ -64,8 +64,12 @@ pub(super) fn run(
         let max_pos = transformer.max_seq_len() as upos;
         let mut out = String::new();
         while session.pos < max_pos {
-            let logits = transformer.forward(token, &mut session.kv_cache, session.pos as _);
-            token = argmax(logits);
+            let logits = transformer.decode(&mut [Request {
+                tokens: &[token],
+                cache: &mut session.kv_cache,
+                pos: session.pos as _,
+            }]);
+            token = argmax(&logits);
             if token == eos {
                 break;
             }

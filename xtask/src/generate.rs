@@ -150,8 +150,12 @@ fn on_host(
     let mut pos = tokens.len();
     let time = Instant::now();
     while pos < step.min(transformer.max_seq_len()) {
-        let logits = transformer.forward(token, &mut kv_cache, pos as _);
-        token = argmax(logits);
+        let logits = transformer.decode(&mut [Request {
+            tokens: &[token],
+            cache: &mut kv_cache,
+            pos: pos as _,
+        }]);
+        token = argmax(&logits);
 
         print!("{}", tokenizer.decode(token).replace('▁', " "));
         std::io::stdout().flush().unwrap();
@@ -268,7 +272,7 @@ fn on_nvidia_gpu(
         let mut pos = tokens.len();
         let time = Instant::now();
         while pos < step {
-            let logits = transformer.forward(token, &kv_cache, pos as _, &compute, &transfer);
+            let logits = transformer.decode(token, &kv_cache, pos as _, &compute, &transfer);
             token = argmax(logits);
 
             print!("{}", tokenizer.decode(token).replace('▁', " "));
