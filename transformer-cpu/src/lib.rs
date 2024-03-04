@@ -80,20 +80,15 @@ impl Transformer {
             (None, None)
         };
 
-        gather(&mut x0.access_mut(), &self.model.embed_tokens(), tokens);
+        gather(x0.access_mut(), &self.model.embed_tokens(), tokens);
         // println!("gather:\n{}", x0.access());
 
         for (layer, cache) in cache.iter_mut().enumerate() {
             let input_layernorm = self.model.input_layernorm(layer);
-            rms_norm(
-                &mut x1.access_mut(),
-                &x0.access(),
-                &input_layernorm,
-                epsilon,
-            );
+            rms_norm(x1.access_mut(), &x0.access(), &input_layernorm, epsilon);
             // println!("layer {layer} input norm:\n{}", x1.access());
             let w_qkv = self.model.w_qkv(layer).transpose(&[1, 0]);
-            mat_mul(&mut qkv.access_mut(), 0., &x1.access_mut(), &w_qkv, 1.);
+            mat_mul(qkv.access_mut(), 0., &x1.access_mut(), &w_qkv, 1.);
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             let v = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
             let mut k = qkv.pop().unwrap().reshape(&[seq_len, nkvh, dh]);
@@ -101,8 +96,8 @@ impl Transformer {
             // println!("layer {layer} q:\n{}", q.access());
             // println!("layer {layer} k:\n{}", k.access());
             // println!("layer {layer} v:\n{}", v.access());
-            rotary_embedding(&mut q.access_mut(), &pos, theta);
-            rotary_embedding(&mut k.access_mut(), &pos, theta);
+            rotary_embedding(q.access_mut(), &pos, theta);
+            rotary_embedding(k.access_mut(), &pos, theta);
             // println!("layer {layer} rot q:\n{}", q.access());
             // println!("layer {layer} rot k:\n{}", k.access());
             let q = q.transpose(&[1, 0, 2]);
@@ -131,7 +126,7 @@ impl Transformer {
             {
                 let k_att = k_att.transpose(&[0, 2, 1]);
                 mat_mul(
-                    &mut att.access_mut(),
+                    att.access_mut(),
                     0.,
                     &q_att.access(),
                     &k_att.access(),
@@ -140,42 +135,42 @@ impl Transformer {
                 {
                     let mut att = att.clone().reshape(&[nh, seq_len, att_len]);
                     // println!("layer {layer} before softmax:\n{}", att.access());
-                    softmax(&mut att.access_mut());
+                    softmax(att.access_mut());
                     // println!("layer {layer} after softmax:\n{}", att.access());
                 }
                 if let Some(x2) = x2.as_mut() {
-                    mat_mul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
+                    mat_mul(x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
                     let x2 = x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
                     let mut x1 = x1.clone().reshape(&[seq_len, nh, dh]);
                     x2.access().reform_to(&mut x1.access_mut());
                 } else {
                     let mut x2 = x1.clone().reshape(&[nkvh, head_group * seq_len, dh]);
-                    mat_mul(&mut x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
+                    mat_mul(x2.access_mut(), 0., &att.access(), &v_att.access(), 1.);
                 }
                 // println!("layer {layer} after attention:\n{}", x1.access());
             }
 
             let wo = self.model.self_attn_o_proj(layer).transpose(&[1, 0]);
-            mat_mul(&mut x0.access_mut(), 1., &x1.access(), &wo, 1.);
+            mat_mul(x0.access_mut(), 1., &x1.access(), &wo, 1.);
             // println!("layer {layer} o_proj:\n{}", x0.access());
 
             let post_layernorm = self.model.post_attention_layernorm(layer);
-            rms_norm(&mut x1.access_mut(), &x0.access(), &post_layernorm, epsilon);
+            rms_norm(x1.access_mut(), &x0.access(), &post_layernorm, epsilon);
             // println!("layer {layer} post norm:\n{}", x1.access());
 
             let w_gate_up = self.model.mlp_gate_up(layer).transpose(&[1, 0]);
-            mat_mul(&mut gate_up.access_mut(), 0., &x1.access(), &w_gate_up, 1.);
+            mat_mul(gate_up.access_mut(), 0., &x1.access(), &w_gate_up, 1.);
             let mut gate_up = gate_up.split(1, &[di as _, di as _]);
             let up = gate_up.pop().unwrap();
             let mut gate = gate_up.pop().unwrap();
             // println!("layer {layer} gate:\n{}", gate.access());
             // println!("layer {layer} up:\n{}", up.access());
 
-            swiglu(&mut gate.access_mut(), unsafe { &up.access_unchecked() });
+            swiglu(gate.access_mut(), unsafe { &up.access_unchecked() });
             // println!("layer {layer} swiglu:\n{}", gate.access());
 
             let mlp_down = self.model.mlp_down(layer).transpose(&[1, 0]);
-            mat_mul(&mut x0.access_mut(), 1., &gate.access(), &mlp_down, 1.);
+            mat_mul(x0.access_mut(), 1., &gate.access(), &mlp_down, 1.);
             // println!("layer {layer} down:\n{}", x0.access());
         }
 
@@ -192,7 +187,7 @@ impl Transformer {
         let dt = self.model.data_type();
         let voc = self.model.vocab_size() as udim;
         mat_mul(
-            &mut Tensor::new(dt, &[1, voc], reslice_mut(&mut self.logits)),
+            Tensor::new(dt, &[1, voc], reslice_mut(&mut self.logits)),
             0.,
             &x.access(),
             &self.model.lm_head().transpose(&[1, 0]),

@@ -2,7 +2,7 @@
 use std::ops::{Deref, DerefMut};
 use tensor::{idim, DVector, Tensor};
 
-pub fn swiglu<T, U>(gate: &mut Tensor<T>, up: &Tensor<U>)
+pub fn swiglu<T, U>(mut gate: Tensor<T>, up: &Tensor<U>)
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,

@@ -6,17 +6,22 @@ use std::{
 };
 use tensor::{reslice, reslice_mut, DataType, Tensor};
 
-pub fn rms_norm<T, U, V>(o: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
+pub fn rms_norm<T, U, V>(mut o: Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,
     V: Deref<Target = [u8]>,
 {
+    let &[.., d] = o.shape() else { panic!() };
     let dt = o.data_type();
+
     debug_assert_eq!(x.data_type(), dt);
     debug_assert_eq!(w.data_type(), dt);
     debug_assert_eq!(o.shape(), x.shape());
-    debug_assert_eq!(&[*o.shape().last().unwrap()], w.shape());
+    debug_assert_eq!(w.shape(), &[d]);
+    debug_assert!(o.is_contiguous());
+    debug_assert!(x.is_contiguous());
+    debug_assert!(w.is_contiguous());
 
     let o = o.as_mut_slice();
     let x = x.as_slice();
@@ -36,9 +41,13 @@ where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,
 {
+    let &[.., d] = o.shape() else { panic!() };
     let dt = o.data_type();
+
     debug_assert_eq!(w.data_type(), dt);
-    debug_assert_eq!(&[*o.shape().last().unwrap()], w.shape());
+    debug_assert_eq!(w.shape(), &[d]);
+    debug_assert!(o.is_contiguous());
+    debug_assert!(w.is_contiguous());
 
     let o: &mut [u8] = o.as_mut_slice();
     let x = unsafe { std::slice::from_raw_parts(o.as_ptr(), o.len()) };

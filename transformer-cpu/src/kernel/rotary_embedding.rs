@@ -3,22 +3,22 @@ use gemm::f16;
 use std::ops::{Deref, DerefMut};
 use tensor::{expand_indices, idx_strides, udim, Tensor};
 
-/// - t:   [N0, N1, ... , N_, num_head, head_dim]
-/// - pos: [N0, N1, ... , N_]
-pub fn rotary_embedding<T, U>(t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32)
+/// - t:   [num_token, num_head, head_dim]
+/// - pos: [num_token]
+pub fn rotary_embedding<T, U>(mut t: Tensor<T>, pos: &Tensor<U>, theta: f32)
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,
 {
     assert!(t.contiguous_len() >= 2);
-    let [batch @ .., nh, dh] = t.shape() else {
+    let &[num_tokens, nh, dh] = t.shape() else {
         panic!()
     };
-    assert_eq!(pos.shape(), batch);
-    let nh = *nh as usize;
-    let dh = *dh as usize / 2;
+    assert_eq!(pos.shape(), &[num_tokens]);
+    let nh = nh as usize;
+    let dh = dh as usize / 2;
 
-    let (n, idx_strides) = idx_strides(batch);
+    let (n, idx_strides) = idx_strides(&[num_tokens]);
     for i in 0..n {
         let pos = pos
             .locate(&expand_indices(i, &idx_strides, &[1]).as_view())

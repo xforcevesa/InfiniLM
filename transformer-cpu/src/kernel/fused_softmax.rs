@@ -4,7 +4,7 @@ use std::ops::DerefMut;
 use tensor::{expand_indices, idx_strides, Tensor};
 
 /// - x: [N0, N1, ... , N_, seq_len, att_len]
-pub fn softmax<T>(x: &mut Tensor<T>)
+pub fn softmax<T>(mut x: Tensor<T>)
 where
     T: DerefMut<Target = [u8]>,
 {
