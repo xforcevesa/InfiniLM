@@ -4,6 +4,7 @@ members = [
     "tensor",
     "model-parameters",
     "tokenizer",
+    "transformer",
     "transformer-cpu",
     "transformer-nvidia",
     "xtask",

@@ -1,9 +1,8 @@
 #![cfg(detected_cuda)]
 
-mod cache;
 mod kernel;
+mod page_locked_memory;
 mod parameters;
-mod storage;
 
 use ::half::f16;
 use common::{upos, utok};
@@ -15,8 +14,8 @@ use parameters::{LayersParameters, ModelParameters};
 use std::ptr::null_mut;
 use tensor::{slice, udim, DataType, Tensor};
 
-pub use cache::LayerCache;
-pub use storage::PageLockedMemory;
+pub type LayerCache<'a> = transformer::LayerCache<LocalDevBlob<'a>>;
+pub use page_locked_memory::PageLockedMemory;
 pub extern crate cuda;
 pub extern crate model_parameters;
 
@@ -73,13 +72,13 @@ impl<'a> Transformer<'a> {
 
     #[inline]
     pub fn new_cache<'b>(&self, stream: &'b Stream) -> Vec<LayerCache<'b>> {
-        LayerCache::new_layers(self.host, stream)
+        LayerCache::new_layers(self.host, |dt, shape| tensor(dt, shape, stream))
     }
 
     pub fn update<'b>(
         &mut self,
         tokens: &[utok],
-        cache: &[LayerCache],
+        cache: &mut [LayerCache],
         pos: upos,
         compute: &Stream,
         transfer: &'b Stream,
@@ -128,7 +127,7 @@ impl<'a> Transformer<'a> {
 
         cublas!(cublasSetStream_v2(self.cublas, compute.as_raw() as _));
         compute.wait_for(&e_alloc);
-        for (layer, cache) in cache.iter().enumerate() {
+        for (layer, cache) in cache.iter_mut().enumerate() {
             self.layers.load(layer, self.host, transfer);
             let params = self.layers.sync(layer, compute);
 
@@ -248,7 +247,7 @@ impl<'a> Transformer<'a> {
     pub fn decode(
         &mut self,
         token: utok,
-        cache: &[LayerCache],
+        cache: &mut [LayerCache],
         pos: upos,
         compute: &Stream,
         transfer: &Stream,

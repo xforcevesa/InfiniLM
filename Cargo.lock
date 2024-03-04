@@ -258,17 +258,9 @@ version = "0.0.0"
 source = "git+https://github.com/YdrMaster/cuda-bench#5a8993ae9f4af2cde5112bebe5bc74c99b9e13e2"
 dependencies = [
  "bindgen",
- "cuda 0.0.0 (git+https://github.com/YdrMaster/cuda-bench)",
+ "cuda",
  "find_cuda_helper",
  "half",
-]
-
-[[package]]
-name = "cuda"
-version = "0.0.0"
-dependencies = [
- "bindgen",
- "find_cuda_helper",
 ]
 
 [[package]]
@@ -1065,6 +1057,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "transformer"
+version = "0.0.0"
+dependencies = [
+ "common",
+ "model-parameters",
+ "tensor",
+]
+
+[[package]]
 name = "transformer-cpu"
 version = "0.0.0"
 dependencies = [
@@ -1073,6 +1074,7 @@ dependencies = [
  "model-parameters",
  "tensor",
  "tokenizer",
+ "transformer",
 ]
 
 [[package]]
@@ -1081,12 +1083,13 @@ version = "0.0.0"
 dependencies = [
  "common",
  "cublas",
- "cuda 0.0.0",
+ "cuda",
  "find_cuda_helper",
  "half",
  "model-parameters",
  "tensor",
  "tokenizer",
+ "transformer",
 ]
 
 [[package]]

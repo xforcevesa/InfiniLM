@@ -253,7 +253,7 @@ fn on_nvidia_gpu(
         let host = Memory::load_safetensors(config, host, false).unwrap();
         let eos = host.eos_token_id();
         let mut transformer = Transformer::new(&host, preload_layers, &transfer);
-        let kv_cache = transformer.new_cache(&compute);
+        let mut kv_cache = transformer.new_cache(&compute);
         info!("build model host: {:?}", time.elapsed());
 
         let step = step.min(host.max_position_embeddings());
@@ -264,7 +264,7 @@ fn on_nvidia_gpu(
         let time = Instant::now();
         let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
         if !tokens.is_empty() {
-            transformer.update(tokens, &kv_cache, 0, &compute, &transfer);
+            transformer.update(tokens, &mut kv_cache, 0, &compute, &transfer);
         }
         info!("prefill transformer ... {:?}", time.elapsed());
 
@@ -274,7 +274,7 @@ fn on_nvidia_gpu(
         let mut pos = tokens.len();
         let time = Instant::now();
         while pos < step {
-            let logits = transformer.decode(token, &kv_cache, pos as _, &compute, &transfer);
+            let logits = transformer.decode(token, &mut kv_cache, pos as _, &compute, &transfer);
             token = argmax(logits);
 
             print!("{}", tokenizer.decode(token).replace('▁', " "));

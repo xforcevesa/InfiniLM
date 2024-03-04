@@ -1,5 +1,5 @@
 [package]
-name = "transformer-cpu"
+name = "transformer"
 version = "0.0.0"
 edition = "2021"
 authors = ["YdrMaster <ydrml@hotmail.com>"]
@@ -10,8 +10,3 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
 model-parameters = { path = "../model-parameters" }
-transformer = { path = "../transformer" }
-gemm = "0.17"
-
-[dev-dependencies]
-tokenizer = { path = "../tokenizer" }

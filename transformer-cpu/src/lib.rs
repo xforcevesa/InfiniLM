@@ -1,53 +1,18 @@
-mod cache;
 mod kernel;
 mod storage;
 
-use common::{upos, utok};
 use gemm::f16;
 use kernel::{gather, mat_mul, rms_norm, rms_norm_inplace, rotary_embedding, softmax, swiglu};
 use model_parameters::{Llama2, Memory};
 use storage::Storage;
 use tensor::{reslice, reslice_mut, slice, udim, DataType, Tensor};
 
-pub use cache::LayerCache;
+pub type LayerCache = transformer::LayerCache<Storage>;
+pub use transformer::{Prompt, Request};
 pub extern crate model_parameters;
 
 pub struct Transformer {
     model: Box<dyn Llama2>,
-}
-
-pub struct Request<'a> {
-    pub prompt: Prompt<'a>,
-    pub cache: &'a mut [LayerCache],
-    pub pos: upos,
-}
-
-pub enum Prompt<'a> {
-    Prefill(&'a [utok]),
-    Decode(utok),
-}
-
-impl Request<'_> {
-    #[inline]
-    pub const fn tokens(&self) -> &[utok] {
-        match &self.prompt {
-            Prompt::Prefill(tokens) => tokens,
-            Prompt::Decode(token) => std::slice::from_ref(&token),
-        }
-    }
-
-    #[inline]
-    pub const fn seq_len(&self) -> udim {
-        match self.prompt {
-            Prompt::Prefill(tokens) => tokens.len() as _,
-            Prompt::Decode(_) => 1,
-        }
-    }
-
-    #[inline]
-    pub const fn att_len(&self) -> udim {
-        self.pos + self.seq_len()
-    }
 }
 
 impl Transformer {
@@ -63,7 +28,7 @@ impl Transformer {
 
     #[inline]
     pub fn new_cache(&self) -> Vec<LayerCache> {
-        LayerCache::new_layers(&*self.model)
+        LayerCache::new_layers(&*self.model, tensor)
     }
 
     #[inline]
@@ -71,7 +36,7 @@ impl Transformer {
         self.model.max_position_embeddings()
     }
 
-    pub fn decode(&mut self, mut requests: Vec<Request>) -> Vec<f16> {
+    pub fn decode(&mut self, mut requests: Vec<Request<Storage>>) -> Vec<f16> {
         use std::cmp::Ordering::*;
         requests.sort_unstable_by(|a, b| match a.prompt {
             Prompt::Prefill(_) => match b.prompt {

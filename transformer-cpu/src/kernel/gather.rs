@@ -3,7 +3,7 @@ use crate::Request;
 use std::ops::{Deref, DerefMut};
 use tensor::{udim, Tensor};
 
-pub fn gather<T, U>(mut x: Tensor<T>, table: &Tensor<U>, requests: &[Request])
+pub fn gather<T, U, X>(mut x: Tensor<T>, table: &Tensor<U>, requests: &[Request<X>])
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,
