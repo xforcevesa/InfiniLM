@@ -1,5 +1,5 @@
-﻿use super::ServiceArgs;
+﻿use super::ServiceParts;
 
-pub(super) fn run(args: ServiceArgs) {
+pub(super) fn run(_: ServiceParts) {
     todo!()
 }

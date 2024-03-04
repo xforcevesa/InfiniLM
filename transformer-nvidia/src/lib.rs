@@ -165,7 +165,7 @@ impl<'a> Transformer<'a> {
             let k_cat = k_cache.clone().slice(cat_slice);
             let v_cat = v_cache.clone().slice(cat_slice);
             let q_att = if let Some(q_att) = q_att.as_mut() {
-                self.reform.launch(&q_att, &q, compute);
+                self.reform.launch(q_att, &q, compute);
                 q_att.clone()
             } else {
                 q.reshape(&[nh, seq_len, dh])
@@ -193,7 +193,7 @@ impl<'a> Transformer<'a> {
                     // println!("layer {layer} after softmax:\n{}", map_tensor(&att));
                 }
                 if let Some(x2) = x2.as_mut() {
-                    mat_mul(self.cublas, &x2, 0., &att, &v_att, 1.);
+                    mat_mul(self.cublas, x2, 0., &att, &v_att, 1.);
                     self.reform.launch(
                         &x1.clone().reshape(&[seq_len, nh, dh]),
                         &x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]),
