@@ -3,6 +3,3 @@
 !/.github/*
 
 /target
-/Cargo.lock
-
-*.model
