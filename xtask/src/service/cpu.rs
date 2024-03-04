@@ -7,7 +7,7 @@ use common::upos;
 use std::{collections::HashMap, time::Instant};
 use transformer_cpu::{
     model_parameters::{Llama2, Memory},
-    LayerCache, Request, Transformer,
+    LayerCache, Prompt, Request, Transformer,
 };
 
 pub(super) fn run(
@@ -52,11 +52,13 @@ pub(super) fn run(
         });
 
         if !tokens.is_empty() {
-            transformer.update(&mut [Request {
-                tokens,
-                cache: &mut session.kv_cache,
-                pos: session.pos as _,
-            }]);
+            assert!(transformer
+                .decode(vec![Request {
+                    prompt: Prompt::Prefill(tokens),
+                    cache: &mut session.kv_cache,
+                    pos: session.pos as _,
+                }])
+                .is_empty());
             session.pos += tokens.len() as upos;
         }
 
@@ -64,8 +66,8 @@ pub(super) fn run(
         let max_pos = transformer.max_seq_len() as upos;
         let mut out = String::new();
         while session.pos < max_pos {
-            let logits = transformer.decode(&mut [Request {
-                tokens: &[token],
+            let logits = transformer.decode(vec![Request {
+                prompt: Prompt::Decode(token),
                 cache: &mut session.kv_cache,
                 pos: session.pos as _,
             }]);

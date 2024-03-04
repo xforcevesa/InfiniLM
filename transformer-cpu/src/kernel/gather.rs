@@ -23,7 +23,7 @@ where
 
     let x = x.as_mut_slice();
     let table = table.as_slice();
-    for (i, &t) in requests.iter().flat_map(|s| s.tokens.iter()).enumerate() {
+    for (i, &t) in requests.iter().flat_map(|s| s.tokens().iter()).enumerate() {
         slice!(x; d; [i]).copy_from_slice(&slice!(table; d; [t]))
     }
 }
