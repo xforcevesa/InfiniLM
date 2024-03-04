@@ -39,8 +39,13 @@ impl Transformer {
         self.model.max_position_embeddings()
     }
 
-    pub fn update(&self, tokens: &[utok], cache: &mut [LayerCache], pos: upos) -> Tensor<Storage> {
-        let seq_len = tokens.len() as udim;
+    pub fn update(
+        &self,
+        tokens: &[&[utok]],
+        cache: &mut [LayerCache],
+        pos: upos,
+    ) -> Tensor<Storage> {
+        let seq_len = tokens.iter().map(|s| s.len()).sum::<usize>() as udim;
         let d = self.model.hidden_size() as udim;
         let nh = self.model.num_attention_heads() as udim;
         let nkvh = self.model.num_key_value_heads() as udim;
@@ -178,7 +183,7 @@ impl Transformer {
     }
 
     pub fn forward(&mut self, token: utok, cache: &mut [LayerCache], pos: upos) -> &[f32] {
-        let mut x = self.update(&[token], cache, pos);
+        let mut x = self.update(&[&[token]], cache, pos);
 
         let model_norm = self.model.model_norm();
         rms_norm_inplace(&mut x.access_mut(), &model_norm, self.model.rms_norm_eps());

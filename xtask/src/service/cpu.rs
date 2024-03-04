@@ -52,7 +52,7 @@ pub(super) fn run(
         });
 
         if !tokens.is_empty() {
-            transformer.update(tokens, &mut session.kv_cache, session.pos as _);
+            transformer.update(&[tokens], &mut session.kv_cache, session.pos as _);
             session.pos += tokens.len() as upos;
         }
 
