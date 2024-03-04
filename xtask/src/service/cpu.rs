@@ -1,13 +1,22 @@
-﻿use super::{channel::channel, ServiceArgs};
+﻿use super::{channel::channel, chat::apply_chat, ServiceArgs};
 use crate::{
     common::{argmax, tokenizer},
     service::channel::{Query, Response},
+    Template,
 };
 use common::upos;
 use std::{collections::HashMap, path::Path, time::Instant};
-use transformer_cpu::{model_parameters::Memory, LayerCache, Transformer};
+use transformer_cpu::{
+    model_parameters::{Llama2, Memory},
+    LayerCache, Transformer,
+};
 
 pub(super) fn run(args: ServiceArgs) {
+    let template = if args.model.to_ascii_lowercase().contains("tinyllama") {
+        Template::ChatTinyLlama
+    } else {
+        Template::Chat9G
+    };
     let model_dir = Path::new(&args.model);
 
     let time = Instant::now();
@@ -15,8 +24,11 @@ pub(super) fn run(args: ServiceArgs) {
     info!("build tokenizer ... {:?}", time.elapsed());
 
     let time = Instant::now();
-    let model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
+    let model = Box::new(Memory::load_safetensors_from_dir(&model_dir).unwrap());
     info!("load model ... {:?}", time.elapsed());
+
+    let _bos = model.bos_token_id();
+    let eos = model.eos_token_id();
 
     let time = Instant::now();
     let mut transformer = Transformer::new(model);
@@ -35,14 +47,16 @@ pub(super) fn run(args: ServiceArgs) {
 
     loop {
         let Query { id, prompt } = channel.receive().unwrap();
+        let prompt = apply_chat(&prompt, template);
+
+        let prompt_tokens = tokenizer.encode(&prompt.trim());
+        let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
 
         let session = sessions.entry(id).or_insert_with(|| SessionContext {
             pos: 0,
             kv_cache: transformer.new_cache(),
         });
 
-        let prompt_tokens = tokenizer.encode(&prompt.trim());
-        let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
         if !tokens.is_empty() {
             transformer.update(tokens, &mut session.kv_cache, session.pos as _);
             session.pos += tokens.len() as upos;
@@ -53,12 +67,13 @@ pub(super) fn run(args: ServiceArgs) {
         let mut out = String::new();
         while session.pos < max_pos {
             let logits = transformer.forward(token, &mut session.kv_cache, session.pos as _);
-            let next = argmax(logits);
+            token = argmax(logits);
+            if token == eos {
+                break;
+            }
 
-            token = next;
+            out.push_str(&tokenizer.decode(token).replace('▁', " "));
             session.pos += 1;
-
-            out.push_str(&tokenizer.decode(next).replace('▁', " "));
         }
 
         channel.send(Response { id, prompt: out }).unwrap();

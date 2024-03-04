@@ -1,4 +1,5 @@
 ﻿mod channel;
+mod chat;
 mod cpu;
 #[cfg(detected_cuda)]
 mod nvidia;

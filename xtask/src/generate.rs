@@ -1,7 +1,11 @@
-﻿use crate::common::{argmax, logger_init, tokenizer};
+﻿use crate::{
+    common::{argmax, logger_init, tokenizer},
+    Template,
+};
 use std::{
     alloc::Layout,
     collections::HashMap,
+    fs::read_to_string,
     io::Write,
     path::{Path, PathBuf},
     ptr::NonNull,
@@ -31,9 +35,6 @@ pub(crate) struct GenerateArgs {
     /// Copy model parameters inside memory.
     #[clap(long)]
     inside_mem: bool,
-    /// Add bos before first token.
-    #[clap(long)]
-    insert_bos: bool,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
@@ -82,21 +83,11 @@ impl GenerateArgs {
         let tokenizer = tokenizer(self.tokenizer, &model_dir);
         info!("build tokenizer ... {:?}", time.elapsed());
 
-        let mut prompt = String::new();
-        if self.insert_bos {
-            prompt.push_str("<s>");
-        }
-        match self.prompt.chars().next() {
-            Some(c) if c.is_ascii_alphabetic() => prompt.push(' '),
-            _ => {}
-        }
-        prompt.push_str(&self.prompt);
-
         if self.nvidia {
             let preload_layers = if self.inside_mem { usize::MAX } else { 3 };
-            on_nvidia_gpu(model_dir, tokenizer, prompt, step, preload_layers)
+            on_nvidia_gpu(model_dir, tokenizer, self.prompt, step, preload_layers)
         } else {
-            on_host(model_dir, tokenizer, prompt, step, self.inside_mem)
+            on_host(model_dir, tokenizer, self.prompt, step, self.inside_mem)
         }
     }
 }
@@ -109,7 +100,18 @@ fn on_host(
     inside_mem: bool,
 ) {
     let model_dir = model_dir.as_ref();
-    let prompt = prompt.as_ref();
+    let template: Template = if model_dir
+        .as_os_str()
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase()
+        .contains("tinyllama")
+    {
+        Template::ChatTinyLlama
+    } else {
+        Template::Chat9G
+    };
+    let prompt = apply_template(prompt.as_ref(), template);
 
     let time = Instant::now();
     let mut model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
@@ -121,13 +123,14 @@ fn on_host(
         model = Box::new(Memory::realloc_with(&*model, allocator));
         info!("copy model ... {:?}", time.elapsed());
     }
+    let eos = model.eos_token_id();
     let time = Instant::now();
     let mut transformer = Transformer::new(model);
     let mut kv_cache = transformer.new_cache();
     info!("build transformer ... {:?}", time.elapsed());
 
     let time = Instant::now();
-    let prompt_tokens = tokenizer.encode(&prompt.trim());
+    let prompt_tokens = tokenizer.encode(&prompt);
     info!("encode prompt ... {:?}", time.elapsed());
 
     let time = Instant::now();
@@ -137,20 +140,23 @@ fn on_host(
     }
     info!("prefill transformer ... {:?}", time.elapsed());
 
-    print!("{prompt}");
+    print!("{}", prompt.replace('▁', " "));
 
     let mut token = *last;
     let mut pos = tokens.len();
     let time = Instant::now();
     while pos < step.min(transformer.max_seq_len()) {
         let logits = transformer.forward(token, &mut kv_cache, pos as _);
-        let next = argmax(logits);
+        token = argmax(logits);
 
-        token = next;
-        pos += 1;
-
-        print!("{}", tokenizer.decode(next).replace('▁', " "));
+        print!("{}", tokenizer.decode(token).replace('▁', " "));
         std::io::stdout().flush().unwrap();
+
+        if token == eos {
+            break;
+        }
+
+        pos += 1;
     }
     println!();
     let duration = time.elapsed();
@@ -181,7 +187,18 @@ fn on_nvidia_gpu(
     preload_layers: usize,
 ) {
     let model_dir = model_dir.as_ref();
-    let prompt = prompt.as_ref();
+    let template: Template = if model_dir
+        .as_os_str()
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase()
+        .contains("tinyllama")
+    {
+        Template::ChatTinyLlama
+    } else {
+        Template::Chat9G
+    };
+    let prompt = apply_template(prompt.as_ref(), template);
 
     use std::{
         fs::File,
@@ -224,13 +241,14 @@ fn on_nvidia_gpu(
 
         let time = Instant::now();
         let host = Memory::load_safetensors(config, host, false).unwrap();
+        let eos = host.eos_token_id();
         let mut transformer = Transformer::new(&host, preload_layers, &transfer);
         let kv_cache = transformer.new_cache(&compute);
         info!("build model host: {:?}", time.elapsed());
 
         let step = step.min(host.max_position_embeddings());
         let time = Instant::now();
-        let prompt_tokens = tokenizer.encode(&prompt.trim().replace(' ', "▁"));
+        let prompt_tokens = tokenizer.encode(&prompt);
         info!("encode prompt ... {:?}", time.elapsed());
 
         let time = Instant::now();
@@ -240,20 +258,23 @@ fn on_nvidia_gpu(
         }
         info!("prefill transformer ... {:?}", time.elapsed());
 
-        print!("{prompt}");
+        print!("{}", prompt.replace('▁', " "));
 
         let mut token = *last;
         let mut pos = tokens.len();
         let time = Instant::now();
         while pos < step {
             let logits = transformer.forward(token, &kv_cache, pos as _, &compute, &transfer);
-            let next = argmax(logits);
+            token = argmax(logits);
 
-            token = next;
-            pos += 1;
-
-            print!("{}", tokenizer.decode(next).replace('▁', " "));
+            print!("{}", tokenizer.decode(token).replace('▁', " "));
             std::io::stdout().flush().unwrap();
+
+            if token == eos {
+                break;
+            }
+
+            pos += 1;
         }
         println!();
         let duration = time.elapsed();
@@ -263,4 +284,40 @@ fn on_nvidia_gpu(
             (pos - tokens.len()) as f32 / duration.as_secs_f32()
         )
     });
+}
+
+#[inline]
+fn apply_template(prompt: &str, template: Template) -> String {
+    let maybe_file = Path::new(&prompt);
+    let prompt = if maybe_file.is_file() {
+        read_to_string(maybe_file).unwrap()
+    } else {
+        prompt.to_string()
+    };
+    let prompt = prompt.trim();
+    let mut ans = String::new();
+    match template {
+        Template::Chat9G => {
+            ans.push_str("<s>");
+            match prompt.chars().next() {
+                Some(c) if c.is_ascii_alphabetic() => ans.push(' '),
+                _ => {}
+            }
+            ans.push_str(prompt);
+            ans
+        }
+        Template::ChatTinyLlama => {
+            match prompt.chars().next() {
+                Some(c) if c.is_ascii_alphabetic() => ans.push('▁'),
+                _ => {}
+            }
+            for c in prompt.chars() {
+                ans.push(match c {
+                    ' ' => '▁',
+                    c => c,
+                });
+            }
+            ans
+        }
+    }
 }

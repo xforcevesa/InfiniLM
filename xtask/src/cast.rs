@@ -11,7 +11,7 @@ pub(crate) struct CastArgs {
     #[clap(short, long)]
     target: Option<String>,
     /// Target model type.
-    #[clap(short, long)]
+    #[clap(long)]
     dt: Option<String>,
 }
 

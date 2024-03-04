@@ -36,3 +36,10 @@ enum Commands {
     /// Start LLM inference service
     Service(service::ServiceArgs),
 }
+
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+enum Template {
+    Chat9G,
+    ChatTinyLlama,
+}
