@@ -7,7 +7,7 @@ use tensor::{expand_indices, idx_strides, DataType, Tensor};
 /// - c: [N0, N1, ... , N_, m, n]
 /// - a: [N0, N1, ... , N_, m, k]
 /// - b: [N0, N1, ... , N_, k, n]
-pub fn mat_mul<T, U, V>(mut c: Tensor<T>, beta: f32, a: &Tensor<U>, b: &Tensor<V>, alpha: f32)
+pub fn mat_mul<T, U, V>(c: &mut Tensor<T>, beta: f32, a: &Tensor<U>, b: &Tensor<V>, alpha: f32)
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,

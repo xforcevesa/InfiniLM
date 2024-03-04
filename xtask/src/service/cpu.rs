@@ -7,7 +7,7 @@ use common::upos;
 use std::{collections::HashMap, time::Instant};
 use transformer_cpu::{
     model_parameters::{Llama2, Memory},
-    LayerCache, Transformer,
+    LayerCache, Request, Transformer,
 };
 
 pub(super) fn run(
@@ -52,7 +52,11 @@ pub(super) fn run(
         });
 
         if !tokens.is_empty() {
-            transformer.update(&[tokens], &mut session.kv_cache, session.pos as _);
+            transformer.update(&mut [Request {
+                tokens,
+                cache: &mut session.kv_cache,
+                pos: session.pos as _,
+            }]);
             session.pos += tokens.len() as upos;
         }
 

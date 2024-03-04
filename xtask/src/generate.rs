@@ -15,7 +15,7 @@ use std::{
 use tokenizer::Tokenizer;
 use transformer_cpu::{
     model_parameters::{Allocator, Llama2, Memory},
-    Transformer,
+    Request, Transformer,
 };
 
 #[derive(Args, Default)]
@@ -136,7 +136,11 @@ fn on_host(
     let time = Instant::now();
     let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
     if !tokens.is_empty() {
-        transformer.update(&[tokens], &mut kv_cache, 0);
+        transformer.update(&mut [Request {
+            tokens,
+            cache: &mut kv_cache,
+            pos: 0,
+        }]);
     }
     info!("prefill transformer ... {:?}", time.elapsed());
 

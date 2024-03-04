@@ -27,6 +27,13 @@ macro_rules! slice {
             len: udim::MAX,
         }
     };
+    [from $start:expr, take $len:expr] => {
+        $crate::SliceDim {
+            start: $start,
+            step: 1,
+            len: $len,
+        }
+    };
     [$start:expr; $step:expr; $len:expr] => {
         $crate::SliceDim {
             start: $start,

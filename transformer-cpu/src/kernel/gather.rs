@@ -1,9 +1,9 @@
 ﻿use super::slice;
-use common::utok;
+use crate::Request;
 use std::ops::{Deref, DerefMut};
-use tensor::Tensor;
+use tensor::{udim, Tensor};
 
-pub fn gather<T, U>(mut x: Tensor<T>, table: &Tensor<U>, tokens: &[&[utok]])
+pub fn gather<T, U>(mut x: Tensor<T>, table: &Tensor<U>, requests: &[Request])
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,
@@ -14,8 +14,8 @@ where
     debug_assert_eq!(table.shape().len(), 2);
     debug_assert_eq!(table.shape()[1], d);
     debug_assert_eq!(
-        tokens.iter().map(|s| s.len()).sum::<usize>(),
-        num_token as usize
+        requests.iter().map(Request::seq_len).sum::<udim>(),
+        num_token
     );
     debug_assert!(x.is_contiguous());
     debug_assert!(table.is_contiguous());
@@ -23,7 +23,7 @@ where
 
     let x = x.as_mut_slice();
     let table = table.as_slice();
-    for (i, &t) in tokens.iter().flat_map(|s| s.iter()).enumerate() {
+    for (i, &t) in requests.iter().flat_map(|s| s.tokens.iter()).enumerate() {
         slice!(x; d; [i]).copy_from_slice(&slice!(table; d; [t]))
     }
 }
