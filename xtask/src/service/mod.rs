@@ -1,4 +1,5 @@
-﻿mod cpu;
+﻿mod channel;
+mod cpu;
 #[cfg(detected_cuda)]
 mod nvidia;
 
@@ -10,6 +11,9 @@ pub(crate) struct ServiceArgs {
     /// Tokenizer file.
     #[clap(short, long)]
     tokenizer: Option<String>,
+    /// Channel type.
+    #[clap(long)]
+    channel: Option<String>,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,

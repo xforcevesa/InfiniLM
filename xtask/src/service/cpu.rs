@@ -1,5 +1,8 @@
-﻿use super::ServiceArgs;
-use crate::common::{argmax, tokenizer};
+﻿use super::{channel::channel, ServiceArgs};
+use crate::{
+    common::{argmax, tokenizer},
+    service::channel::{Query, Response},
+};
 use common::upos;
 use std::{collections::HashMap, path::Path, time::Instant};
 use transformer_cpu::{model_parameters::Memory, LayerCache, Transformer};
@@ -19,6 +22,10 @@ pub(super) fn run(args: ServiceArgs) {
     let mut transformer = Transformer::new(model);
     info!("build transformer ... {:?}", time.elapsed());
 
+    let time = Instant::now();
+    let mut channel = channel(args.channel);
+    info!("build channel ... {:?}", time.elapsed());
+
     struct SessionContext {
         pos: upos,
         kv_cache: Vec<LayerCache>,
@@ -27,8 +34,7 @@ pub(super) fn run(args: ServiceArgs) {
     let mut sessions = HashMap::<usize, SessionContext>::new();
 
     loop {
-        let id = 0;
-        let prompt = "The quick brown fox jumps over the lazy dog";
+        let Query { id, prompt } = channel.receive().unwrap();
 
         let session = sessions.entry(id).or_insert_with(|| SessionContext {
             pos: 0,
@@ -54,5 +60,7 @@ pub(super) fn run(args: ServiceArgs) {
 
             out.push_str(&tokenizer.decode(next).replace('▁', " "));
         }
+
+        channel.send(Response { id, prompt: out }).unwrap();
     }
 }
