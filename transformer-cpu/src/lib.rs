@@ -30,21 +30,33 @@ impl Transformer {
     }
 
     pub fn decode(&mut self, mut requests: Vec<Request<Storage>>) -> Tensor<Storage> {
-        use std::cmp::Ordering::*;
-        requests.sort_unstable_by(|a, b| match a.prompt {
-            Prompt::Prefill(_) => match b.prompt {
-                Prompt::Prefill(_) => Equal,
-                Prompt::Decode(_) => Greater,
-            },
-            Prompt::Decode(_) => match b.prompt {
-                Prompt::Prefill(_) => Less,
-                Prompt::Decode(_) => Equal,
-            },
-        });
-        let num_decoding = requests
-            .iter()
-            .take_while(|r| matches!(r.prompt, Prompt::Decode(_)))
-            .count();
+        let mut i = 0;
+        let mut j = requests.len() - 1;
+        loop {
+            while i < j {
+                match requests[i].prompt {
+                    Prompt::Decode(_) => i += 1,
+                    Prompt::Prefill(_) => break,
+                }
+            }
+            while j > i {
+                match requests[j].prompt {
+                    Prompt::Decode(_) => break,
+                    Prompt::Prefill(_) => j -= 1,
+                }
+            }
+            if i < j {
+                requests.swap(i, j);
+                i += 1;
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+        let num_decoding = match requests[i].prompt {
+            Prompt::Decode(_) => i + 1,
+            Prompt::Prefill(_) => i,
+        };
 
         let x = {
             // println!("tokens:");
