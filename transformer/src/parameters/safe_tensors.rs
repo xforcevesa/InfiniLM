@@ -1,9 +1,8 @@
-﻿use super::{Layer, Memory};
-use crate::{memory::concat0, ConfigJson, DataType, Storage};
+﻿use super::{concat0, memory::Layer, ConfigJson, Memory, Storage};
 use memmap2::Mmap;
 use safetensors::{tensor::TensorInfo, Dtype};
 use std::{collections::HashMap, fs::File, io::Read, ops::Deref, path::Path, sync::Arc};
-use tensor::{udim, Tensor};
+use tensor::{udim, DataType, Tensor};
 
 #[derive(Debug)]
 pub enum SafeTensorError {

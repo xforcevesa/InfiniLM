@@ -5,10 +5,7 @@ use crate::{
 };
 use common::upos;
 use std::{collections::HashMap, time::Instant};
-use transformer_cpu::{
-    model_parameters::{Llama2, Memory},
-    LayerCache, Prompt, Request, Transformer,
-};
+use transformer_cpu::{LayerCache, Llama2, Memory, Prompt, Request, Transformer};
 
 pub(super) fn run(
     ServiceParts {

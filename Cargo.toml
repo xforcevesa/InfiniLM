@@ -2,7 +2,6 @@
 members = [
     "common",
     "tensor",
-    "model-parameters",
     "tokenizer",
     "transformer",
     "transformer-cpu",

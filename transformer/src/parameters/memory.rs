@@ -1,28 +1,22 @@
-﻿mod cast;
-mod safe_tensors;
-
-use crate::{ConfigJson, DataType, Llama2, Storage};
+﻿use super::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
-use tensor::{udim, Shape, Tensor};
-
-pub use safe_tensors::SafeTensorError;
-pub(crate) use safe_tensors::SafeTensorHeaderJson;
+use tensor::Tensor;
 
 pub struct Memory {
-    config: ConfigJson,
-    embed_tokens: Tensor<Storage>,
-    layers: Vec<Layer>,
-    model_norm: Tensor<Storage>,
-    lm_head: Tensor<Storage>,
+    pub(super) config: ConfigJson,
+    pub(super) embed_tokens: Tensor<Storage>,
+    pub(super) layers: Vec<Layer>,
+    pub(super) model_norm: Tensor<Storage>,
+    pub(super) lm_head: Tensor<Storage>,
 }
 
-struct Layer {
-    input_layernorm: Tensor<Storage>,
-    w_qkv: Tensor<Storage>,
-    self_attn_o_proj: Tensor<Storage>,
-    post_attention_layernorm: Tensor<Storage>,
-    mlp_gate_up: Tensor<Storage>,
-    mlp_down: Tensor<Storage>,
+pub(super) struct Layer {
+    pub input_layernorm: Tensor<Storage>,
+    pub w_qkv: Tensor<Storage>,
+    pub self_attn_o_proj: Tensor<Storage>,
+    pub post_attention_layernorm: Tensor<Storage>,
+    pub mlp_gate_up: Tensor<Storage>,
+    pub mlp_down: Tensor<Storage>,
 }
 
 impl Llama2 for Memory {
@@ -184,32 +178,9 @@ impl Llama2 for Memory {
     }
 }
 
-fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
-    assert!(!tensors.is_empty());
-    let data_type = tensors[0].data_type();
-    let len = tensors[0].shape()[1..].iter().product::<udim>();
-
-    assert!({
-        tensors
-            .iter()
-            .skip(1)
-            .all(|t| t.data_type() == data_type && t.shape()[1..].iter().product::<udim>() == len)
-    });
-
-    let shape = Shape::from_slice(&[tensors.iter().map(|t| t.shape()[0]).sum(), len]);
-    let mut data = vec![0u8; shape.iter().product::<udim>() as usize * data_type.size()];
-    let mut offset = 0;
-    for t in tensors {
-        let len = t.bytes_size();
-        unsafe { t.reform_to_raw(&mut data[offset..][..len]) };
-        offset += len;
-    }
-
-    Tensor::new(data_type, &shape, Storage::from_blob(data))
-}
-
 #[test]
 fn test_load() {
+    use super::SafeTensorError;
     use std::{io::ErrorKind::NotFound, time::Instant};
 
     let t0 = Instant::now();

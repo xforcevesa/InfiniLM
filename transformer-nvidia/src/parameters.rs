@@ -1,6 +1,6 @@
 ﻿use cuda::{LocalDevBlob, Stream};
-use model_parameters::Llama2;
 use tensor::Tensor;
+use transformer::Llama2;
 
 pub(crate) struct ModelParameters<'a> {
     pub(crate) model_norm: Tensor<LocalDevBlob<'a>>,

@@ -9,7 +9,6 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
-model-parameters = { path = "../model-parameters" }
 transformer = { path = "../transformer" }
 cuda = { git = "https://github.com/YdrMaster/cuda-bench" }
 cublas = { git = "https://github.com/YdrMaster/cuda-bench" }

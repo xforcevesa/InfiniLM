@@ -1,4 +1,4 @@
-﻿use crate::{memory::SafeTensorHeaderJson, ConfigJson, DataType, Llama2, Storage};
+﻿use super::{safe_tensors::SafeTensorHeaderJson, ConfigJson, Llama2, Storage};
 use safetensors::{tensor::TensorInfo, Dtype};
 use std::{
     collections::HashMap,
@@ -6,7 +6,7 @@ use std::{
     io::{self, BufWriter, Write},
     path::Path,
 };
-use tensor::Tensor;
+use tensor::{DataType, Tensor};
 
 pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
     let dir = dir.as_ref();

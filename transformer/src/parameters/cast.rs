@@ -1,7 +1,6 @@
-﻿use super::Layer;
-use crate::{ConfigJson, DataType, Llama2, Memory, Storage};
+﻿use super::{memory::Layer, ConfigJson, Llama2, Memory, Storage};
 use half::{bf16, f16};
-use tensor::Tensor;
+use tensor::{DataType, Tensor};
 
 impl Memory {
     pub fn cast(src: &dyn Llama2, new_dtype: DataType) -> Self {

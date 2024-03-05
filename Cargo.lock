@@ -258,17 +258,9 @@ version = "0.0.0"
 source = "git+https://github.com/YdrMaster/cuda-bench#5a8993ae9f4af2cde5112bebe5bc74c99b9e13e2"
 dependencies = [
  "bindgen",
- "cuda 0.0.0 (git+https://github.com/YdrMaster/cuda-bench)",
+ "cuda",
  "find_cuda_helper",
  "half",
-]
-
-[[package]]
-name = "cuda"
-version = "0.0.0"
-dependencies = [
- "bindgen",
- "find_cuda_helper",
 ]
 
 [[package]]
@@ -580,20 +572,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
-name = "model-parameters"
-version = "0.0.0"
-dependencies = [
- "common",
- "half",
- "memmap2",
- "rayon",
- "safetensors",
- "serde",
- "serde_json",
- "tensor",
-]
-
-[[package]]
 name = "nalgebra"
 version = "0.32.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -807,9 +785,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bb987efffd3c6d0d8f5f89510bb458559eab11e4f869acb20bf845e016259cd"
+checksum = "86b83b8b9847f9bf95ef68afb0b8e6cdb80f498442f5179a29fad448fcc1eaea"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1069,7 +1047,12 @@ name = "transformer"
 version = "0.0.0"
 dependencies = [
  "common",
- "model-parameters",
+ "half",
+ "memmap2",
+ "rayon",
+ "safetensors",
+ "serde",
+ "serde_json",
  "tensor",
 ]
 
@@ -1079,7 +1062,6 @@ version = "0.0.0"
 dependencies = [
  "common",
  "gemm",
- "model-parameters",
  "tensor",
  "tokenizer",
  "transformer",
@@ -1091,10 +1073,9 @@ version = "0.0.0"
 dependencies = [
  "common",
  "cublas",
- "cuda 0.0.0",
+ "cuda",
  "find_cuda_helper",
  "half",
- "model-parameters",
  "tensor",
  "tokenizer",
  "transformer",

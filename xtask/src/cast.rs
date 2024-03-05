@@ -1,6 +1,6 @@
 ﻿use std::{fs, path::PathBuf, time::Instant};
 use tensor::DataType;
-use transformer_cpu::model_parameters::{save, Memory};
+use transformer_cpu::{save, Memory};
 
 #[derive(Args, Default)]
 pub(crate) struct CastArgs {

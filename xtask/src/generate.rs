@@ -9,10 +9,7 @@ use std::{
     time::Instant,
 };
 use tokenizer::Tokenizer;
-use transformer_cpu::{
-    model_parameters::{Llama2, Memory},
-    Prompt, Request, Transformer,
-};
+use transformer_cpu::{Llama2, Memory, Prompt, Request, Transformer};
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {

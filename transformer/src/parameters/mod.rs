@@ -1,4 +1,6 @@
+mod cast;
 mod memory;
+mod safe_tensors;
 mod save;
 
 use common::utok;
@@ -6,9 +8,10 @@ use std::{
     ops::{Deref, Range},
     sync::Arc,
 };
-use tensor::{DataType, Tensor};
+use tensor::{udim, DataType, Shape, Tensor};
 
-pub use memory::{Memory, SafeTensorError};
+pub use memory::Memory;
+pub use safe_tensors::SafeTensorError;
 pub use save::save;
 
 pub trait Llama2 {
@@ -171,4 +174,28 @@ impl Storage {
     pub fn raw_blob(&self) -> &[u8] {
         &self.data
     }
+}
+
+fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
+    assert!(!tensors.is_empty());
+    let data_type = tensors[0].data_type();
+    let len = tensors[0].shape()[1..].iter().product::<udim>();
+
+    assert!({
+        tensors
+            .iter()
+            .skip(1)
+            .all(|t| t.data_type() == data_type && t.shape()[1..].iter().product::<udim>() == len)
+    });
+
+    let shape = Shape::from_slice(&[tensors.iter().map(|t| t.shape()[0]).sum(), len]);
+    let mut data = vec![0u8; shape.iter().product::<udim>() as usize * data_type.size()];
+    let mut offset = 0;
+    for t in tensors {
+        let len = t.bytes_size();
+        unsafe { t.reform_to_raw(&mut data[offset..][..len]) };
+        offset += len;
+    }
+
+    Tensor::new(data_type, &shape, Storage::from_blob(data))
 }

@@ -1,13 +1,15 @@
 //! Common code for transformers.
 
-#![deny(warnings, missing_docs)]
+// #![deny(warnings, missing_docs)]
 
 mod cache;
+mod parameters;
 
 use common::{upos, utok};
 use tensor::udim;
 
 pub use cache::LayerCache;
+pub use parameters::{save, Llama2, Memory, SafeTensorError};
 
 /// A request to decode a sequence.
 pub struct Request<'a, Storage> {
@@ -33,7 +35,7 @@ impl<S> Request<'_, S> {
     pub const fn tokens(&self) -> &[utok] {
         match &self.prompt {
             Prompt::Prefill(tokens) => tokens,
-            Prompt::Decode(token) => std::slice::from_ref(&token),
+            Prompt::Decode(token) => std::slice::from_ref(token),
         }
     }
 

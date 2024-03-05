@@ -9,4 +9,9 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
-model-parameters = { path = "../model-parameters" }
+half.workspace = true
+rayon = "1.9"
+memmap2 = "0.9"
+safetensors = "0.4"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

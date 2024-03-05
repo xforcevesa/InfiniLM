@@ -3,13 +3,11 @@ mod storage;
 
 use gemm::f16;
 use kernel::{gather, mat_mul, rms_norm, rms_norm_inplace, rotary_embedding, softmax, swiglu};
-use model_parameters::{Llama2, Memory};
 use storage::Storage;
 use tensor::{reslice, reslice_mut, slice, udim, DataType, Tensor};
 
 pub type LayerCache = transformer::LayerCache<Storage>;
-pub use transformer::{Prompt, Request};
-pub extern crate model_parameters;
+pub use transformer::{save, Llama2, Memory, Prompt, Request};
 
 pub struct Transformer {
     model: Box<dyn Llama2>,
@@ -244,8 +242,8 @@ fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
 
 #[test]
 fn test_build() {
-    use model_parameters::SafeTensorError;
     use std::{io::ErrorKind::NotFound, time::Instant};
+    use transformer::SafeTensorError;
 
     let t0 = Instant::now();
     let safetensors = Memory::load_safetensors_from_dir("../../TinyLlama-1.1B-Chat-v1.0");

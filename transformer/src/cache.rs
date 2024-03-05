@@ -1,4 +1,4 @@
-﻿use model_parameters::Llama2;
+﻿use crate::Llama2;
 use tensor::{udim, DataType, Tensor};
 
 /// KV cache for one layer.

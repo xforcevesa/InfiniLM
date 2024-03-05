@@ -9,15 +9,14 @@ use common::{upos, utok};
 use cublas::{bindings as cublas_def, cublas};
 use cuda::{AsRaw, CudaDataType::half, LocalDevBlob, Stream};
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
-use model_parameters::Llama2;
 use parameters::{LayersParameters, ModelParameters};
 use std::ptr::null_mut;
 use tensor::{slice, udim, DataType, Tensor};
 
 pub type LayerCache<'a> = transformer::LayerCache<LocalDevBlob<'a>>;
 pub use page_locked_memory::PageLockedMemory;
+pub use transformer::Llama2;
 pub extern crate cuda;
-pub extern crate model_parameters;
 
 pub struct Transformer<'a> {
     host: &'a dyn Llama2,
