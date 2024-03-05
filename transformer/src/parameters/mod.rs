@@ -3,12 +3,9 @@ mod memory;
 mod safe_tensors;
 mod save;
 
+use crate::HostMemory;
 use common::utok;
-use std::{
-    ops::{Deref, Range},
-    sync::Arc,
-};
-use tensor::{udim, DataType, Shape, Tensor};
+use tensor::{DataType, Tensor};
 
 pub use memory::Memory;
 pub use safe_tensors::SafeTensorError;
@@ -56,35 +53,35 @@ pub trait Llama2 {
     }
 
     /// Shape = `vocab_size x hidden_size`.
-    fn embed_tokens(&self) -> Tensor<Storage>;
+    fn embed_tokens(&self) -> Tensor<HostMemory>;
     /// Shape = `hidden_size`.
-    fn input_layernorm(&self, layer: usize) -> Tensor<Storage>;
+    fn input_layernorm(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `(((num_head + num_kv_head + num_kv_head) x head_dim) x hidden_size`.
-    fn w_qkv(&self, layer: usize) -> Tensor<Storage>;
+    fn w_qkv(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `hidden_size x hidden_size`.
-    fn self_attn_q_proj(&self, layer: usize) -> Tensor<Storage>;
+    fn self_attn_q_proj(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `(num_kv_head x head_dim) x hidden_size`.
-    fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage>;
+    fn self_attn_k_proj(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `(num_kv_head x head_dim) x hidden_size`.
-    fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage>;
+    fn self_attn_v_proj(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `hidden_size x hidden_size`.
-    fn self_attn_o_proj(&self, layer: usize) -> Tensor<Storage>;
+    fn self_attn_o_proj(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `hidden_size`.
-    fn post_attention_layernorm(&self, layer: usize) -> Tensor<Storage>;
+    fn post_attention_layernorm(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `(intermediate_size + intermediate_size) x hidden_size`.
-    fn mlp_gate_up(&self, layer: usize) -> Tensor<Storage>;
+    fn mlp_gate_up(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `intermediate_size x hidden_size`.
-    fn mlp_gate(&self, layer: usize) -> Tensor<Storage>;
+    fn mlp_gate(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `hidden_size x intermediate_size`.
-    fn mlp_down(&self, layer: usize) -> Tensor<Storage>;
+    fn mlp_down(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `intermediate_size x hidden_size`.
-    fn mlp_up(&self, layer: usize) -> Tensor<Storage>;
+    fn mlp_up(&self, layer: usize) -> Tensor<HostMemory>;
     /// Shape = `hidden_size`.
-    fn model_norm(&self) -> Tensor<Storage>;
+    fn model_norm(&self) -> Tensor<HostMemory>;
     /// Shape = `vocab_size x hidden_size`.
-    fn lm_head(&self) -> Tensor<Storage>;
+    fn lm_head(&self) -> Tensor<HostMemory>;
 
-    fn tensors(&self) -> Vec<Tensor<Storage>> {
+    fn tensors(&self) -> Vec<Tensor<HostMemory>> {
         let mut tensors = Vec::with_capacity(self.num_hidden_layers() * 6 + 3);
         tensors.push(self.embed_tokens());
         tensors.push(self.embed_tokens());
@@ -135,67 +132,4 @@ impl From<&dyn Llama2> for ConfigJson {
             torch_dtype: model.data_type(),
         }
     }
-}
-
-#[derive(Clone)]
-pub struct Storage {
-    data: Arc<dyn Deref<Target = [u8]>>,
-    range: Range<usize>,
-}
-
-impl Deref for Storage {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.data.as_ref().as_ref()[self.range.clone()]
-    }
-}
-
-impl Storage {
-    #[inline]
-    pub fn new(data: Arc<dyn Deref<Target = [u8]>>, offset: usize, len: usize) -> Self {
-        Self {
-            data,
-            range: offset..offset + len,
-        }
-    }
-
-    #[inline]
-    pub fn from_blob(data: impl 'static + Deref<Target = [u8]>) -> Self {
-        let len = data.as_ref().len();
-        Self {
-            data: Arc::new(data),
-            range: 0..len,
-        }
-    }
-
-    #[inline]
-    pub fn raw_blob(&self) -> &[u8] {
-        &self.data
-    }
-}
-
-fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
-    assert!(!tensors.is_empty());
-    let data_type = tensors[0].data_type();
-    let len = tensors[0].shape()[1..].iter().product::<udim>();
-
-    assert!({
-        tensors
-            .iter()
-            .skip(1)
-            .all(|t| t.data_type() == data_type && t.shape()[1..].iter().product::<udim>() == len)
-    });
-
-    let shape = Shape::from_slice(&[tensors.iter().map(|t| t.shape()[0]).sum(), len]);
-    let mut data = vec![0u8; shape.iter().product::<udim>() as usize * data_type.size()];
-    let mut offset = 0;
-    for t in tensors {
-        let len = t.bytes_size();
-        unsafe { t.reform_to_raw(&mut data[offset..][..len]) };
-        offset += len;
-    }
-
-    Tensor::new(data_type, &shape, Storage::from_blob(data))
 }

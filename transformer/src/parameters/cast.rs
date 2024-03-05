@@ -1,4 +1,4 @@
-﻿use super::{memory::Layer, ConfigJson, Llama2, Memory, Storage};
+﻿use super::{memory::Layer, ConfigJson, HostMemory, Llama2, Memory};
 use half::{bf16, f16};
 use tensor::{DataType, Tensor};
 
@@ -26,7 +26,7 @@ impl Memory {
     }
 }
 
-fn cast(src: Tensor<Storage>, new_dtype: DataType) -> Tensor<Storage> {
+fn cast(src: Tensor<HostMemory>, new_dtype: DataType) -> Tensor<HostMemory> {
     if src.data_type() == new_dtype {
         return src;
     }
@@ -74,6 +74,6 @@ fn cast(src: Tensor<Storage>, new_dtype: DataType) -> Tensor<Storage> {
         _ => todo!(),
     }
 
-    let pysical = Storage::from_blob(data);
+    let pysical = HostMemory::from_blob(data);
     unsafe { Tensor::from_raw_parts(new_dtype, src.shape(), src.pattern(), pysical) }
 }

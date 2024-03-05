@@ -1,4 +1,4 @@
-﻿use super::{safe_tensors::SafeTensorHeaderJson, ConfigJson, Llama2, Storage};
+﻿use super::{safe_tensors::SafeTensorHeaderJson, ConfigJson, HostMemory, Llama2};
 use safetensors::{tensor::TensorInfo, Dtype};
 use std::{
     collections::HashMap,
@@ -20,7 +20,7 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
         meta: None,
     };
 
-    let mut tensor_info = |tensor: Tensor<Storage>| TensorInfo {
+    let mut tensor_info = |tensor: Tensor<HostMemory>| TensorInfo {
         dtype: match tensor.data_type() {
             DataType::Bool => Dtype::BOOL,
             DataType::I8 => Dtype::I8,

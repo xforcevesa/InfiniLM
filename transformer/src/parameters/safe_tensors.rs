@@ -1,8 +1,8 @@
-﻿use super::{concat0, memory::Layer, ConfigJson, Memory, Storage};
+﻿use super::{memory::Layer, ConfigJson, HostMemory, Memory};
 use memmap2::Mmap;
 use safetensors::{tensor::TensorInfo, Dtype};
 use std::{collections::HashMap, fs::File, io::Read, ops::Deref, path::Path, sync::Arc};
-use tensor::{udim, DataType, Tensor};
+use tensor::{udim, DataType, Shape, Tensor};
 
 #[derive(Debug)]
 pub enum SafeTensorError {
@@ -27,12 +27,12 @@ impl Memory {
         let config: ConfigJson = serde_json::from_reader(config)?;
 
         let len = unsafe { *model.as_ptr().cast::<u64>() } as usize;
-        const BASE_OFFSET: usize = std::mem::size_of::<u64>();
-        let header = &model[BASE_OFFSET..][..len];
+        let offset = std::mem::size_of::<u64>();
+        let header = &model[offset..][..len];
         let header: SafeTensorHeaderJson = serde_json::from_slice(header)?;
 
         let mmap = Arc::new(model);
-        let offset = BASE_OFFSET + len;
+        let offset = offset + len;
         let tensor = |name: &str| {
             let info = header
                 .tensors
@@ -58,8 +58,8 @@ impl Memory {
             debug_assert_eq!(data_type, config.torch_dtype);
             Tensor::new(
                 data_type,
-                &info.shape.iter().map(|&d| d as udim).collect::<Vec<_>>(),
-                Storage::new(mmap.clone(), offset + start, end - start),
+                &info.shape.iter().map(|&d| d as udim).collect::<Shape>(),
+                HostMemory::new(mmap.clone(), offset + start, end - start),
             )
         };
 
@@ -127,4 +127,27 @@ pub(crate) struct SafeTensorHeaderJson {
     pub tensors: HashMap<String, TensorInfo>,
     #[serde(rename = "__metadata__")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+fn concat0(tensors: &[&Tensor<HostMemory>]) -> Tensor<HostMemory> {
+    assert!(!tensors.is_empty());
+    let data_type = tensors[0].data_type();
+    let len = tensors[0].shape()[1..].iter().product::<udim>();
+
+    assert!({
+        tensors[1..]
+            .iter()
+            .all(|t| t.data_type() == data_type && t.shape()[1..].iter().product::<udim>() == len)
+    });
+
+    let shape = Shape::from_slice(&[tensors.iter().map(|t| t.shape()[0]).sum(), len]);
+    let mut data = vec![0u8; shape.iter().product::<udim>() as usize * data_type.size()];
+    let mut offset = 0;
+    for t in tensors {
+        let len = t.bytes_size();
+        unsafe { t.reform_to_raw(&mut data[offset..][..len]) };
+        offset += len;
+    }
+
+    Tensor::new(data_type, &shape, HostMemory::from_blob(data))
 }
