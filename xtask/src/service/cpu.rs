@@ -4,7 +4,9 @@ use crate::{
     service::channel::{Query, ReceiveError, Response},
 };
 use common::upos;
+use half::f16;
 use std::{collections::HashMap, time::Instant};
+use tensor::reslice;
 use transformer_cpu::{LayerCache, Llama2, Memory, Prompt, Request, Transformer};
 
 pub(super) fn run(
@@ -49,13 +51,11 @@ pub(super) fn run(
         });
 
         if !tokens.is_empty() {
-            assert!(transformer
-                .decode(vec![Request {
-                    prompt: Prompt::Prefill(tokens),
-                    cache: &mut session.kv_cache,
-                    pos: session.pos as _,
-                }])
-                .is_empty());
+            transformer.decode(vec![Request {
+                prompt: Prompt::Prefill(tokens),
+                cache: &mut session.kv_cache,
+                pos: session.pos as _,
+            }]);
             session.pos += tokens.len() as upos;
         }
 
@@ -68,7 +68,7 @@ pub(super) fn run(
                 cache: &mut session.kv_cache,
                 pos: session.pos as _,
             }]);
-            token = argmax(&logits);
+            token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
             if token == eos {
                 break;
             }

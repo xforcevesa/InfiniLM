@@ -1,40 +1,35 @@
 mod kernel;
 mod storage;
 
-use gemm::f16;
 use kernel::{gather, mat_mul, rms_norm, rms_norm_inplace, rotary_embedding, softmax, swiglu};
 use storage::Storage;
-use tensor::{reslice, reslice_mut, slice, udim, DataType, Tensor};
+use tensor::{reslice, slice, udim, DataType, Tensor};
 
 pub type LayerCache = transformer::LayerCache<Storage>;
 pub use transformer::{save, Llama2, Memory, Prompt, Request};
 
-pub struct Transformer {
-    model: Box<dyn Llama2>,
-}
+pub struct Transformer(Box<dyn Llama2>);
 
 impl Transformer {
     #[inline]
     pub fn new(model: Box<dyn Llama2>) -> Self {
-        Self {
-            model: match model.data_type() {
-                DataType::BF16 | DataType::F32 => Box::new(Memory::cast(&*model, DataType::F16)),
-                _ => model,
-            },
-        }
+        Self(match model.data_type() {
+            DataType::BF16 | DataType::F32 => Box::new(Memory::cast(&*model, DataType::F16)),
+            _ => model,
+        })
     }
 
     #[inline]
     pub fn new_cache(&self) -> Vec<LayerCache> {
-        LayerCache::new_layers(&*self.model, tensor)
+        LayerCache::new_layers(&*self.0, tensor)
     }
 
     #[inline]
     pub fn max_seq_len(&self) -> usize {
-        self.model.max_position_embeddings()
+        self.0.max_position_embeddings()
     }
 
-    pub fn decode(&mut self, mut requests: Vec<Request<Storage>>) -> Vec<f16> {
+    pub fn decode(&mut self, mut requests: Vec<Request<Storage>>) -> Tensor<Storage> {
         use std::cmp::Ordering::*;
         requests.sort_unstable_by(|a, b| match a.prompt {
             Prompt::Prefill(_) => match b.prompt {
@@ -61,31 +56,26 @@ impl Transformer {
             //     );
             // }
 
-            let mut nt = 0 as udim;
-            let mut max_seq_len = 0 as udim;
-            let mut max_att_len = 0 as udim;
-            for request in requests.iter() {
-                let seq_len = request.seq_len();
-                let att_len = request.att_len();
-                nt += seq_len;
-                max_seq_len = max_seq_len.max(seq_len);
-                max_att_len = max_att_len.max(att_len);
-            }
-            let nt = nt;
-            let max_seq_len = max_seq_len;
-            let max_att_len = max_att_len;
+            let (nt, max_seq_len, max_att_len) =
+                requests
+                    .iter()
+                    .fold((0, 0, 0), |(nt, max_seq, max_att), r| {
+                        let seq_len = r.seq_len();
+                        let att_len = r.att_len();
+                        (nt + seq_len, max_seq.max(seq_len), max_att.max(att_len))
+                    });
 
-            let d = self.model.hidden_size() as udim;
-            let nh = self.model.num_attention_heads() as udim;
-            let nkvh = self.model.num_key_value_heads() as udim;
+            let d = self.0.hidden_size() as udim;
+            let nh = self.0.num_attention_heads() as udim;
+            let nkvh = self.0.num_key_value_heads() as udim;
             let dh = d / nh;
             let dkv = nkvh * dh;
             let head_group = nh / nkvh;
             let head_div = (dh as f32).sqrt().recip();
-            let di = self.model.intermediate_size() as udim;
-            let dt = self.model.data_type();
-            let epsilon = self.model.rms_norm_eps();
-            let theta = self.model.rope_theta();
+            let di = self.0.intermediate_size() as udim;
+            let dt = self.0.data_type();
+            let epsilon = self.0.rms_norm_eps();
+            let theta = self.0.rope_theta();
             let mut pos = Vec::<u32>::with_capacity(nt as usize);
             for request in requests.iter() {
                 pos.extend(request.pos..request.att_len());
@@ -105,14 +95,14 @@ impl Transformer {
             let mut x2 = tensor(dt, &[nkvh, head_group * nt, dh]);
             let mut gate_up = tensor(dt, &[nt, di + di]);
 
-            gather(x0.access_mut(), &self.model.embed_tokens(), &requests);
+            gather(x0.access_mut(), &self.0.embed_tokens(), &requests);
             // println!("gather:\n{}", x0.access());
 
-            for layer in 0..self.model.num_hidden_layers() {
-                let input_layernorm = self.model.input_layernorm(layer);
+            for layer in 0..self.0.num_hidden_layers() {
+                let input_layernorm = self.0.input_layernorm(layer);
                 rms_norm(x1.access_mut(), &x0.access(), &input_layernorm, epsilon);
                 // println!("layer {layer} input norm:\n{}", x1.access());
-                let w_qkv = self.model.w_qkv(layer).transpose(&[1, 0]);
+                let w_qkv = self.0.w_qkv(layer).transpose(&[1, 0]);
                 mat_mul(&mut qkv.access_mut(), 0., &x1.access_mut(), &w_qkv, 1.);
                 let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
                 let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
@@ -182,15 +172,15 @@ impl Transformer {
                     }
                 }
 
-                let wo = self.model.self_attn_o_proj(layer).transpose(&[1, 0]);
+                let wo = self.0.self_attn_o_proj(layer).transpose(&[1, 0]);
                 mat_mul(&mut x0.access_mut(), 1., &x1.access(), &wo, 1.);
                 // println!("layer {layer} o_proj:\n{}", x0.access());
 
-                let post_layernorm = self.model.post_attention_layernorm(layer);
+                let post_layernorm = self.0.post_attention_layernorm(layer);
                 rms_norm(x1.access_mut(), &x0.access(), &post_layernorm, epsilon);
                 // println!("layer {layer} post norm:\n{}", x1.access());
 
-                let w_gate_up = self.model.mlp_gate_up(layer).transpose(&[1, 0]);
+                let w_gate_up = self.0.mlp_gate_up(layer).transpose(&[1, 0]);
                 mat_mul(&mut gate_up.access_mut(), 0., &x1.access(), &w_gate_up, 1.);
                 let mut gate_up = gate_up.split(1, &[di as _, di as _]);
                 let up = gate_up.pop().unwrap();
@@ -201,7 +191,7 @@ impl Transformer {
                 swiglu(gate.access_mut(), unsafe { &up.access_unchecked() });
                 // println!("layer {layer} swiglu:\n{}", gate.access());
 
-                let mlp_down = self.model.mlp_down(layer).transpose(&[1, 0]);
+                let mlp_down = self.0.mlp_down(layer).transpose(&[1, 0]);
                 mat_mul(&mut x0.access_mut(), 1., &gate.access(), &mlp_down, 1.);
                 // println!("layer {layer} down:\n{}", x0.access());
             }
@@ -209,26 +199,24 @@ impl Transformer {
             x0
         };
 
-        if num_decoding == 0 {
-            return vec![];
+        let batch = num_decoding as udim;
+        let dt = self.0.data_type();
+        let voc = self.0.vocab_size() as udim;
+        let mut logits = tensor(dt, &[batch, voc]);
+
+        if batch > 0 {
+            let mut x = x.slice(&[slice![from 0, take batch], slice![all]]);
+
+            let model_norm = self.0.model_norm();
+            rms_norm_inplace(&mut x.access_mut(), &model_norm, self.0.rms_norm_eps());
+            // println!("pos {pos} model norm:\n{}", x.access());
+
+            let lm_head = self.0.lm_head().transpose(&[1, 0]);
+            mat_mul(&mut logits.access_mut(), 0., &x.access(), &lm_head, 1.);
+            // println!("pos {pos} logits:\n{}", logits.access());
         }
 
-        let batch = num_decoding as udim;
-        let mut x = x.slice(&[slice![from 0, take batch], slice![all]]);
-
-        let model_norm = self.model.model_norm();
-        rms_norm_inplace(&mut x.access_mut(), &model_norm, self.model.rms_norm_eps());
-        // println!("pos {pos} model norm:\n{}", x.access());
-
-        let dt = self.model.data_type();
-        let voc = self.model.vocab_size() as udim;
-        let mut buf = vec![f16::ZERO; (batch * voc) as usize];
-        let mut logits = Tensor::new(dt, &[batch, voc], reslice_mut(&mut buf));
-        let lm_head = self.model.lm_head().transpose(&[1, 0]);
-        mat_mul(&mut logits, 0., &x.access(), &lm_head, 1.);
-        // println!("pos {pos} logits:\n{}", logits.access());
-
-        buf
+        logits
     }
 }
 

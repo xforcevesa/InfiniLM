@@ -2,12 +2,14 @@
     common::{argmax, logger_init, tokenizer},
     Template,
 };
+use half::f16;
 use std::{
     fs::read_to_string,
     io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
+use tensor::reslice;
 use tokenizer::Tokenizer;
 use transformer_cpu::{Llama2, Memory, Prompt, Request, Transformer};
 
@@ -90,13 +92,11 @@ fn on_host(
     let time = Instant::now();
     let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
     if !tokens.is_empty() {
-        assert!(transformer
-            .decode(vec![Request {
-                prompt: Prompt::Prefill(tokens),
-                cache: &mut kv_cache,
-                pos: 0,
-            }])
-            .is_empty());
+        transformer.decode(vec![Request {
+            prompt: Prompt::Prefill(tokens),
+            cache: &mut kv_cache,
+            pos: 0,
+        }]);
     }
     info!("prefill transformer ... {:?}", time.elapsed());
 
@@ -111,7 +111,7 @@ fn on_host(
             cache: &mut kv_cache,
             pos: pos as _,
         }]);
-        token = argmax(&logits);
+        token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
 
         print!("{}", tokenizer.decode(token).replace('▁', " "));
         std::io::stdout().flush().unwrap();

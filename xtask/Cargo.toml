@@ -12,6 +12,7 @@ tensor = { path = "../tensor" }
 tokenizer = { path = "../tokenizer" }
 transformer-cpu = { path = "../transformer-cpu" }
 transformer-nvidia = { path = "../transformer-nvidia" }
+half.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 log = "0.4"
