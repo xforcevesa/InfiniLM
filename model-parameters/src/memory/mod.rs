@@ -1,12 +1,10 @@
 ﻿mod cast;
-mod realloc;
 mod safe_tensors;
 
 use crate::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
 use tensor::{udim, Shape, Tensor};
 
-pub use realloc::Allocator;
 pub use safe_tensors::SafeTensorError;
 pub(crate) use safe_tensors::SafeTensorHeaderJson;
 

@@ -258,9 +258,17 @@ version = "0.0.0"
 source = "git+https://github.com/YdrMaster/cuda-bench#5a8993ae9f4af2cde5112bebe5bc74c99b9e13e2"
 dependencies = [
  "bindgen",
- "cuda",
+ "cuda 0.0.0 (git+https://github.com/YdrMaster/cuda-bench)",
  "find_cuda_helper",
  "half",
+]
+
+[[package]]
+name = "cuda"
+version = "0.0.0"
+dependencies = [
+ "bindgen",
+ "find_cuda_helper",
 ]
 
 [[package]]
@@ -1083,7 +1091,7 @@ version = "0.0.0"
 dependencies = [
  "common",
  "cublas",
- "cuda",
+ "cuda 0.0.0",
  "find_cuda_helper",
  "half",
  "model-parameters",

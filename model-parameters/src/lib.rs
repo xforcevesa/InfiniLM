@@ -8,7 +8,7 @@ use std::{
 };
 use tensor::{DataType, Tensor};
 
-pub use memory::{Allocator, Memory, SafeTensorError};
+pub use memory::{Memory, SafeTensorError};
 pub use save::save;
 
 pub trait Llama2 {

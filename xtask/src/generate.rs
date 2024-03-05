@@ -3,18 +3,14 @@
     Template,
 };
 use std::{
-    alloc::Layout,
-    collections::HashMap,
     fs::read_to_string,
     io::Write,
     path::{Path, PathBuf},
-    ptr::NonNull,
-    sync::Mutex,
     time::Instant,
 };
 use tokenizer::Tokenizer;
 use transformer_cpu::{
-    model_parameters::{Allocator, Llama2, Memory},
+    model_parameters::{Llama2, Memory},
     Prompt, Request, Transformer,
 };
 
@@ -32,9 +28,6 @@ pub(crate) struct GenerateArgs {
     /// Max steps.
     #[clap(short, long)]
     step: Option<usize>,
-    /// Copy model parameters inside memory.
-    #[clap(long)]
-    inside_mem: bool,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
@@ -42,34 +35,6 @@ pub(crate) struct GenerateArgs {
     /// Use Nvidia GPU.
     #[clap(long)]
     nvidia: bool,
-}
-
-struct NormalAllocator(Mutex<HashMap<*const u8, usize>>);
-
-impl Allocator for NormalAllocator {
-    unsafe fn allocate(&self, size: usize) -> NonNull<u8> {
-        let ptr = NonNull::new(std::alloc::alloc(Layout::from_size_align_unchecked(
-            size,
-            std::mem::align_of::<usize>(),
-        )))
-        .unwrap();
-        self.0.lock().unwrap().insert(ptr.as_ptr(), size);
-        ptr
-    }
-
-    unsafe fn deallocate(&self, ptr: NonNull<u8>) {
-        std::alloc::dealloc(
-            ptr.as_ptr(),
-            Layout::from_size_align_unchecked(
-                self.0
-                    .lock()
-                    .unwrap()
-                    .remove(&ptr.as_ptr().cast_const())
-                    .unwrap(),
-                std::mem::align_of::<usize>(),
-            ),
-        )
-    }
 }
 
 impl GenerateArgs {
@@ -84,10 +49,9 @@ impl GenerateArgs {
         info!("build tokenizer ... {:?}", time.elapsed());
 
         if self.nvidia {
-            let preload_layers = if self.inside_mem { usize::MAX } else { 3 };
-            on_nvidia_gpu(model_dir, tokenizer, self.prompt, step, preload_layers)
+            on_nvidia_gpu(model_dir, tokenizer, self.prompt, step, usize::MAX)
         } else {
-            on_host(model_dir, tokenizer, self.prompt, step, self.inside_mem)
+            on_host(model_dir, tokenizer, self.prompt, step)
         }
     }
 }
@@ -97,7 +61,6 @@ fn on_host(
     tokenizer: Box<dyn Tokenizer>,
     prompt: impl AsRef<str>,
     step: usize,
-    inside_mem: bool,
 ) {
     let model_dir = model_dir.as_ref();
     let template: Template = if model_dir
@@ -114,15 +77,9 @@ fn on_host(
     let prompt = apply_template(prompt.as_ref(), template);
 
     let time = Instant::now();
-    let mut model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
+    let model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
     info!("load model ... {:?}", time.elapsed());
 
-    if inside_mem {
-        let time = Instant::now();
-        let allocator = NormalAllocator(Mutex::new(HashMap::new()));
-        model = Box::new(Memory::realloc_with(&*model, allocator));
-        info!("copy model ... {:?}", time.elapsed());
-    }
     let eos = model.eos_token_id();
     let time = Instant::now();
     let mut transformer = Transformer::new(model);
