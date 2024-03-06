@@ -1,11 +1,11 @@
 ﻿use common::utok;
 use cuda::{bindings::CUdeviceptr, AsRaw, DevMem, Stream};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use tensor::Tensor;
 
-pub fn gather<'a, T, U>(x: &Tensor<T>, table: &Tensor<U>, tokens: &[utok], stream: &Stream)
+pub fn gather<'a, T, U>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: &[utok], stream: &Stream)
 where
-    T: Deref<Target = DevMem<'a>>,
+    T: DerefMut<Target = DevMem<'a>>,
     U: Deref<Target = [u8]>,
 {
     debug_assert_eq!(x.data_type(), table.data_type());

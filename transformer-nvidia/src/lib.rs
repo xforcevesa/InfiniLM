@@ -89,9 +89,9 @@ impl<'ctx> Transformer<'ctx> {
         let pos = Tensor::new(DataType::U32, &[seq_len], Storage::from(pos));
         // println!("tokens: {tokens:?}");
 
-        let x0 = tensor(dt, &[seq_len, d], transfer);
+        let mut x0 = tensor(dt, &[seq_len, d], transfer);
         let e_alloc_x0 = transfer.record();
-        let x1 = tensor(dt, &[seq_len, d], transfer);
+        let mut x1 = tensor(dt, &[seq_len, d], transfer);
         let qkv = tensor(dt, &[seq_len, d + dkv + dkv], transfer);
         let att = tensor(dt, &[nkvh, head_group * seq_len, att_len], transfer);
         let gate_up = tensor(dt, &[seq_len, di + di], transfer);
@@ -108,7 +108,12 @@ impl<'ctx> Transformer<'ctx> {
         let e_alloc = transfer.record();
 
         compute.wait_for(&e_alloc_x0);
-        gather(&x0.access(), &self.host.embed_tokens(), tokens, compute);
+        gather(
+            &mut x0.access_mut(),
+            &self.host.embed_tokens(),
+            tokens,
+            compute,
+        );
         // compute.synchronize();
         // println!("gather:\n{}", map_tensor(&x0));
 
@@ -119,11 +124,10 @@ impl<'ctx> Transformer<'ctx> {
             let params = self.layers.sync(layer, compute);
 
             self.rms_norm.launch(
-                x1.access().physical(),
-                x0.access().physical(),
-                params.input_layernorm.access().physical(),
+                &mut x1.access_mut(),
+                &x0.access(),
+                &params.input_layernorm.access(),
                 epsilon,
-                d as usize,
                 compute,
             );
             // compute.synchronize();
@@ -239,11 +243,10 @@ impl<'ctx> Transformer<'ctx> {
             // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
 
             self.rms_norm.launch(
-                x1.access().physical(),
-                x0.access().physical(),
-                params.post_attention_layernorm.access().physical(),
+                &mut x1.access_mut(),
+                &x0.access(),
+                &params.post_attention_layernorm.access(),
                 epsilon,
-                d as _,
                 compute,
             );
             // compute.synchronize();
@@ -293,15 +296,15 @@ impl<'ctx> Transformer<'ctx> {
         compute: &Stream<'ctx>,
         transfer: &Stream<'ctx>,
     ) -> &[f16] {
-        let x = self.update(&[token], cache, pos, compute, transfer);
+        let mut x = self.update(&[token], cache, pos, compute, transfer);
 
         compute.wait_for(&self.model.sync_event);
+        let src = x.clone();
         self.rms_norm.launch(
-            x.access().physical(),
-            x.access().physical(),
-            self.model.model_norm.access().physical(),
+            &mut x.access_mut(),
+            &unsafe { src.access_unchecked() },
+            &self.model.model_norm.access(),
             self.host.rms_norm_eps(),
-            self.host.hidden_size(),
             compute,
         );
         // compute.synchronize();

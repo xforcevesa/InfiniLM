@@ -1,14 +1,14 @@
 use cuda::{AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
 use std::{
     ffi::{c_uint, c_void, CString},
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
+use tensor::{udim, Tensor};
 
 pub struct RmsNormalization<'ctx> {
     module: Module<'ctx>,
     padding: CString,
     folding: CString,
-    data_type: CudaDataType,
     block_size: c_uint,
     items_per_thread: c_uint,
 }
@@ -62,7 +62,6 @@ extern "C" __global__ void {folding}(
             module: ctx.load(&ptx.unwrap()),
             padding: CString::new(padding).unwrap(),
             folding: CString::new(folding).unwrap(),
-            data_type,
             block_size: block_size as _,
             items_per_thread: items_per_thread as _,
         }
@@ -70,23 +69,27 @@ extern "C" __global__ void {folding}(
 }
 
 impl RmsNormalization<'_> {
-    pub fn launch<'a, T>(
+    pub fn launch<'a, T, U, V>(
         &self,
-        y: &T,
-        x: &T,
-        w: &T,
+        y: &mut Tensor<T>,
+        x: &Tensor<U>,
+        w: &Tensor<V>,
         epsilon: f32,
-        leading_dim: usize,
         stream: &Stream,
     ) where
-        T: Deref<Target = DevMem<'a>>,
+        T: DerefMut<Target = DevMem<'a>>,
+        U: Deref<Target = DevMem<'a>>,
+        V: Deref<Target = DevMem<'a>>,
     {
-        debug_assert_eq!(x.len(), y.len());
-        let items_len = (w.len() / self.data_type.size()) as c_uint;
-        let row = (x.len() / self.data_type.size() / leading_dim) as c_uint;
-        let y_ptr = unsafe { y.as_raw() };
-        let x_ptr = unsafe { x.as_raw() };
-        let w_ptr = unsafe { w.as_raw() };
+        debug_assert_eq!(x.shape(), y.shape());
+        let &[row, col] = x.shape() else { panic!() };
+        debug_assert_eq!(&[col], w.shape());
+
+        let y_ptr = unsafe { y.physical().as_raw() };
+        let x_ptr = unsafe { x.physical().as_raw() };
+        let w_ptr = unsafe { w.physical().as_raw() };
+        let leading_dim = x.strides()[0] as udim;
+        let items_len = col as udim;
         let params: [*const c_void; 6] = [
             (&y_ptr) as *const _ as _,
             (&x_ptr) as *const _ as _,

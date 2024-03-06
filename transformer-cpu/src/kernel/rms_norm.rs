@@ -36,32 +36,6 @@ where
     }
 }
 
-pub fn rms_norm_inplace<T, U>(o: &mut Tensor<T>, w: &Tensor<U>, epsilon: f32)
-where
-    T: DerefMut<Target = [u8]>,
-    U: Deref<Target = [u8]>,
-{
-    let &[.., d] = o.shape() else { panic!() };
-    let dt = o.data_type();
-
-    debug_assert_eq!(w.data_type(), dt);
-    debug_assert_eq!(w.shape(), &[d]);
-    debug_assert!(o.is_contiguous());
-    debug_assert!(w.is_contiguous());
-
-    let o: &mut [u8] = o.as_mut_slice();
-    let x = unsafe { std::slice::from_raw_parts(o.as_ptr(), o.len()) };
-    let w = w.as_slice();
-
-    match dt {
-        DataType::F16 => rms_norm_op(o, x, w, |x| {
-            f16::from_f32(rms_norm_reduce(x.iter().copied().map(f16::to_f32), epsilon))
-        }),
-        DataType::F32 => rms_norm_op(o, x, w, |x| rms_norm_reduce(x.iter().copied(), epsilon)),
-        _ => unreachable!("unsupported data type \"{dt:?}\""),
-    }
-}
-
 fn rms_norm_op<T: Copy + Mul<Output = T> + MulAssign>(
     o: &mut [u8],
     x: &[u8],

@@ -1,7 +1,7 @@
 mod kernel;
 mod storage;
 
-use kernel::{gather, mat_mul, rms_norm, rms_norm_inplace, rotary_embedding, softmax, swiglu};
+use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
 
@@ -217,7 +217,13 @@ impl Transformer {
             let mut x = x.slice(&[slice![from 0, take batch], slice![all]]);
 
             let model_norm = self.0.model_norm();
-            rms_norm_inplace(&mut x.access_mut(), &model_norm, self.0.rms_norm_eps());
+            let this = x.clone();
+            rms_norm(
+                x.access_mut(),
+                &unsafe { this.access_unchecked() },
+                &model_norm,
+                self.0.rms_norm_eps(),
+            );
             // println!("pos {pos} model norm:\n{}", x.access());
 
             let lm_head = self.0.lm_head().transpose(&[1, 0]);
