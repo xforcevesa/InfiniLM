@@ -1,11 +1,12 @@
 ﻿use common::utok;
-use cuda::{bindings::CUdeviceptr, AsRaw, LocalDevBlob, Stream};
+use cuda::{bindings::CUdeviceptr, AsRaw, DevMem, Stream};
 use std::ops::Deref;
 use tensor::Tensor;
 
-pub fn gather<T>(x: &Tensor<LocalDevBlob>, table: &Tensor<T>, tokens: &[utok], stream: &Stream)
+pub fn gather<'a, T, U>(x: &Tensor<T>, table: &Tensor<U>, tokens: &[utok], stream: &Stream)
 where
-    T: Deref<Target = [u8]>,
+    T: Deref<Target = DevMem<'a>>,
+    U: Deref<Target = [u8]>,
 {
     debug_assert_eq!(x.data_type(), table.data_type());
     debug_assert_eq!(x.shape().last(), table.shape().last());

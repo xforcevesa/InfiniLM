@@ -1,14 +1,18 @@
-﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, KernelFn, LocalDevBlob, Stream};
-use std::ffi::{c_uint, c_void};
+﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, DevMem, Module, Ptx, Stream};
+use std::{
+    ffi::{c_uint, c_void, CString},
+    ops::Deref,
+};
 use tensor::{udim, DataType, Tensor};
 
-pub struct RotaryEmbedding {
-    f: KernelFn,
+pub struct RotaryEmbedding<'ctx> {
+    module: Module<'ctx>,
+    f: CString,
     block_size: c_uint,
 }
 
-impl RotaryEmbedding {
-    pub fn new(block_size: usize, ctx: &ContextGuard) -> Self {
+impl<'ctx> RotaryEmbedding<'ctx> {
+    pub fn new(block_size: usize, ctx: &'ctx ContextGuard<'ctx>) -> Self {
         let name = "rotary_embedding_padding";
 
         const ROTARY_EMBEDDING: &str = include_str!("rotary_embedding.cuh");
@@ -26,20 +30,23 @@ extern "C" __global__ void {name}(
 "#
         );
 
-        ctx.compile(code);
+        let (ptx, log) = Ptx::compile(code);
+        if !log.is_empty() {
+            warn!("{log}");
+        }
         Self {
-            f: KernelFn::get(name).unwrap(),
+            module: ctx.load(&ptx.unwrap()),
+            f: CString::new(name).unwrap(),
             block_size: block_size as _,
         }
     }
+}
 
-    pub fn launch(
-        &self,
-        t: &Tensor<LocalDevBlob>,
-        pos: &Tensor<LocalDevBlob>,
-        theta: f32,
-        stream: &Stream,
-    ) {
+impl RotaryEmbedding<'_> {
+    pub fn launch<'a, T>(&self, t: &Tensor<T>, pos: &Tensor<T>, theta: f32, stream: &Stream)
+    where
+        T: Deref<Target = DevMem<'a>>,
+    {
         let &[n, nh, dh] = t.shape() else {
             panic!("Invalid shape");
         };
@@ -61,7 +68,7 @@ extern "C" __global__ void {name}(
             (&leading_dim) as *const _ as _,
         ];
 
-        self.f
-            .launch((nh, n), dh / 2, params.as_ptr(), 0, Some(stream))
+        let f = self.module.get_kernel(&self.f);
+        f.launch((nh, n), dh / 2, params.as_ptr(), 0, Some(stream))
     }
 }

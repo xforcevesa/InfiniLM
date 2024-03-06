@@ -10,7 +10,7 @@ pub enum SafeTensorError {
     Serde(serde_json::Error),
 }
 
-impl Memory {
+impl<'a> Memory<'a> {
     pub fn load_safetensors_from_dir(model_dir: impl AsRef<Path>) -> Result<Self, SafeTensorError> {
         let model_dir = model_dir.as_ref();
         let config = File::open(model_dir.join("config.json")).map_err(SafeTensorError::Io)?;
@@ -21,7 +21,7 @@ impl Memory {
 
     pub fn load_safetensors(
         config: impl Read,
-        model: impl Deref<Target = [u8]> + 'static,
+        model: impl Deref<Target = [u8]> + 'a,
         allow_realloc: bool,
     ) -> Result<Self, serde_json::Error> {
         let config: ConfigJson = serde_json::from_reader(config)?;
@@ -129,7 +129,7 @@ pub(crate) struct SafeTensorHeaderJson {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-fn concat0(tensors: &[&Tensor<HostMemory>]) -> Tensor<HostMemory> {
+fn concat0<'a>(tensors: &[&Tensor<HostMemory<'a>>]) -> Tensor<HostMemory<'a>> {
     assert!(!tensors.is_empty());
     let data_type = tensors[0].data_type();
     let len = tensors[0].shape()[1..].iter().product::<udim>();

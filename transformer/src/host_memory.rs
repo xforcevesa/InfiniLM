@@ -4,12 +4,12 @@
 };
 
 #[derive(Clone)]
-pub struct HostMemory {
-    data: Arc<dyn Deref<Target = [u8]>>,
+pub struct HostMemory<'a> {
+    data: Arc<dyn Deref<Target = [u8]> + 'a>,
     pub(crate) range: Range<usize>,
 }
 
-impl Deref for HostMemory {
+impl Deref for HostMemory<'_> {
     type Target = [u8];
 
     #[inline]
@@ -18,9 +18,9 @@ impl Deref for HostMemory {
     }
 }
 
-impl HostMemory {
+impl<'a> HostMemory<'a> {
     #[inline]
-    pub const fn new(data: Arc<dyn Deref<Target = [u8]>>, offset: usize, len: usize) -> Self {
+    pub const fn new(data: Arc<dyn Deref<Target = [u8]> + 'a>, offset: usize, len: usize) -> Self {
         Self {
             data,
             range: offset..offset + len,
@@ -28,7 +28,10 @@ impl HostMemory {
     }
 
     #[inline]
-    pub fn from_blob(data: impl 'static + Deref<Target = [u8]>) -> Self {
+    pub fn from_blob<T>(data: T) -> Self
+    where
+        T: Deref<Target = [u8]> + 'a,
+    {
         let len = data.as_ref().len();
         Self {
             data: Arc::new(data),

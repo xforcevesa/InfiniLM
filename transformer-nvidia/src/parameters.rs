@@ -1,18 +1,22 @@
-﻿use cuda::{LocalDevBlob, Stream};
+﻿use crate::Storage;
+use cuda::Stream;
 use tensor::Tensor;
 use transformer::Llama2;
 
-pub(crate) struct ModelParameters<'a> {
-    pub(crate) model_norm: Tensor<LocalDevBlob<'a>>,
-    pub(crate) lm_head: Tensor<LocalDevBlob<'a>>,
-    pub(crate) sync_event: cuda::Event,
+pub(crate) struct ModelParameters<'ctx> {
+    pub(crate) model_norm: Tensor<Storage<'ctx>>,
+    pub(crate) lm_head: Tensor<Storage<'ctx>>,
+    pub(crate) sync_event: cuda::Event<'ctx>,
 }
 
-impl<'a> ModelParameters<'a> {
-    pub fn new(host: &dyn Llama2, stream: &'a Stream) -> Self {
+impl<'ctx> ModelParameters<'ctx> {
+    pub fn new(host: &dyn Llama2, stream: &'ctx Stream) -> Self {
         macro_rules! map {
             ($param:ident) => {
-                unsafe { host.$param().map_physical(|slice| stream.from_host(slice)) }
+                unsafe {
+                    host.$param()
+                        .map_physical(|slice| stream.from_host(slice).into())
+                }
             };
         }
         Self {
@@ -30,13 +34,13 @@ impl Drop for ModelParameters<'_> {
     }
 }
 
-pub(crate) struct LayersParameters<'a> {
-    layers: Vec<LayerParameter<'a>>,
+pub(crate) struct LayersParameters<'ctx> {
+    layers: Vec<LayerParameter<'ctx>>,
     current: usize,
 }
 
-impl<'a> LayersParameters<'a> {
-    pub fn new(load_layers: usize, host: &dyn Llama2, stream: &'a Stream) -> Self {
+impl<'ctx> LayersParameters<'ctx> {
+    pub fn new(load_layers: usize, host: &dyn Llama2, stream: &Stream<'ctx>) -> Self {
         Self {
             layers: (0..host.num_hidden_layers().min(load_layers))
                 .map(|layer| LayerParameter::new(host, layer, stream))
@@ -46,7 +50,7 @@ impl<'a> LayersParameters<'a> {
     }
 
     #[inline]
-    pub fn load(&mut self, layer: usize, host: &dyn Llama2, stream: &Stream) {
+    pub fn load(&mut self, layer: usize, host: &dyn Llama2, stream: &Stream<'ctx>) {
         let step = self.layers.len() - 1;
         let i = (self.current + step) % self.layers.len();
         let layer = (layer + step) % host.num_hidden_layers();
@@ -54,7 +58,7 @@ impl<'a> LayersParameters<'a> {
     }
 
     #[inline]
-    pub fn sync(&mut self, layer: usize, stream: &Stream) -> &LayerParameter {
+    pub fn sync(&mut self, layer: usize, stream: &Stream<'ctx>) -> &LayerParameter<'ctx> {
         let i = self.current;
         self.current = (i + 1) % self.layers.len();
 
@@ -66,25 +70,25 @@ impl<'a> LayersParameters<'a> {
     }
 }
 
-pub(crate) struct LayerParameter<'a> {
-    pub input_layernorm: Tensor<LocalDevBlob<'a>>,
-    pub w_qkv: Tensor<LocalDevBlob<'a>>,
-    pub self_attn_o_proj: Tensor<LocalDevBlob<'a>>,
-    pub post_attention_layernorm: Tensor<LocalDevBlob<'a>>,
-    pub mlp_gate_up: Tensor<LocalDevBlob<'a>>,
-    pub mlp_down: Tensor<LocalDevBlob<'a>>,
+pub(crate) struct LayerParameter<'ctx> {
+    pub input_layernorm: Tensor<Storage<'ctx>>,
+    pub w_qkv: Tensor<Storage<'ctx>>,
+    pub self_attn_o_proj: Tensor<Storage<'ctx>>,
+    pub post_attention_layernorm: Tensor<Storage<'ctx>>,
+    pub mlp_gate_up: Tensor<Storage<'ctx>>,
+    pub mlp_down: Tensor<Storage<'ctx>>,
 
     layer: usize,
-    sync_event: cuda::Event,
+    sync_event: cuda::Event<'ctx>,
 }
 
-impl<'a> LayerParameter<'a> {
-    pub fn new(host: &dyn Llama2, layer: usize, stream: &'a Stream) -> Self {
+impl<'ctx> LayerParameter<'ctx> {
+    pub fn new(host: &dyn Llama2, layer: usize, stream: &Stream<'ctx>) -> Self {
         macro_rules! map {
             ($param:ident) => {
                 unsafe {
                     host.$param(layer)
-                        .map_physical(|slice| stream.from_host(slice))
+                        .map_physical(|slice| stream.from_host(slice).into())
                 }
             };
         }
@@ -100,7 +104,7 @@ impl<'a> LayerParameter<'a> {
         }
     }
 
-    pub fn load(&mut self, host: &dyn Llama2, layer: usize, stream: &Stream) {
+    pub fn load(&mut self, host: &dyn Llama2, layer: usize, stream: &Stream<'ctx>) {
         if self.layer == layer {
             return;
         }
@@ -108,6 +112,7 @@ impl<'a> LayerParameter<'a> {
         macro_rules! update {
             ($param:ident) => {
                 self.$param
+                    .access_mut()
                     .physical_mut()
                     .copy_in_async(host.$param(layer).as_slice(), stream)
             };

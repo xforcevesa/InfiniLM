@@ -1,20 +1,23 @@
-﻿use cublas::{bindings::cublasOperation_t, cublas};
-use cuda::{AsRaw, LocalDevBlob};
+﻿use cublas::{bindings::cublasOperation_t, cublas, Cublas};
+use cuda::{AsRaw, DevMem};
 use half::f16;
 use std::{
     ffi::{c_int, c_longlong, c_void},
     mem::swap,
+    ops::Deref,
 };
 use tensor::{DataType, Tensor};
 
-pub fn mat_mul(
-    handle: cublas::bindings::cublasHandle_t,
-    c: &Tensor<LocalDevBlob>,
+pub fn mat_mul<'a, T>(
+    handle: &Cublas,
+    c: &Tensor<T>,
     beta: f32,
-    a: &Tensor<LocalDevBlob>,
-    b: &Tensor<LocalDevBlob>,
+    a: &Tensor<T>,
+    b: &Tensor<T>,
     alpha: f32,
-) {
+) where
+    T: Deref<Target = DevMem<'a>>,
+{
     assert_eq!(c.data_type(), DataType::F16);
     assert_eq!(a.data_type(), DataType::F16);
     assert_eq!(b.data_type(), DataType::F16);
@@ -54,7 +57,7 @@ pub fn mat_mul(
     let ldc = c.cs;
 
     cublas!(cublasGemmStridedBatchedEx(
-        handle,
+        handle.as_raw(),
         transa,
         transb,
         m,
@@ -90,8 +93,11 @@ struct Matrix {
     ptr: *mut c_void,
 }
 
-impl From<&Tensor<LocalDevBlob<'_>>> for Matrix {
-    fn from(tensor: &Tensor<LocalDevBlob>) -> Self {
+impl<'a, T> From<&Tensor<T>> for Matrix
+where
+    T: Deref<Target = DevMem<'a>>,
+{
+    fn from(tensor: &Tensor<T>) -> Self {
         let strides = tensor.strides();
         let ptr = (unsafe { tensor.physical().as_raw() } as isize + tensor.bytes_offset()) as _;
         match tensor.shape() {

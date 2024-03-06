@@ -1,22 +1,24 @@
-﻿use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, KernelFn, LocalDevBlob, Stream,
+﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
+use std::{
+    ffi::{c_uint, c_void, CString},
+    ops::Deref,
 };
-use std::ffi::{c_uint, c_void};
 use tensor::Tensor;
 
-pub struct FusedSoftmax {
-    padding: KernelFn,
-    folding: KernelFn,
+pub struct FusedSoftmax<'ctx> {
+    module: Module<'ctx>,
+    padding: CString,
+    folding: CString,
     block_size: c_uint,
     items_per_thread: c_uint,
 }
 
-impl FusedSoftmax {
+impl<'ctx> FusedSoftmax<'ctx> {
     pub fn new(
         data_type: CudaDataType,
         max_seq_len: usize,
         block_size: usize,
-        ctx: &ContextGuard,
+        ctx: &'ctx ContextGuard<'ctx>,
     ) -> Self {
         let ty_arg = data_type.name();
         let mask = "AttentionCausualMask";
@@ -51,16 +53,25 @@ extern "C" __global__ void {folding}(
 "#
         );
 
-        ctx.compile(code);
+        let (ptx, log) = Ptx::compile(code);
+        if !log.is_empty() {
+            warn!("{log}");
+        }
         Self {
-            padding: KernelFn::get(padding).unwrap(),
-            folding: KernelFn::get(folding).unwrap(),
+            module: ctx.load(&ptx.unwrap()),
+            padding: CString::new(padding).unwrap(),
+            folding: CString::new(folding).unwrap(),
             block_size: block_size as _,
             items_per_thread: items_per_thread as _,
         }
     }
+}
 
-    pub fn launch(&self, att: &Tensor<LocalDevBlob>, stream: &Stream) {
+impl FusedSoftmax<'_> {
+    pub fn launch<'a, T>(&self, att: &Tensor<T>, stream: &Stream)
+    where
+        T: Deref<Target = DevMem<'a>>,
+    {
         assert!(att.is_contiguous());
         let &[nh, seq_len, att_len] = att.shape() else {
             panic!("Invalid attention shape");
@@ -70,7 +81,7 @@ extern "C" __global__ void {folding}(
         };
 
         let grid_dims = (nh, seq_len);
-        let (kernel, block_dims) = if att_len <= self.block_size {
+        let (name, block_dims) = if att_len <= self.block_size {
             (&self.padding, att_len)
         } else {
             (
@@ -88,6 +99,7 @@ extern "C" __global__ void {folding}(
             (&att_len) as *const _ as _,
         ];
 
+        let kernel = self.module.get_kernel(name);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }
 }

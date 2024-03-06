@@ -12,11 +12,8 @@ pub struct Transformer(Box<dyn Llama2>);
 
 impl Transformer {
     #[inline]
-    pub fn new(model: Box<dyn Llama2>) -> Self {
-        Self(match model.data_type() {
-            DataType::BF16 | DataType::F32 => Box::new(Memory::cast(&*model, DataType::F16)),
-            _ => model,
-        })
+    pub fn new(model: Box<dyn Llama2 + 'static>) -> Self {
+        Self(model)
     }
 
     #[inline]

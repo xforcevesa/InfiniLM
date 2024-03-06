@@ -2,24 +2,24 @@
 use common::utok;
 use tensor::Tensor;
 
-pub struct Memory {
+pub struct Memory<'a> {
     pub(super) config: ConfigJson,
-    pub(super) embed_tokens: Tensor<HostMemory>,
-    pub(super) layers: Vec<Layer>,
-    pub(super) model_norm: Tensor<HostMemory>,
-    pub(super) lm_head: Tensor<HostMemory>,
+    pub(super) embed_tokens: Tensor<HostMemory<'a>>,
+    pub(super) layers: Vec<Layer<'a>>,
+    pub(super) model_norm: Tensor<HostMemory<'a>>,
+    pub(super) lm_head: Tensor<HostMemory<'a>>,
 }
 
-pub(super) struct Layer {
-    pub input_layernorm: Tensor<HostMemory>,
-    pub w_qkv: Tensor<HostMemory>,
-    pub self_attn_o_proj: Tensor<HostMemory>,
-    pub post_attention_layernorm: Tensor<HostMemory>,
-    pub mlp_gate_up: Tensor<HostMemory>,
-    pub mlp_down: Tensor<HostMemory>,
+pub(super) struct Layer<'a> {
+    pub input_layernorm: Tensor<HostMemory<'a>>,
+    pub w_qkv: Tensor<HostMemory<'a>>,
+    pub self_attn_o_proj: Tensor<HostMemory<'a>>,
+    pub post_attention_layernorm: Tensor<HostMemory<'a>>,
+    pub mlp_gate_up: Tensor<HostMemory<'a>>,
+    pub mlp_down: Tensor<HostMemory<'a>>,
 }
 
-impl Llama2 for Memory {
+impl<'a> Llama2 for Memory<'a> {
     #[inline]
     fn bos_token_id(&self) -> utok {
         self.config.bos_token_id

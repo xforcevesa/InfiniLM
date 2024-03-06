@@ -1,20 +1,24 @@
-use cuda::{AsRaw, ContextGuard, CudaDataType, KernelFn, LocalDevBlob, Stream};
-use std::ffi::{c_uint, c_void};
+use cuda::{AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
+use std::{
+    ffi::{c_uint, c_void, CString},
+    ops::Deref,
+};
 
-pub struct RmsNormalization {
-    padding: KernelFn,
-    folding: KernelFn,
+pub struct RmsNormalization<'ctx> {
+    module: Module<'ctx>,
+    padding: CString,
+    folding: CString,
     data_type: CudaDataType,
     block_size: c_uint,
     items_per_thread: c_uint,
 }
 
-impl RmsNormalization {
+impl<'ctx> RmsNormalization<'ctx> {
     pub fn new(
         data_type: CudaDataType,
         max_item_size: usize,
         block_size: usize,
-        ctx: &ContextGuard,
+        ctx: &'ctx ContextGuard<'ctx>,
     ) -> Self {
         let ty_arg = data_type.name();
         let items_per_thread = (max_item_size + block_size - 1) / block_size;
@@ -50,25 +54,33 @@ extern "C" __global__ void {folding}(
 "#
         );
 
-        ctx.compile(code);
+        let (ptx, log) = Ptx::compile(code);
+        if !log.is_empty() {
+            warn!("{log}");
+        }
         Self {
-            padding: KernelFn::get(padding).unwrap(),
-            folding: KernelFn::get(folding).unwrap(),
+            module: ctx.load(&ptx.unwrap()),
+            padding: CString::new(padding).unwrap(),
+            folding: CString::new(folding).unwrap(),
             data_type,
             block_size: block_size as _,
             items_per_thread: items_per_thread as _,
         }
     }
+}
 
-    pub fn launch(
+impl RmsNormalization<'_> {
+    pub fn launch<'a, T>(
         &self,
-        y: &LocalDevBlob,
-        x: &LocalDevBlob,
-        w: &LocalDevBlob,
+        y: &T,
+        x: &T,
+        w: &T,
         epsilon: f32,
         leading_dim: usize,
         stream: &Stream,
-    ) {
+    ) where
+        T: Deref<Target = DevMem<'a>>,
+    {
         debug_assert_eq!(x.len(), y.len());
         let items_len = (w.len() / self.data_type.size()) as c_uint;
         let row = (x.len() / self.data_type.size() / leading_dim) as c_uint;
@@ -84,31 +96,14 @@ extern "C" __global__ void {folding}(
             (&items_len) as *const _ as _,
         ];
         if items_len <= self.block_size {
-            self.padding
-                .launch(row, items_len, params.as_ptr(), 0, Some(stream));
+            let kernel = self.module.get_kernel(&self.padding);
+            kernel.launch(row, items_len, params.as_ptr(), 0, Some(stream));
         } else {
             let block_size = (items_len + self.items_per_thread - 1) / self.items_per_thread;
-            self.folding
-                .launch(row, block_size, params.as_ptr(), 0, Some(stream));
+            let kernel = self.module.get_kernel(&self.folding);
+            kernel.launch(row, block_size, params.as_ptr(), 0, Some(stream));
         }
     }
-}
-
-#[test]
-fn test() {
-    const SRC: &str = r#"
-extern "C" __global__ void kernel() {
-    printf("Hello World from GPU!\n");
-}
-"#;
-
-    cuda::init();
-    let Some(dev) = cuda::Device::fetch() else {
-        return;
-    };
-    dev.context().apply(|ctx| {
-        ctx.compile(SRC);
-    });
 }
 
 #[test]
@@ -119,6 +114,7 @@ fn test_kernel() {
     let Some(dev) = cuda::Device::fetch() else {
         return;
     };
-    dev.context()
-        .apply(|ctx| RmsNormalization::new(CudaDataType::half, 2048, 1024, ctx));
+    dev.context().apply(|ctx| {
+        RmsNormalization::new(CudaDataType::half, 2048, 1024, ctx);
+    });
 }

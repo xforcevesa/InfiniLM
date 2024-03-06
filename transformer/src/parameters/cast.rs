@@ -2,8 +2,8 @@
 use half::{bf16, f16};
 use tensor::{DataType, Tensor};
 
-impl Memory {
-    pub fn cast(src: &dyn Llama2, new_dtype: DataType) -> Self {
+impl<'a> Memory<'a> {
+    pub fn cast(src: &'a (dyn Llama2 + 'a), new_dtype: DataType) -> Self {
         Self {
             config: ConfigJson {
                 torch_dtype: new_dtype,

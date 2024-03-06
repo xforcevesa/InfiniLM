@@ -168,7 +168,7 @@ fn on_nvidia_gpu(
         fs::File,
         io::{ErrorKind::NotFound, Read},
     };
-    use transformer_nvidia::{cuda, PageLockedMemory, Transformer};
+    use transformer_nvidia::{cuda, Transformer};
 
     cuda::init();
     let Some(dev) = cuda::Device::fetch() else {
@@ -195,7 +195,7 @@ fn on_nvidia_gpu(
     dev.set_mempool_threshold(u64::MAX);
     dev.context().apply(|ctx| {
         let time = Instant::now();
-        let mut host = PageLockedMemory::new(safetensors.metadata().unwrap().len() as _, ctx);
+        let mut host = ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _);
         safetensors.read_exact(&mut host).unwrap();
         drop(safetensors);
         info!("read to host {:?}", time.elapsed());

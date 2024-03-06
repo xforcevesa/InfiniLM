@@ -1,16 +1,18 @@
-﻿use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, KernelFn, LocalDevBlob, Stream,
+﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
+use std::{
+    ffi::{c_uint, c_void, CString},
+    ops::Deref,
 };
-use std::ffi::{c_uint, c_void};
 use tensor::{udim, Tensor};
 
-pub struct Swiglu {
-    f: KernelFn,
+pub struct Swiglu<'ctx> {
+    module: Module<'ctx>,
+    f: CString,
     block_size: c_uint,
 }
 
-impl Swiglu {
-    pub fn new(data_type: CudaDataType, block_size: usize, ctx: &ContextGuard) -> Self {
+impl<'ctx> Swiglu<'ctx> {
+    pub fn new(data_type: CudaDataType, block_size: usize, ctx: &'ctx ContextGuard<'ctx>) -> Self {
         let ty_arg = data_type.name();
         let name = format!("swiglu_{ty_arg}");
 
@@ -29,14 +31,23 @@ extern "C" __global__ void {name}(
 "#
         );
 
-        ctx.compile(code);
+        let (ptx, log) = Ptx::compile(code);
+        if !log.is_empty() {
+            warn!("{log}");
+        }
         Self {
-            f: KernelFn::get(name).unwrap(),
+            module: ctx.load(&ptx.unwrap()),
+            f: CString::new(name).unwrap(),
             block_size: block_size as _,
         }
     }
+}
 
-    pub fn launch(&self, gate: &Tensor<LocalDevBlob>, up: &Tensor<LocalDevBlob>, stream: &Stream) {
+impl Swiglu<'_> {
+    pub fn launch<'a, T>(&self, gate: &Tensor<T>, up: &Tensor<T>, stream: &Stream)
+    where
+        T: Deref<Target = DevMem<'a>>,
+    {
         assert_eq!(gate.data_type(), up.data_type());
         assert_eq!(gate.shape(), up.shape());
 
@@ -69,7 +80,7 @@ extern "C" __global__ void {name}(
 
         let block_dims = gcd(self.block_size, di);
         let grid_dims = (seq_len, di / block_dims);
-        self.f
-            .launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
+        let kernel = self.module.get_kernel(&self.f);
+        kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }
 }

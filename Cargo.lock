@@ -254,19 +254,16 @@ checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 
 [[package]]
 name = "cublas"
-version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-bench#5a8993ae9f4af2cde5112bebe5bc74c99b9e13e2"
+version = "0.1.0"
 dependencies = [
  "bindgen",
  "cuda",
  "find_cuda_helper",
- "half",
 ]
 
 [[package]]
 name = "cuda"
-version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-bench#5a8993ae9f4af2cde5112bebe5bc74c99b9e13e2"
+version = "0.1.0"
 dependencies = [
  "bindgen",
  "find_cuda_helper",
@@ -514,9 +511,9 @@ checksum = "9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd"
 
 [[package]]
 name = "libloading"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2caa5afb8bf9f3a2652760ce7d4f62d21c4d5a423e68466fca30df82f2330164"
+checksum = "0c2a198fb6b0eada2a8df47933734e6d35d350665a33a3593d7164fa52c75c19"
 dependencies = [
  "cfg-if",
  "windows-targets 0.52.4",
@@ -1076,6 +1073,7 @@ dependencies = [
  "cuda",
  "find_cuda_helper",
  "half",
+ "log",
  "tensor",
  "tokenizer",
  "transformer",
@@ -1301,6 +1299,7 @@ dependencies = [
  "clap",
  "common",
  "find_cuda_helper",
+ "half",
  "log",
  "serde",
  "serde_json",

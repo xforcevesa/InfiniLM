@@ -12,6 +12,7 @@ tensor = { path = "../tensor" }
 transformer = { path = "../transformer" }
 cuda = { git = "https://github.com/YdrMaster/cuda-bench" }
 cublas = { git = "https://github.com/YdrMaster/cuda-bench" }
+log.workspace = true
 half.workspace = true
 
 [dev-dependencies]
