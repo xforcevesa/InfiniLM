@@ -21,7 +21,7 @@ pub(super) enum ReceiveError {
 
 #[derive(Debug)]
 pub(super) enum SendError {
-    Io(std::io::Error),
+    // Io(std::io::Error),
     Json(serde_json::Error),
 }
 

@@ -110,9 +110,21 @@ struct ConfigJson {
     pub num_hidden_layers: usize,
     pub num_key_value_heads: usize,
     pub vocab_size: usize,
+    #[serde(default = "default_rms_norm_eps")]
     pub rms_norm_eps: f32,
+    #[serde(default = "default_rope_theta")]
     pub rope_theta: f32,
     pub torch_dtype: DataType,
+}
+
+#[inline(always)]
+const fn default_rms_norm_eps() -> f32 {
+    1e-5
+}
+
+#[inline(always)]
+const fn default_rope_theta() -> f32 {
+    1e4
 }
 
 impl From<&dyn Llama2> for ConfigJson {
