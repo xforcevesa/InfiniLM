@@ -1,5 +1,6 @@
 ﻿use super::{safe_tensors::SafeTensorHeaderJson, ConfigJson, HostMemory, Llama2};
 use safetensors::{tensor::TensorInfo, Dtype};
+use serde_json::json;
 use std::{
     collections::HashMap,
     fs,
@@ -17,7 +18,7 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
     let mut offset = 0usize;
     let mut header = SafeTensorHeaderJson {
         tensors: HashMap::new(),
-        meta: None,
+        meta: Some([("format".into(), json!("pt"))].into()),
     };
 
     let mut tensor_info = |tensor: Tensor<HostMemory>| TensorInfo {
@@ -81,30 +82,35 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
         .tensors
         .insert("lm_head.weight".into(), tensor_info(model.lm_head()));
 
-    let mut file = fs::File::create(dir.join("model.safetensors"))?;
-    let mut write = BufWriter::new(&mut file);
-    {
-        // write header
+    let header = {
         let str = serde_json::to_string(&header)?;
         let len = str.len();
         const ALIGN: usize = std::mem::size_of::<usize>();
         let aligned = (len + ALIGN - 1) & !(ALIGN - 1);
+
+        let mut buffer = Vec::with_capacity(aligned);
+        let mut write = BufWriter::new(&mut buffer);
         write.write_all(&(aligned as u64).to_le_bytes())?;
         write.write_all(str.as_bytes())?;
         for _ in len..aligned {
             write.write_all(&[32])?;
         }
-    }
-    write.write_all(model.embed_tokens().as_slice())?;
+        drop(write);
+        buffer
+    };
+
+    let mut file = fs::File::create(dir.join("model.safetensors"))?;
+    file.write_all(&header)?;
+    file.write_all(model.embed_tokens().as_slice())?;
     for layer in 0..model.num_hidden_layers() {
-        write.write_all(model.input_layernorm(layer).as_slice())?;
-        write.write_all(model.w_qkv(layer).as_slice())?;
-        write.write_all(model.self_attn_o_proj(layer).as_slice())?;
-        write.write_all(model.post_attention_layernorm(layer).as_slice())?;
-        write.write_all(model.mlp_gate_up(layer).as_slice())?;
-        write.write_all(model.mlp_down(layer).as_slice())?;
+        file.write_all(model.input_layernorm(layer).as_slice())?;
+        file.write_all(model.w_qkv(layer).as_slice())?;
+        file.write_all(model.self_attn_o_proj(layer).as_slice())?;
+        file.write_all(model.post_attention_layernorm(layer).as_slice())?;
+        file.write_all(model.mlp_gate_up(layer).as_slice())?;
+        file.write_all(model.mlp_down(layer).as_slice())?;
     }
-    write.write_all(model.model_norm().as_slice())?;
-    write.write_all(model.lm_head().as_slice())?;
+    file.write_all(model.model_norm().as_slice())?;
+    file.write_all(model.lm_head().as_slice())?;
     Ok(())
 }

@@ -151,3 +151,18 @@ fn concat0<'a>(tensors: &[&Tensor<HostMemory<'a>>]) -> Tensor<HostMemory<'a>> {
 
     Tensor::new(data_type, &shape, HostMemory::from_blob(data))
 }
+
+#[test]
+fn test_load() {
+    let file = match std::fs::File::open("../../TinyLlama-1.1B-Chat-v1.0/model.safetensors") {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => panic!("{e:?}"),
+    };
+    let mmap = unsafe { Mmap::map(&file).unwrap() };
+    let len = unsafe { *mmap.as_ptr().cast::<u64>() } as usize;
+    let offset = std::mem::size_of::<u64>();
+    let header = &mmap[offset..][..len];
+    let header: SafeTensorHeaderJson = serde_json::from_slice(header).unwrap();
+    println!("{}", serde_json::to_string_pretty(&header).unwrap());
+}
