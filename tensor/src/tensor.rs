@@ -177,10 +177,8 @@ impl<Physical: Deref<Target = [u8]>> Tensor<Physical> {
         U: DerefMut<Target = [u8]>,
     {
         match Compatibility::between(self, dst) {
-            Compatibility::Same | Compatibility::Squeeze => {
-                dst.as_mut_slice().copy_from_slice(self.as_slice());
-            }
-            Compatibility::Reform => {
+            Compatibility::None => panic!("Incompatible tensors"),
+            _ => {
                 let contiguous = self.contiguous_len().min(dst.contiguous_len());
                 let dt = self.data_type.size();
                 // 一部分维度连续，迭代不连续的部分
@@ -198,7 +196,6 @@ impl<Physical: Deref<Target = [u8]>> Tensor<Physical> {
                     unsafe { std::ptr::copy_nonoverlapping(src, dst, count) };
                 });
             }
-            Compatibility::None => panic!("Incompatible tensors"),
         }
     }
 }
