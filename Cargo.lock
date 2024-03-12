@@ -966,9 +966,12 @@ name = "service"
 version = "0.0.0"
 dependencies = [
  "common",
+ "half",
  "log",
+ "tensor",
  "tokenizer",
  "tokio",
+ "transformer-cpu",
 ]
 
 [[package]]

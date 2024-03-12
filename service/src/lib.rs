@@ -1,15 +1,19 @@
 mod session;
 mod template;
 
-use common::utok;
+use common::{upos, utok};
+use half::f16;
 use session::SessionComponent;
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
 use template::Template;
+use tensor::reslice;
 use tokenizer::{Tokenizer, VocabTxt, BPE};
 use tokio::{
+    runtime::Builder,
     sync::mpsc::{channel, Sender},
     task::JoinHandle,
 };
+use transformer_cpu::{LayerCache, Llama2, Memory, Prompt, Request, Transformer};
 
 pub use session::Session;
 
@@ -23,7 +27,7 @@ pub struct Service {
 
 impl Service {
     pub fn load_model(path: impl AsRef<Path>) -> Self {
-        let model_dir = path.as_ref();
+        let model_dir = path.as_ref().to_owned();
 
         let template: Box<dyn Template> = {
             let path: String = model_dir.display().to_string();
@@ -36,7 +40,7 @@ impl Service {
         };
 
         let time = Instant::now();
-        let tokenizer = tokenizer(model_dir);
+        let tokenizer = tokenizer(&model_dir);
         info!("build tokenizer ... {:?}", time.elapsed());
 
         let (sender, mut receiver) = channel(16);
@@ -46,20 +50,62 @@ impl Service {
                 tokenizer,
                 sender,
             }),
-            _manager: tokio::spawn(async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(Command::Chat {
-                            id: _,
-                            prompt: _,
-                            responsing: _,
-                        }) => {
-                            todo!()
+            _manager: tokio::task::spawn_blocking(move || {
+                let time = Instant::now();
+                let model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
+                info!("load model ... {:?}", time.elapsed());
+
+                let eos = model.eos_token_id();
+                let time = Instant::now();
+                let mut transformer = Transformer::new(model);
+                info!("build transformer ... {:?}", time.elapsed());
+
+                let mut sessions = HashMap::new();
+
+                let rt = Builder::new_current_thread().build().unwrap();
+                while let Some(cmd) = rt.block_on(async { receiver.recv().await }) {
+                    match cmd {
+                        Command::Chat {
+                            id,
+                            prompt,
+                            responsing,
+                        } => {
+                            let ctx = sessions
+                                .entry(id)
+                                .or_insert_with(|| SessionContext::new(&transformer));
+
+                            let time = Instant::now();
+                            let (last, tokens) = prompt.split_last().expect("prompt is empty");
+                            if !tokens.is_empty() {
+                                transformer.decode(vec![Request {
+                                    prompt: Prompt::Prefill(tokens),
+                                    cache: &mut ctx.cache,
+                                    pos: ctx.pos,
+                                }]);
+                            }
+                            info!("prefill transformer ... {:?}", time.elapsed());
+
+                            let mut token = *last;
+                            let mut pos = tokens.len();
+                            while pos < transformer.max_seq_len() {
+                                let logits = transformer.decode(vec![Request {
+                                    prompt: transformer_cpu::Prompt::Decode(token),
+                                    cache: &mut ctx.cache,
+                                    pos: pos as _,
+                                }]);
+                                token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
+                                rt.block_on(async { responsing.send(token).await }).unwrap();
+
+                                if token == eos {
+                                    break;
+                                }
+
+                                pos += 1;
+                            }
                         }
-                        Some(Command::Drop { id: _ }) => {
-                            todo!()
+                        Command::Drop { id } => {
+                            sessions.remove(&id);
                         }
-                        None => break,
                     }
                 }
             }),
@@ -83,6 +129,20 @@ enum Command {
     },
 }
 
+struct SessionContext {
+    pos: upos,
+    cache: Vec<LayerCache>,
+}
+
+impl SessionContext {
+    fn new(transformer: &Transformer) -> Self {
+        Self {
+            pos: 0,
+            cache: transformer.new_cache(),
+        }
+    }
+}
+
 fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer> {
     use std::io::ErrorKind::NotFound;
     match BPE::from_model_file(model_dir.as_ref().join("tokenizer.model")) {
@@ -96,4 +156,13 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer> {
         Err(e) => panic!("{e:?}"),
     }
     panic!("Tokenizer file not found");
+}
+
+fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .unwrap()
+        .0 as _
 }
