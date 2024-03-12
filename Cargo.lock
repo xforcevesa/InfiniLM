@@ -1316,8 +1316,6 @@ dependencies = [
  "common",
  "find_cuda_helper",
  "log",
- "serde",
- "serde_json",
  "service",
  "simple_logger",
  "tensor",

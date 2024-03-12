@@ -13,8 +13,6 @@ tokenizer = { path = "../tokenizer" }
 transformer = { path = "../transformer" }
 transformer-nvidia = { path = "../transformer-nvidia" }
 service = { path = "../service" }
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 log.workspace = true
 simple_logger = "4.3"
 clap = { version = "4.5", features = ["derive"] }
