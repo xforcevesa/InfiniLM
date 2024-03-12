@@ -4,15 +4,19 @@ mod template;
 use common::{upos, utok};
 use half::f16;
 use session::SessionComponent;
-use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{
+        mpsc::{channel, Sender},
+        Arc,
+    },
+    thread::{self, JoinHandle},
+    time::Instant,
+};
 use template::Template;
 use tensor::reslice;
 use tokenizer::{Tokenizer, VocabTxt, BPE};
-use tokio::{
-    runtime::Builder,
-    sync::mpsc::{channel, Sender},
-    task::JoinHandle,
-};
 use transformer_cpu::{LayerCache, Llama2, Memory, Prompt, Request, Transformer};
 
 pub use session::Session;
@@ -43,14 +47,14 @@ impl Service {
         let tokenizer = tokenizer(&model_dir);
         info!("build tokenizer ... {:?}", time.elapsed());
 
-        let (sender, mut receiver) = channel(16);
+        let (sender, receiver) = channel();
         Service {
             session_component: Arc::new(SessionComponent {
                 template,
                 tokenizer,
                 sender,
             }),
-            _manager: tokio::task::spawn_blocking(move || {
+            _manager: thread::spawn(move || {
                 let time = Instant::now();
                 let model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
                 info!("load model ... {:?}", time.elapsed());
@@ -62,8 +66,7 @@ impl Service {
 
                 let mut sessions = HashMap::new();
 
-                let rt = Builder::new_current_thread().build().unwrap();
-                while let Some(cmd) = rt.block_on(async { receiver.recv().await }) {
+                while let Ok(cmd) = receiver.recv() {
                     match cmd {
                         Command::Chat {
                             id,
@@ -94,7 +97,7 @@ impl Service {
                                     pos: pos as _,
                                 }]);
                                 token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
-                                rt.block_on(async { responsing.send(token).await }).unwrap();
+                                responsing.send(token).unwrap();
 
                                 if token == eos {
                                     break;

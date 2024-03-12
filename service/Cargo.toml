@@ -13,4 +13,3 @@ tokenizer = { path = "../tokenizer" }
 transformer-cpu = { path = "../transformer-cpu" }
 half.workspace = true
 log.workspace = true
-tokio = { version = "1.36", features = ["rt", "sync"] }
