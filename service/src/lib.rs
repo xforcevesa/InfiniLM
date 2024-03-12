@@ -1,4 +1,6 @@
 mod cpu;
+#[cfg(detected_cuda)]
+mod nvidia;
 mod session;
 mod template;
 
@@ -27,8 +29,15 @@ pub struct Service {
     _manager: JoinHandle<()>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Device {
+    Cpu,
+    #[cfg(detected_cuda)]
+    NvidiaGpu(i32),
+}
+
 impl Service {
-    pub fn load_model(path: impl AsRef<Path>) -> Self {
+    pub fn load_model(path: impl AsRef<Path>, device: Device) -> Self {
         let model_dir = path.as_ref().to_owned();
 
         let template: Box<dyn Template> = {
@@ -52,21 +61,23 @@ impl Service {
                 tokenizer,
                 sender,
             }),
-            _manager: thread::spawn(move || {
-                let mut task = CpuTask::new(model_dir);
-                while let Ok(cmd) = receiver.recv() {
-                    task.invoke(cmd);
+            _manager: thread::spawn(move || match device {
+                Device::Cpu => {
+                    let mut task = CpuTask::new(model_dir);
+                    while let Ok(cmd) = receiver.recv() {
+                        task.invoke(cmd);
+                    }
                 }
-                // {
-                //     use transformer_nvidia::cuda;
+                #[cfg(detected_cuda)]
+                Device::NvidiaGpu(n) => {
+                    use nvidia::task;
+                    use transformer_nvidia::cuda;
 
-                //     cuda::init();
-                //     let Some(dev) = cuda::Device::fetch() else {
-                //         panic!("No Nvidia GPU is detected");
-                //     };
-
-                //     dev.set_mempool_threshold(u64::MAX);
-                // }
+                    cuda::init();
+                    let dev = cuda::Device::new(n);
+                    dev.set_mempool_threshold(u64::MAX);
+                    dev.context().apply(|ctx| task(model_dir, receiver, ctx));
+                }
             }),
         }
     }
@@ -101,4 +112,13 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer> {
         Err(e) => panic!("{e:?}"),
     }
     panic!("Tokenizer file not found");
+}
+
+fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .unwrap()
+        .0 as _
 }

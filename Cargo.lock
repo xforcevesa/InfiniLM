@@ -1314,12 +1314,9 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "common",
- "find_cuda_helper",
  "log",
  "service",
  "simple_logger",
  "tensor",
- "tokenizer",
  "transformer",
- "transformer-nvidia",
 ]

@@ -1,15 +1,7 @@
-﻿use crate::{
-    common::{argmax, logger_init, tokenizer},
-    Template,
-};
-use service::Service;
-use std::{
-    fs::read_to_string,
-    io::Write,
-    path::{Path, PathBuf},
-    time::Instant,
-};
-use tokenizer::Tokenizer;
+﻿use log::LevelFilter;
+use service::{Device, Service};
+use simple_logger::SimpleLogger;
+use std::{io::Write, path::PathBuf};
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
@@ -36,181 +28,35 @@ pub(crate) struct GenerateArgs {
 
 impl GenerateArgs {
     pub fn invoke(self) {
-        logger_init(&self.log);
+        let log = self
+            .log
+            .as_ref()
+            .and_then(|log| match log.to_lowercase().as_str() {
+                "off" | "none" => Some(LevelFilter::Off),
+                "trace" => Some(LevelFilter::Trace),
+                "debug" => Some(LevelFilter::Debug),
+                "info" => Some(LevelFilter::Info),
+                "error" => Some(LevelFilter::Error),
+                _ => None,
+            })
+            .unwrap_or(LevelFilter::Warn);
+        SimpleLogger::new().with_level(log).init().unwrap();
 
         let model_dir = PathBuf::from(self.model);
-        let step = self.step.unwrap_or(usize::MAX);
+        print!("{}", self.prompt);
+        let service = Service::load_model(
+            model_dir,
+            if self.nvidia {
+                Device::NvidiaGpu(0)
+            } else {
+                Device::Cpu
+            },
+        );
 
-        if self.nvidia {
-            let time = Instant::now();
-            let tokenizer = tokenizer(self.tokenizer, &model_dir);
-            info!("build tokenizer ... {:?}", time.elapsed());
-            on_nvidia_gpu(model_dir, tokenizer, self.prompt, step, usize::MAX)
-        } else {
-            print!("{}", self.prompt);
-            let service = Service::load_model(model_dir);
-            let session = service.launch();
-            session.generate(&self.prompt, |piece| {
-                print!("{piece}");
-                std::io::stdout().flush().unwrap();
-            });
-        }
-    }
-}
-
-#[cfg(not(detected_cuda))]
-fn on_nvidia_gpu(
-    _: impl AsRef<Path>,
-    _: Box<dyn Tokenizer>,
-    _: impl AsRef<str>,
-    _: usize,
-    _: usize,
-) {
-    panic!("Nvidia GPU is not detected");
-}
-
-#[cfg(detected_cuda)]
-fn on_nvidia_gpu(
-    model_dir: impl AsRef<Path>,
-    tokenizer: Box<dyn Tokenizer>,
-    prompt: impl AsRef<str>,
-    step: usize,
-    preload_layers: usize,
-) {
-    use transformer_nvidia::{Llama2, Memory};
-
-    let model_dir = model_dir.as_ref();
-    let template: Template = if model_dir
-        .as_os_str()
-        .to_str()
-        .unwrap()
-        .to_ascii_lowercase()
-        .contains("tinyllama")
-    {
-        Template::ChatTinyLlama
-    } else {
-        Template::Chat9G
-    };
-    let prompt = apply_template(prompt.as_ref(), template);
-
-    use std::{
-        fs::File,
-        io::{ErrorKind::NotFound, Read},
-    };
-    use transformer_nvidia::{cuda, Transformer};
-
-    cuda::init();
-    let Some(dev) = cuda::Device::fetch() else {
-        panic!("No Nvidia GPU is detected");
-    };
-
-    let time = Instant::now();
-
-    let config = File::open(model_dir.join("config.json"));
-    let config = match config {
-        Ok(f) => f,
-        Err(e) if e.kind() == NotFound => return,
-        Err(e) => panic!("{e:?}"),
-    };
-
-    let safetensors = File::open(model_dir.join("model.safetensors"));
-    let mut safetensors = match safetensors {
-        Ok(f) => f,
-        Err(e) if e.kind() == NotFound => return,
-        Err(e) => panic!("{e:?}"),
-    };
-    info!("open file {:?}", time.elapsed());
-
-    dev.set_mempool_threshold(u64::MAX);
-    dev.context().apply(|ctx| {
-        let time = Instant::now();
-        let mut host = ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _);
-        safetensors.read_exact(&mut host).unwrap();
-        drop(safetensors);
-        info!("read to host {:?}", time.elapsed());
-
-        let compute = ctx.stream();
-        let transfer = ctx.stream();
-
-        let time = Instant::now();
-        let host = Memory::load_safetensors(config, host, false).unwrap();
-        let eos = host.eos_token_id();
-        let mut transformer = Transformer::new(&host, preload_layers, &transfer);
-        let mut kv_cache = transformer.new_cache(&compute);
-        info!("build model host: {:?}", time.elapsed());
-
-        let step = step.min(host.max_position_embeddings());
-        let time = Instant::now();
-        let prompt_tokens = tokenizer.encode(&prompt);
-        info!("encode prompt ... {:?}", time.elapsed());
-
-        let time = Instant::now();
-        let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
-        if !tokens.is_empty() {
-            transformer.update(tokens, &mut kv_cache, 0, &compute, &transfer);
-        }
-        info!("prefill transformer ... {:?}", time.elapsed());
-
-        print!("{}", prompt.replace('▁', " "));
-
-        let mut token = *last;
-        let mut pos = tokens.len();
-        let time = Instant::now();
-        while pos < step {
-            let logits = transformer.decode(token, &mut kv_cache, pos as _, &compute, &transfer);
-            token = argmax(logits);
-
-            print!("{}", tokenizer.decode(token).replace('▁', " "));
+        let session = service.launch();
+        session.generate(&self.prompt, |piece| {
+            print!("{piece}");
             std::io::stdout().flush().unwrap();
-
-            if token == eos {
-                break;
-            }
-
-            pos += 1;
-        }
-        println!();
-        let duration = time.elapsed();
-        info!("generate ... {duration:?}");
-        info!(
-            "avg. speed ... {} tokens/s",
-            (pos - tokens.len()) as f32 / duration.as_secs_f32()
-        )
-    });
-}
-
-#[inline]
-fn apply_template(prompt: &str, template: Template) -> String {
-    let maybe_file = Path::new(&prompt);
-    let prompt = if maybe_file.is_file() {
-        read_to_string(maybe_file).unwrap()
-    } else {
-        prompt.to_string()
-    };
-    let prompt = prompt.trim();
-    let mut ans = String::new();
-    match template {
-        Template::Chat9G => {
-            ans.push_str("<s>");
-            match prompt.chars().next() {
-                Some(c) if c.is_ascii_alphabetic() => ans.push(' '),
-                _ => {}
-            }
-            ans.push_str(prompt);
-            ans
-        }
-        Template::ChatTinyLlama => {
-            match prompt.chars().next() {
-                Some(c) if c.is_ascii_alphabetic() => ans.push('▁'),
-                _ => {}
-            }
-            for c in prompt.chars() {
-                ans.push(match c {
-                    ' ' => '▁',
-                    c => c,
-                });
-            }
-            ans
-        }
+        });
     }
 }

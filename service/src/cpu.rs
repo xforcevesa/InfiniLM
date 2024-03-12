@@ -1,4 +1,4 @@
-﻿use crate::Command;
+﻿use crate::{argmax, Command};
 use common::{upos, utok};
 use half::f16;
 use std::{collections::HashMap, path::Path, time::Instant};
@@ -56,7 +56,7 @@ impl CpuTask {
                 ctx.pos += tokens.len() as upos;
                 let mut token = *last;
                 let max_seq_len = self.transformer.max_seq_len() as upos;
-                while ctx.pos < max_seq_len {
+                while ctx.pos < max_seq_len && token != self.eos {
                     let logits = self.transformer.decode(vec![Request {
                         prompt: transformer_cpu::Prompt::Decode(token),
                         cache: &mut ctx.cache,
@@ -64,11 +64,6 @@ impl CpuTask {
                     }]);
                     token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
                     responsing.send(token).unwrap();
-
-                    if token == self.eos {
-                        break;
-                    }
-
                     ctx.pos += 1;
                 }
             }
@@ -91,13 +86,4 @@ impl SessionContext {
             cache: transformer.new_cache(),
         }
     }
-}
-
-fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
-    logits
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap()
-        .0 as _
 }

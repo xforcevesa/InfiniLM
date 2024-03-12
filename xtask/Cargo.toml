@@ -9,13 +9,8 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
-tokenizer = { path = "../tokenizer" }
 transformer = { path = "../transformer" }
-transformer-nvidia = { path = "../transformer-nvidia" }
 service = { path = "../service" }
 log.workspace = true
 simple_logger = "4.3"
 clap = { version = "4.5", features = ["derive"] }
-
-[build-dependencies]
-find_cuda_helper.workspace = true
