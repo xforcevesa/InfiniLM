@@ -88,13 +88,14 @@ impl Service {
                             }
                             info!("prefill transformer ... {:?}", time.elapsed());
 
+                            ctx.pos += tokens.len() as upos;
                             let mut token = *last;
-                            let mut pos = tokens.len();
-                            while pos < transformer.max_seq_len() {
+                            let max_seq_len = transformer.max_seq_len() as upos;
+                            while ctx.pos < max_seq_len {
                                 let logits = transformer.decode(vec![Request {
                                     prompt: transformer_cpu::Prompt::Decode(token),
                                     cache: &mut ctx.cache,
-                                    pos: pos as _,
+                                    pos: ctx.pos,
                                 }]);
                                 token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
                                 responsing.send(token).unwrap();
@@ -103,7 +104,7 @@ impl Service {
                                     break;
                                 }
 
-                                pos += 1;
+                                ctx.pos += 1;
                             }
                         }
                         Command::Drop { id } => {

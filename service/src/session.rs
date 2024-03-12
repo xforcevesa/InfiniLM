@@ -22,9 +22,18 @@ impl From<Arc<SessionComponent>> for Session {
 }
 
 impl Session {
-    pub fn chat(&self, prompt: &str, mut f: impl FnMut(&str)) {
-        let prompt = self.component.template.encode(prompt);
-        let prompt = self.component.tokenizer.encode(prompt.as_ref());
+    #[inline]
+    pub fn chat(&self, prompt: &str, f: impl FnMut(&str)) {
+        self.send(&self.component.template.apply_chat(prompt), f)
+    }
+
+    #[inline]
+    pub fn generate(&self, prompt: &str, f: impl FnMut(&str)) {
+        self.send(&self.component.template.normalize(prompt), f)
+    }
+
+    fn send(&self, prompt: &str, mut f: impl FnMut(&str)) {
+        let prompt = self.component.tokenizer.encode(prompt);
 
         let (responsing, receiver) = channel();
         let chat = Command::Chat {

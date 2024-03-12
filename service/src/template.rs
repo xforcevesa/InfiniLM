@@ -1,7 +1,8 @@
 ﻿use std::borrow::Cow;
 
 pub trait Template {
-    fn encode<'a>(&self, prompt: &'a str) -> Cow<'a, str>;
+    fn normalize<'a>(&self, prompt: &'a str) -> Cow<'a, str>;
+    fn apply_chat<'a>(&self, prompt: &'a str) -> Cow<'a, str>;
     fn decode<'a>(&self, piece: &'a str) -> Cow<'a, str>;
 }
 
@@ -11,7 +12,12 @@ pub struct ChatTinyLlama;
 
 impl Template for ChatCPM {
     #[inline]
-    fn encode<'a>(&self, prompt: &'a str) -> Cow<'a, str> {
+    fn normalize<'a>(&self, prompt: &'a str) -> Cow<'a, str> {
+        Cow::Owned(format!("<s>{}", prompt.trim()))
+    }
+
+    #[inline]
+    fn apply_chat<'a>(&self, prompt: &'a str) -> Cow<'a, str> {
         Cow::Owned(format!("<s><用户>{}<AI>", prompt.trim()))
     }
 
@@ -22,8 +28,11 @@ impl Template for ChatCPM {
 }
 
 impl Template for ChatTinyLlama {
-    fn encode<'a>(&self, prompt: &'a str) -> Cow<'a, str> {
-        let mut ans = String::from("<|user|>\n");
+    #[inline]
+    fn normalize<'a>(&self, prompt: &'a str) -> Cow<'a, str> {
+        let prompt = prompt.trim();
+
+        let mut ans = String::new();
         match prompt.chars().next() {
             Some(c) if c.is_ascii_alphabetic() => ans.push('▁'),
             _ => {}
@@ -34,8 +43,15 @@ impl Template for ChatTinyLlama {
                 c => c,
             });
         }
-        ans.push_str("</s><|assistant|>\n");
         Cow::Owned(ans)
+    }
+
+    #[inline]
+    fn apply_chat<'a>(&self, prompt: &'a str) -> Cow<'a, str> {
+        Cow::Owned(format!(
+            "<|user|>\n{}</s><|assistant|>\n",
+            self.normalize(prompt)
+        ))
     }
 
     #[inline]

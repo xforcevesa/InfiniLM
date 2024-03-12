@@ -17,7 +17,7 @@ use storage::Storage;
 use tensor::{slice, udim, DataType, Tensor};
 
 pub type LayerCache<'a> = transformer::LayerCache<Storage<'a>>;
-pub use transformer::Llama2;
+pub use transformer::{Llama2, Memory};
 pub extern crate cuda;
 
 pub struct Transformer<'ctx> {

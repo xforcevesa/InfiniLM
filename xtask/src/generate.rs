@@ -2,16 +2,14 @@
     common::{argmax, logger_init, tokenizer},
     Template,
 };
-use half::f16;
+use service::Service;
 use std::{
     fs::read_to_string,
     io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
-use tensor::reslice;
 use tokenizer::Tokenizer;
-use transformer_cpu::{Llama2, Memory, Prompt, Request, Transformer};
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
@@ -43,92 +41,21 @@ impl GenerateArgs {
         let model_dir = PathBuf::from(self.model);
         let step = self.step.unwrap_or(usize::MAX);
 
-        let time = Instant::now();
-        let tokenizer = tokenizer(self.tokenizer, &model_dir);
-        info!("build tokenizer ... {:?}", time.elapsed());
-
         if self.nvidia {
+            let time = Instant::now();
+            let tokenizer = tokenizer(self.tokenizer, &model_dir);
+            info!("build tokenizer ... {:?}", time.elapsed());
             on_nvidia_gpu(model_dir, tokenizer, self.prompt, step, usize::MAX)
         } else {
-            on_host(model_dir, tokenizer, self.prompt, step)
+            print!("{}", self.prompt);
+            let service = Service::load_model(model_dir);
+            let session = service.launch();
+            session.generate(&self.prompt, |piece| {
+                print!("{piece}");
+                std::io::stdout().flush().unwrap();
+            });
         }
     }
-}
-
-fn on_host(
-    model_dir: impl AsRef<Path>,
-    tokenizer: Box<dyn Tokenizer>,
-    prompt: impl AsRef<str>,
-    step: usize,
-) {
-    let model_dir = model_dir.as_ref();
-    let template: Template = if model_dir
-        .as_os_str()
-        .to_str()
-        .unwrap()
-        .to_ascii_lowercase()
-        .contains("tinyllama")
-    {
-        Template::ChatTinyLlama
-    } else {
-        Template::Chat9G
-    };
-    let prompt = apply_template(prompt.as_ref(), template);
-
-    let time = Instant::now();
-    let model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
-    info!("load model ... {:?}", time.elapsed());
-
-    let eos = model.eos_token_id();
-    let time = Instant::now();
-    let mut transformer = Transformer::new(model);
-    let mut kv_cache = transformer.new_cache();
-    info!("build transformer ... {:?}", time.elapsed());
-
-    let time = Instant::now();
-    let prompt_tokens = tokenizer.encode(&prompt);
-    info!("encode prompt ... {:?}", time.elapsed());
-
-    let time = Instant::now();
-    let (last, tokens) = prompt_tokens.split_last().expect("prompt is empty");
-    if !tokens.is_empty() {
-        transformer.decode(vec![Request {
-            prompt: Prompt::Prefill(tokens),
-            cache: &mut kv_cache,
-            pos: 0,
-        }]);
-    }
-    info!("prefill transformer ... {:?}", time.elapsed());
-
-    print!("{}", prompt.replace('▁', " "));
-
-    let mut token = *last;
-    let mut pos = tokens.len();
-    let time = Instant::now();
-    while pos < step.min(transformer.max_seq_len()) {
-        let logits = transformer.decode(vec![Request {
-            prompt: transformer_cpu::Prompt::Decode(token),
-            cache: &mut kv_cache,
-            pos: pos as _,
-        }]);
-        token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
-
-        print!("{}", tokenizer.decode(token).replace('▁', " "));
-        std::io::stdout().flush().unwrap();
-
-        if token == eos {
-            break;
-        }
-
-        pos += 1;
-    }
-    println!();
-    let duration = time.elapsed();
-    info!("generate ... {duration:?}");
-    info!(
-        "avg. speed ... {} tokens/s",
-        (pos - tokens.len()) as f32 / duration.as_secs_f32()
-    )
 }
 
 #[cfg(not(detected_cuda))]
@@ -150,6 +77,8 @@ fn on_nvidia_gpu(
     step: usize,
     preload_layers: usize,
 ) {
+    use transformer_nvidia::{Llama2, Memory};
+
     let model_dir = model_dir.as_ref();
     let template: Template = if model_dir
         .as_os_str()
