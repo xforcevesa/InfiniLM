@@ -255,6 +255,7 @@ checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 [[package]]
 name = "cublas"
 version = "0.1.0"
+source = "git+https://github.com/YdrMaster/cuda-bench#7d3f9f91cf35f8dd190aa40362c50cbbbb438846"
 dependencies = [
  "bindgen",
  "cuda",
@@ -264,6 +265,7 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.1.0"
+source = "git+https://github.com/YdrMaster/cuda-bench#7d3f9f91cf35f8dd190aa40362c50cbbbb438846"
 dependencies = [
  "bindgen",
  "find_cuda_helper",
@@ -892,11 +894,13 @@ name = "service"
 version = "0.0.0"
 dependencies = [
  "common",
+ "find_cuda_helper",
  "half",
  "log",
  "tensor",
  "tokenizer",
  "transformer-cpu",
+ "transformer-nvidia",
 ]
 
 [[package]]
@@ -1318,6 +1322,6 @@ dependencies = [
  "simple_logger",
  "tensor",
  "tokenizer",
- "transformer-cpu",
+ "transformer",
  "transformer-nvidia",
 ]

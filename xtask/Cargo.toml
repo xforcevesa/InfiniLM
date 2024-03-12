@@ -10,7 +10,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
 tokenizer = { path = "../tokenizer" }
-transformer-cpu = { path = "../transformer-cpu" }
+transformer = { path = "../transformer" }
 transformer-nvidia = { path = "../transformer-nvidia" }
 service = { path = "../service" }
 serde = { workspace = true, features = ["derive"] }

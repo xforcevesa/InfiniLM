@@ -1,7 +1,6 @@
 mod cast;
 mod common;
 mod generate;
-// mod service;
 
 use clap::Parser;
 

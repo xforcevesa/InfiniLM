@@ -11,5 +11,9 @@ common = { path = "../common" }
 tensor = { path = "../tensor" }
 tokenizer = { path = "../tokenizer" }
 transformer-cpu = { path = "../transformer-cpu" }
+transformer-nvidia = { path = "../transformer-nvidia" }
 half.workspace = true
 log.workspace = true
+
+[build-dependencies]
+find_cuda_helper.workspace = true
