@@ -6,6 +6,7 @@ members = [
     "transformer",
     "transformer-cpu",
     "transformer-nvidia",
+    "service",
     "xtask",
 ]
 resolver = "2"

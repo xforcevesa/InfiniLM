@@ -1,7 +1,7 @@
 mod cast;
 mod common;
 mod generate;
-mod service;
+// mod service;
 
 use clap::Parser;
 
@@ -15,7 +15,7 @@ fn main() {
     match Cli::parse().command {
         Cast(cast) => cast.invode(),
         Generate(generate) => generate.invoke(),
-        Service(service) => service.launch(),
+        // Service(service) => service.launch(),
     }
 }
 
@@ -33,8 +33,8 @@ enum Commands {
     Cast(cast::CastArgs),
     /// Generate following text
     Generate(generate::GenerateArgs),
-    /// Start LLM inference service
-    Service(service::ServiceArgs),
+    // /// Start LLM inference service
+    // Service(service::ServiceArgs),
 }
 
 #[derive(Clone, Copy, Debug)]
