@@ -1,6 +1,6 @@
 mod cast;
+mod chat;
 mod generate;
-mod service;
 
 use ::service::{Device, Service};
 use clap::Parser;
@@ -13,7 +13,7 @@ fn main() {
     match Cli::parse().command {
         Cast(cast) => cast.invode(),
         Generate(generate) => generate.invoke(),
-        Service(service) => service.invoke(),
+        Chat(chat) => chat.invoke(),
     }
 }
 
@@ -32,7 +32,7 @@ enum Commands {
     /// Generate following text
     Generate(generate::GenerateArgs),
     /// Start service
-    Service(service::ServiceArgs),
+    Chat(chat::ChatArgs),
 }
 
 fn init_logger(log: Option<String>) {

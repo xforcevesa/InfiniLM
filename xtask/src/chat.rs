@@ -4,7 +4,7 @@ use colored::Colorize;
 use std::{collections::HashMap, io::Write};
 
 #[derive(Args, Default)]
-pub(crate) struct ServiceArgs {
+pub(crate) struct ChatArgs {
     /// Model directory.
     #[clap(short, long)]
     model: String,
@@ -17,7 +17,7 @@ pub(crate) struct ServiceArgs {
     nvidia: bool,
 }
 
-impl ServiceArgs {
+impl ChatArgs {
     pub fn invoke(self) {
         init_logger(self.log);
         let service = service(&self.model, self.nvidia);
