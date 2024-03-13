@@ -56,15 +56,18 @@ impl CpuTask {
                 ctx.pos += tokens.len() as upos;
                 let mut token = *last;
                 let max_seq_len = self.transformer.max_seq_len() as upos;
-                while ctx.pos < max_seq_len && token != self.eos {
+                while ctx.pos < max_seq_len {
                     let logits = self.transformer.decode(vec![Request {
                         prompt: transformer_cpu::Prompt::Decode(token),
                         cache: &mut ctx.cache,
                         pos: ctx.pos,
                     }]);
                     token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
-                    responsing.send(token).unwrap();
                     ctx.pos += 1;
+                    if token == self.eos {
+                        break;
+                    }
+                    responsing.send(token).unwrap();
                 }
             }
             Command::Drop { id } => {

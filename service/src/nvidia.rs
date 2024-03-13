@@ -55,12 +55,15 @@ pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &Cont
 
                 ctx.pos += tokens.len() as upos;
                 let mut token = *last;
-                while ctx.pos < max_seq_len && token != eos {
+                while ctx.pos < max_seq_len {
                     let logits =
                         transformer.decode(token, &mut ctx.cache, ctx.pos, &compute, &transfer);
                     token = argmax(logits);
-                    responsing.send(token).unwrap();
                     ctx.pos += 1;
+                    if token == eos {
+                        break;
+                    }
+                    responsing.send(token).unwrap();
                 }
             }
             Command::Drop { id } => {
