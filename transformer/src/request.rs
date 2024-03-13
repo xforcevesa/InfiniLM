@@ -2,44 +2,23 @@
 use common::{upos, utok};
 use tensor::udim;
 
-/// A request to decode a sequence.
-pub struct Request<'a, Storage> {
+pub struct Request<'a, Id, Storage> {
+    /// Identifier of this task.
+    pub id: Id,
     /// Prompt of this request.
-    pub prompt: Prompt<'a>,
+    pub tokens: &'a [utok],
     /// Context cache of this request.
     pub cache: &'a mut [LayerCache<Storage>],
     /// Position of `prompt` in context.
     pub pos: upos,
 }
 
-/// User prompt in transformer inference once.
-pub enum Prompt<'a> {
-    /// Prefill the sequence with tokens.
-    Prefill(&'a [utok]),
-    /// Decode the next token.
-    Decode(utok),
-}
-
-impl<S> Request<'_, S> {
-    /// Tokens in the prompt.
-    #[inline]
-    pub const fn tokens(&self) -> &[utok] {
-        match &self.prompt {
-            Prompt::Prefill(tokens) => tokens,
-            Prompt::Decode(token) => std::slice::from_ref(token),
-        }
-    }
-
-    /// Length of tokens in the prompt.
+impl<T, U> Request<'_, T, U> {
     #[inline]
     pub const fn seq_len(&self) -> udim {
-        match self.prompt {
-            Prompt::Prefill(tokens) => tokens.len() as _,
-            Prompt::Decode(_) => 1,
-        }
+        self.tokens.len() as _
     }
 
-    /// Length of tokens in attention computation.
     #[inline]
     pub const fn att_len(&self) -> udim {
         self.pos + self.seq_len()

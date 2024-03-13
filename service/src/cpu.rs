@@ -3,7 +3,7 @@ use common::{upos, utok};
 use half::f16;
 use std::{collections::HashMap, path::Path, time::Instant};
 use tensor::reslice;
-use transformer_cpu::{LayerCache, Llama2, Memory, Prompt, Request, Transformer};
+use transformer_cpu::{LayerCache, Llama2, Memory, Request, Transformer};
 
 pub struct CpuTask {
     eos: utok,
@@ -40,34 +40,21 @@ impl CpuTask {
                 let ctx = self
                     .sessions
                     .entry(id)
-                    .or_insert_with(|| SessionContext::new(&self.transformer));
+                    .or_insert_with_key(|&id| SessionContext::new(&self.transformer, id));
 
                 let time = Instant::now();
-                let (last, tokens) = prompt.split_last().expect("prompt is empty");
-                if !tokens.is_empty() {
-                    self.transformer.decode(vec![Request {
-                        prompt: Prompt::Prefill(tokens),
-                        cache: &mut ctx.cache,
-                        pos: ctx.pos,
-                    }]);
-                }
+                let mut logits = self.transformer.decode(vec![ctx.request(&prompt)]);
                 info!("prefill transformer ... {:?}", time.elapsed());
 
-                ctx.pos += tokens.len() as upos;
-                let mut token = *last;
                 let max_seq_len = self.transformer.max_seq_len() as upos;
                 while ctx.pos < max_seq_len {
-                    let logits = self.transformer.decode(vec![Request {
-                        prompt: transformer_cpu::Prompt::Decode(token),
-                        cache: &mut ctx.cache,
-                        pos: ctx.pos,
-                    }]);
-                    token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
-                    ctx.pos += 1;
+                    let token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
                     if token == self.eos {
                         break;
                     }
                     responsing.send(token).unwrap();
+
+                    logits = self.transformer.decode(vec![ctx.request(&[token])]);
                 }
             }
             Command::Drop { id } => {
@@ -78,15 +65,28 @@ impl CpuTask {
 }
 
 struct SessionContext {
+    id: usize,
     pos: upos,
     cache: Vec<LayerCache>,
 }
 
 impl SessionContext {
-    fn new(transformer: &Transformer) -> Self {
+    fn new(transformer: &Transformer, id: usize) -> Self {
         Self {
+            id,
             pos: 0,
             cache: transformer.new_cache(),
+        }
+    }
+
+    fn request<'a>(&'a mut self, tokens: &'a [utok]) -> Request<usize> {
+        let pos = self.pos;
+        self.pos += tokens.len() as upos;
+        Request {
+            id: self.id,
+            tokens,
+            cache: &mut self.cache,
+            pos,
         }
     }
 }
