@@ -140,7 +140,7 @@ impl Transformer {
                 let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
                 let k_att = k_cache.clone().slice(att_slice);
                 let v_att = v_cache.clone().slice(att_slice);
-                // println!("layer {layer} q attention:\n{}", q_att.access());
+                // println!("layer {layer} q attention:\n{}", q_att);
                 // println!("layer {layer} k attention:\n{}", k_att.access());
                 // println!("layer {layer} v attention:\n{}", v_att.access());
 
@@ -213,19 +213,20 @@ impl Transformer {
 
         let mut logits = tensor(dt, &[tokens.len, voc]);
         let mut x = x0.slice(&[tokens, slice![all]]);
-        let x_ = x.clone();
+        // println!("decode slice:\n{}", x.access());
 
+        let x_ = x.clone();
         rms_norm(
             x.access_mut(),
             &unsafe { x_.access_unchecked() },
             &self.0.model_norm(),
             self.0.rms_norm_eps(),
         );
-        // println!("pos {pos} model norm:\n{}", x.access());
+        // println!("model norm:\n{}", x.access());
 
         let lm_head = self.0.lm_head().transpose(&[1, 0]);
         mat_mul(&mut logits.access_mut(), 0., &x.access(), &lm_head, 1.);
-        // println!("pos {pos} logits:\n{}", logits.access());
+        // println!("logits:\n{}", logits.access());
 
         (requests.into_iter().map(|r| r.id).collect(), logits)
     }

@@ -1,12 +1,14 @@
 ﻿use crate::{argmax, Command};
-use common::upos;
+use common::utok;
+use half::f16;
 use std::{
     collections::HashMap, fs::File, io::Read, path::Path, sync::mpsc::Receiver, time::Instant,
 };
+use tensor::reslice;
 use transformer_cpu::{Llama2, Memory};
 use transformer_nvidia::{
     cuda::{ContextGuard, Stream},
-    LayerCache, Transformer,
+    LayerCache, Request, Transformer,
 };
 
 pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &ContextGuard) {
@@ -28,7 +30,7 @@ pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &Cont
 
     let time = Instant::now();
     let host = Memory::load_safetensors(config, host, false).unwrap();
-    let max_seq_len = host.max_position_embeddings() as upos;
+    let max_seq_len = host.max_position_embeddings();
     let eos = host.eos_token_id();
     let mut transformer = Transformer::new(&host, usize::MAX, &transfer);
     info!("build model host: {:?}", time.elapsed());
@@ -44,26 +46,28 @@ pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &Cont
             } => {
                 let ctx = sessions
                     .entry(id)
-                    .or_insert_with(|| SessionContext::new(&transformer, &transfer));
+                    .or_insert_with_key(|&id| SessionContext::new(&transformer, id, &transfer));
 
                 let time = Instant::now();
-                let (last, tokens) = prompt.split_last().expect("prompt is empty");
-                if !tokens.is_empty() {
-                    transformer.update(tokens, &mut ctx.cache, ctx.pos, &compute, &transfer);
-                }
+                let mut logits = transformer
+                    .decode(vec![ctx.request(&prompt, max_seq_len)], &compute, &transfer)
+                    .1;
                 info!("prefill transformer ... {:?}", time.elapsed());
 
-                ctx.pos += tokens.len() as upos;
-                let mut token = *last;
-                while ctx.pos < max_seq_len {
-                    let logits =
-                        transformer.decode(token, &mut ctx.cache, ctx.pos, &compute, &transfer);
-                    token = argmax(logits);
-                    ctx.pos += 1;
+                loop {
+                    let token = argmax(reslice::<u8, f16>(logits.as_slice()));
                     if token == eos {
                         break;
                     }
                     responsing.send(token).unwrap();
+
+                    logits = transformer
+                        .decode(
+                            vec![ctx.request(&[token], max_seq_len)],
+                            &compute,
+                            &transfer,
+                        )
+                        .1;
                 }
             }
             Command::Drop { id } => {
@@ -73,17 +77,25 @@ pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &Cont
     }
 }
 
-struct SessionContext<'ctx> {
-    pos: upos,
-    cache: Vec<LayerCache<'ctx>>,
-}
+struct SessionContext<'a>(super::SessionContext<LayerCache<'a>>);
 
-impl<'ctx> SessionContext<'ctx> {
+impl<'a> SessionContext<'a> {
     #[inline]
-    fn new(transformer: &Transformer, transfer: &'ctx Stream) -> Self {
-        Self {
-            pos: 0,
-            cache: transformer.new_cache(transfer),
+    fn new(transformer: &Transformer, id: usize, stream: &'a Stream) -> Self {
+        Self(super::SessionContext::new(
+            transformer.new_cache(stream),
+            id,
+        ))
+    }
+
+    #[inline]
+    fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> Request<'_, 'a, usize> {
+        let pos = self.0.request(tokens, max_seq_len);
+        Request {
+            id: self.0.id,
+            tokens: &self.0.tokens[pos..],
+            cache: &mut self.0.cache,
+            pos: pos as _,
         }
     }
 }

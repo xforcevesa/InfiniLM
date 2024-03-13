@@ -43,9 +43,10 @@ extern "C" __global__ void {name}(
 }
 
 impl RotaryEmbedding<'_> {
-    pub fn launch<'a, T>(&self, t: &Tensor<T>, pos: &Tensor<T>, theta: f32, stream: &Stream)
+    pub fn launch<'a, T, U>(&self, t: &Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
     where
         T: Deref<Target = DevMem<'a>>,
+        U: Deref<Target = DevMem<'a>>,
     {
         let &[n, nh, dh] = t.shape() else {
             panic!("Invalid shape");

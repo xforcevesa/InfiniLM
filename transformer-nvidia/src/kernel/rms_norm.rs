@@ -1,4 +1,4 @@
-use cuda::{AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
+use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -71,7 +71,7 @@ extern "C" __global__ void {folding}(
 impl RmsNormalization<'_> {
     pub fn launch<'a, T, U, V>(
         &self,
-        y: &mut Tensor<T>,
+        y: Tensor<T>,
         x: &Tensor<U>,
         w: &Tensor<V>,
         epsilon: f32,
@@ -85,9 +85,9 @@ impl RmsNormalization<'_> {
         let &[row, col] = x.shape() else { panic!() };
         debug_assert_eq!(&[col], w.shape());
 
-        let y_ptr = unsafe { y.physical().as_raw() };
-        let x_ptr = unsafe { x.physical().as_raw() };
-        let w_ptr = unsafe { w.physical().as_raw() };
+        let y_ptr = (unsafe { y.physical().as_raw() } as isize + y.bytes_offset()) as CUdeviceptr;
+        let x_ptr = (unsafe { x.physical().as_raw() } as isize + x.bytes_offset()) as CUdeviceptr;
+        let w_ptr = (unsafe { w.physical().as_raw() } as isize + w.bytes_offset()) as CUdeviceptr;
         let leading_dim = x.strides()[0] as udim;
         let items_len = col as udim;
         let params: [*const c_void; 6] = [
