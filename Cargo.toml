@@ -8,6 +8,7 @@ members = [
     "transformer-nvidia",
     "service",
     "xtask",
+    "demo",
 ]
 resolver = "2"
 
