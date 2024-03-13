@@ -75,7 +75,7 @@ impl Service {
 }
 
 enum Command {
-    Chat {
+    Infer {
         id: usize,
         prompt: Vec<utok>,
         responsing: Sender<utok>,
@@ -108,6 +108,46 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
         Err(e) => panic!("{e:?}"),
     }
     panic!("Tokenizer file not found");
+}
+
+struct SessionContext<Cache> {
+    id: usize,
+    tokens: Vec<utok>,
+    cache: Vec<Cache>,
+}
+
+impl<Cache> SessionContext<Cache> {
+    #[inline]
+    fn new(cache: Vec<Cache>, id: usize) -> Self {
+        Self {
+            id,
+            tokens: Vec::new(),
+            cache,
+        }
+    }
+
+    #[inline]
+    fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> usize {
+        if self.tokens.len() + tokens.len() > max_seq_len {
+            let pos = self.tokens.len().min(16);
+            if tokens.len() > max_seq_len / 2 {
+                let tokens = &tokens[tokens.len() - max_seq_len / 2..];
+                self.tokens.truncate(pos);
+                self.tokens.extend_from_slice(tokens);
+            } else {
+                let tail_len = (self.tokens.len() - pos).min(64);
+                let tail = self.tokens.len() - tail_len;
+                self.tokens.copy_within(tail.., pos);
+                self.tokens.truncate(pos + tail_len);
+                self.tokens.extend_from_slice(tokens);
+            }
+            pos
+        } else {
+            let pos = self.tokens.len();
+            self.tokens.extend_from_slice(tokens);
+            pos
+        }
+    }
 }
 
 fn argmax<T: PartialOrd>(logits: &[T]) -> utok {

@@ -1,12 +1,11 @@
 ﻿use crate::{argmax, Command};
-use common::{upos, utok};
+use common::utok;
 use half::f16;
 use std::{collections::HashMap, path::Path, time::Instant};
 use tensor::reslice;
-use transformer_cpu::{LayerCache, Llama2, Memory, Request, Transformer};
+use transformer_cpu::{LayerCache, Memory, Request, Transformer};
 
 pub struct CpuTask {
-    eos: utok,
     transformer: Transformer,
     sessions: HashMap<usize, SessionContext>,
 }
@@ -17,14 +16,12 @@ impl CpuTask {
         let model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
         info!("load model ... {:?}", time.elapsed());
 
-        let eos = model.eos_token_id();
         let time = Instant::now();
         let transformer = Transformer::new(model);
         info!("build transformer ... {:?}", time.elapsed());
 
         let sessions = HashMap::new();
         Self {
-            eos,
             transformer,
             sessions,
         }
@@ -32,7 +29,7 @@ impl CpuTask {
 
     pub fn invoke(&mut self, cmd: Command) {
         match cmd {
-            Command::Chat {
+            Command::Infer {
                 id,
                 prompt,
                 responsing,
@@ -42,19 +39,27 @@ impl CpuTask {
                     .entry(id)
                     .or_insert_with_key(|&id| SessionContext::new(&self.transformer, id));
 
+                let max_seq_len = self.transformer.max_seq_len();
+                let eos = self.transformer.eos_token_id();
+
                 let time = Instant::now();
-                let mut logits = self.transformer.decode(vec![ctx.request(&prompt)]).1;
+                let mut logits = self
+                    .transformer
+                    .decode(vec![ctx.request(&prompt, max_seq_len)])
+                    .1;
                 info!("prefill transformer ... {:?}", time.elapsed());
 
-                let max_seq_len = self.transformer.max_seq_len() as upos;
-                while ctx.pos < max_seq_len {
+                loop {
                     let token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
-                    if token == self.eos {
+                    if token == eos {
                         break;
                     }
                     responsing.send(token).unwrap();
 
-                    logits = self.transformer.decode(vec![ctx.request(&[token])]).1;
+                    logits = self
+                        .transformer
+                        .decode(vec![ctx.request(&[token], max_seq_len)])
+                        .1;
                 }
             }
             Command::Drop { id } => {
@@ -64,31 +69,22 @@ impl CpuTask {
     }
 }
 
-struct SessionContext {
-    id: usize,
-    pos: upos,
-    cache: Vec<LayerCache>,
-}
+struct SessionContext(super::SessionContext<LayerCache>);
 
 impl SessionContext {
     #[inline]
     fn new(transformer: &Transformer, id: usize) -> Self {
-        Self {
-            id,
-            pos: 0,
-            cache: transformer.new_cache(),
-        }
+        Self(super::SessionContext::new(transformer.new_cache(), id))
     }
 
     #[inline]
-    fn request<'a>(&'a mut self, tokens: &'a [utok]) -> Request<usize> {
-        let pos = self.pos;
-        self.pos += tokens.len() as upos;
+    fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> Request<usize> {
+        let pos = self.0.request(tokens, max_seq_len);
         Request {
-            id: self.id,
-            tokens,
-            cache: &mut self.cache,
-            pos,
+            id: self.0.id,
+            tokens: &self.0.tokens[pos..],
+            cache: &mut self.0.cache,
+            pos: pos as _,
         }
     }
 }

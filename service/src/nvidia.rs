@@ -37,7 +37,7 @@ pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &Cont
 
     while let Ok(cmd) = receiver.recv() {
         match cmd {
-            Command::Chat {
+            Command::Infer {
                 id,
                 prompt,
                 responsing,
@@ -79,6 +79,7 @@ struct SessionContext<'ctx> {
 }
 
 impl<'ctx> SessionContext<'ctx> {
+    #[inline]
     fn new(transformer: &Transformer, transfer: &'ctx Stream) -> Self {
         Self {
             pos: 0,

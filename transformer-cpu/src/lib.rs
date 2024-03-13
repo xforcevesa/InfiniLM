@@ -1,6 +1,7 @@
 mod kernel;
 mod storage;
 
+use common::utok;
 use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
@@ -25,6 +26,11 @@ impl Transformer {
     #[inline]
     pub fn max_seq_len(&self) -> usize {
         self.0.max_position_embeddings()
+    }
+
+    #[inline]
+    pub fn eos_token_id(&self) -> utok {
+        self.0.eos_token_id()
     }
 
     pub fn decode<Id>(&mut self, mut requests: Vec<Request<Id>>) -> (Vec<Id>, Tensor<Storage>) {

@@ -41,7 +41,7 @@ impl Session {
         let prompt = self.component.tokenizer.encode(prompt);
 
         let (responsing, receiver) = channel();
-        let chat = Command::Chat {
+        let chat = Command::Infer {
             id: self.id,
             prompt,
             responsing,
