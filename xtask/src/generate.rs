@@ -1,7 +1,5 @@
-﻿use log::LevelFilter;
-use service::{Device, Service};
-use simple_logger::SimpleLogger;
-use std::{io::Write, path::PathBuf};
+﻿use crate::{init_logger, service};
+use std::io::Write;
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
@@ -11,12 +9,6 @@ pub(crate) struct GenerateArgs {
     /// Prompt.
     #[clap(short, long)]
     prompt: String,
-    /// Tokenizer file.
-    #[clap(short, long)]
-    tokenizer: Option<String>,
-    /// Max steps.
-    #[clap(short, long)]
-    step: Option<usize>,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
@@ -28,33 +20,11 @@ pub(crate) struct GenerateArgs {
 
 impl GenerateArgs {
     pub fn invoke(self) {
-        let log = self
-            .log
-            .as_ref()
-            .and_then(|log| match log.to_lowercase().as_str() {
-                "off" | "none" => Some(LevelFilter::Off),
-                "trace" => Some(LevelFilter::Trace),
-                "debug" => Some(LevelFilter::Debug),
-                "info" => Some(LevelFilter::Info),
-                "error" => Some(LevelFilter::Error),
-                _ => None,
-            })
-            .unwrap_or(LevelFilter::Warn);
-        SimpleLogger::new().with_level(log).init().unwrap();
+        init_logger(self.log);
+        let service = service(&self.model, self.nvidia);
 
-        let model_dir = PathBuf::from(self.model);
         print!("{}", self.prompt);
-        let service = Service::load_model(
-            model_dir,
-            if self.nvidia {
-                Device::NvidiaGpu(0)
-            } else {
-                Device::Cpu
-            },
-        );
-
-        let session = service.launch();
-        session.generate(&self.prompt, |piece| {
+        service.launch().generate(&self.prompt, |piece| {
             print!("{piece}");
             std::io::stdout().flush().unwrap();
         });

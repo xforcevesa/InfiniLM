@@ -13,4 +13,5 @@ transformer = { path = "../transformer" }
 service = { path = "../service" }
 log.workspace = true
 simple_logger = "4.3"
+colored = "2.1"
 clap = { version = "4.5", features = ["derive"] }

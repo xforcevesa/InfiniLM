@@ -1,6 +1,8 @@
 mod cast;
+mod chat;
 mod generate;
 
+use ::service::{Device, Service};
 use clap::Parser;
 
 #[macro_use]
@@ -11,6 +13,7 @@ fn main() {
     match Cli::parse().command {
         Cast(cast) => cast.invode(),
         Generate(generate) => generate.invoke(),
+        Chat(chat) => chat.invoke(),
     }
 }
 
@@ -28,4 +31,34 @@ enum Commands {
     Cast(cast::CastArgs),
     /// Generate following text
     Generate(generate::GenerateArgs),
+    /// Start service
+    Chat(chat::ChatArgs),
+}
+
+fn init_logger(log: Option<String>) {
+    use log::LevelFilter;
+    use simple_logger::SimpleLogger;
+    let log = log
+        .as_ref()
+        .and_then(|log| match log.to_lowercase().as_str() {
+            "off" | "none" => Some(LevelFilter::Off),
+            "trace" => Some(LevelFilter::Trace),
+            "debug" => Some(LevelFilter::Debug),
+            "info" => Some(LevelFilter::Info),
+            "error" => Some(LevelFilter::Error),
+            _ => None,
+        })
+        .unwrap_or(LevelFilter::Warn);
+    SimpleLogger::new().with_level(log).init().unwrap();
+}
+
+fn service(model_dir: &str, nvidia: bool) -> Service {
+    Service::load_model(
+        model_dir,
+        if nvidia {
+            Device::NvidiaGpu(0)
+        } else {
+            Device::Cpu
+        },
+    )
 }
