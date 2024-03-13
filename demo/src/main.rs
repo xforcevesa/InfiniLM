@@ -1,8 +1,6 @@
-use service;
-use std::env;
-use std::io;
-use std::io::Write;
-use colored::*;
+use colored::Colorize;
+use service::{Device, Service};
+use std::{env, io::Write};
 
 const WELCOME_MSG: &str = r#"
 ###########################################
@@ -19,7 +17,7 @@ const HELP_MSG: &str = r#"
 
 fn main() {
     let path = env::args().nth(1).expect("缺少模型路径参数");
-    let infer_service = service::Service::load_model(path);
+    let infer_service = Service::load_model(path, Device::NvidiaGpu(0));
 
     println!("{}", WELCOME_MSG);
     println!("{}", HELP_MSG);
@@ -35,7 +33,7 @@ fn main() {
     loop {
         println!("{}", format!("{}{}:", "会话", &session_id).yellow());
         let mut input = String::new();
-        io::stdin()
+        std::io::stdin()
             .read_line(&mut input)
             .expect("Unable to read line.");
         let input = input.trim();
@@ -53,7 +51,7 @@ fn execute_command(
     command: &str,
     session_id: &mut usize,
     sessions: &mut Vec<service::Session>,
-    service: &service::Service,
+    service: &Service,
 ) {
     match command {
         "/create" => {

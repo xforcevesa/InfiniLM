@@ -6,5 +6,4 @@ authors = ["Zezhong Pan <panzezhong@qiyuanlab.com>"]
 
 [dependencies]
 service = { path = "../service" }
-tokio = "*"
-colored = "*"
+colored = "2.1"
