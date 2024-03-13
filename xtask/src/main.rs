@@ -1,5 +1,6 @@
 mod cast;
 mod generate;
+mod service;
 
 use clap::Parser;
 
@@ -11,6 +12,7 @@ fn main() {
     match Cli::parse().command {
         Cast(cast) => cast.invode(),
         Generate(generate) => generate.invoke(),
+        Service(service) => service.invoke(),
     }
 }
 
@@ -28,4 +30,6 @@ enum Commands {
     Cast(cast::CastArgs),
     /// Generate following text
     Generate(generate::GenerateArgs),
+    /// Start service
+    Service(service::ServiceArgs),
 }

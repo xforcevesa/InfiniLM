@@ -1,6 +1,71 @@
-use colored::Colorize;
+﻿use colored::Colorize;
+use log::LevelFilter;
 use service::{Device, Service, Session};
-use std::{collections::HashMap, env, io::Write};
+use simple_logger::SimpleLogger;
+use std::{collections::HashMap, io::Write};
+
+#[derive(Args, Default)]
+pub(crate) struct ServiceArgs {
+    /// Model directory.
+    #[clap(short, long)]
+    model: String,
+    /// Log level, may be "off", "trace", "debug", "info" or "error".
+    #[clap(long)]
+    log: Option<String>,
+
+    /// Use Nvidia GPU.
+    #[clap(long)]
+    nvidia: bool,
+}
+
+impl ServiceArgs {
+    pub fn invoke(self) {
+        let log = self
+            .log
+            .as_ref()
+            .and_then(|log| match log.to_lowercase().as_str() {
+                "off" | "none" => Some(LevelFilter::Off),
+                "trace" => Some(LevelFilter::Trace),
+                "debug" => Some(LevelFilter::Debug),
+                "info" => Some(LevelFilter::Info),
+                "error" => Some(LevelFilter::Error),
+                _ => None,
+            })
+            .unwrap_or(LevelFilter::Warn);
+        SimpleLogger::new().with_level(log).init().unwrap();
+
+        let service = Service::load_model(
+            self.model,
+            if self.nvidia {
+                Device::NvidiaGpu(0)
+            } else {
+                Device::Cpu
+            },
+        );
+
+        println!("{}", WELCOME_MSG);
+        println!("{}", HELP_MSG);
+        println!("=====================================");
+
+        let mut sessions = HashMap::new();
+        let mut session = service.launch();
+
+        loop {
+            println!("{}", format!("会话 {}:", session.id()).yellow());
+            let mut input = String::new();
+            std::io::stdin()
+                .read_line(&mut input)
+                .expect("Unable to read line.");
+
+            // 以 / 开头则为用户指令
+            if input.trim_start().starts_with('/') {
+                execute_command(&input, &mut session, &mut sessions, &service);
+            } else {
+                infer(&input, &mut session);
+            }
+        }
+    }
+}
 
 const WELCOME_MSG: &str = r#"
 ###########################################
@@ -15,33 +80,6 @@ const HELP_MSG: &str = r#"
 
     使用 /exit 或 Ctrl + C 结束程序
 "#;
-
-fn main() {
-    let path = env::args().nth(1).expect("缺少模型路径参数");
-    let infer_service = Service::load_model(path, Device::NvidiaGpu(0));
-
-    println!("{}", WELCOME_MSG);
-    println!("{}", HELP_MSG);
-    println!("=====================================");
-
-    let mut sessions = HashMap::new();
-    let mut session = infer_service.launch();
-
-    loop {
-        println!("{}", format!("会话 {}:", session.id()).yellow());
-        let mut input = String::new();
-        std::io::stdin()
-            .read_line(&mut input)
-            .expect("Unable to read line.");
-
-        // 以 / 开头则为用户指令
-        if input.trim_start().starts_with('/') {
-            execute_command(&input, &mut session, &mut sessions, &infer_service);
-        } else {
-            infer(&input, &mut session);
-        }
-    }
-}
 
 fn execute_command(
     command: &str,

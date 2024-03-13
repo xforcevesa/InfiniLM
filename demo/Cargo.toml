@@ -1,9 +1,0 @@
-[package]
-name = "demo"
-version = "0.1.0"
-edition = "2021"
-authors = ["Zezhong Pan <panzezhong@qiyuanlab.com>"]
-
-[dependencies]
-service = { path = "../service" }
-colored = "2.1"

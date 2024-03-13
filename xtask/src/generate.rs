@@ -1,7 +1,7 @@
 ﻿use log::LevelFilter;
 use service::{Device, Service};
 use simple_logger::SimpleLogger;
-use std::{io::Write, path::PathBuf};
+use std::io::Write;
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
@@ -11,12 +11,6 @@ pub(crate) struct GenerateArgs {
     /// Prompt.
     #[clap(short, long)]
     prompt: String,
-    /// Tokenizer file.
-    #[clap(short, long)]
-    tokenizer: Option<String>,
-    /// Max steps.
-    #[clap(short, long)]
-    step: Option<usize>,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
@@ -42,10 +36,9 @@ impl GenerateArgs {
             .unwrap_or(LevelFilter::Warn);
         SimpleLogger::new().with_level(log).init().unwrap();
 
-        let model_dir = PathBuf::from(self.model);
         print!("{}", self.prompt);
         let service = Service::load_model(
-            model_dir,
+            self.model,
             if self.nvidia {
                 Device::NvidiaGpu(0)
             } else {

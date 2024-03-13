@@ -272,14 +272,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "demo"
-version = "0.1.0"
-dependencies = [
- "colored",
- "service",
-]
-
-[[package]]
 name = "deranged"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1321,6 +1313,7 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "colored",
  "common",
  "log",
  "service",
