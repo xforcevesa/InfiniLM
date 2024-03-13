@@ -1,7 +1,6 @@
-﻿use colored::Colorize;
-use log::LevelFilter;
-use service::{Device, Service, Session};
-use simple_logger::SimpleLogger;
+﻿use crate::{init_logger, service};
+use ::service::{Service, Session};
+use colored::Colorize;
 use std::{collections::HashMap, io::Write};
 
 #[derive(Args, Default)]
@@ -20,36 +19,14 @@ pub(crate) struct ServiceArgs {
 
 impl ServiceArgs {
     pub fn invoke(self) {
-        let log = self
-            .log
-            .as_ref()
-            .and_then(|log| match log.to_lowercase().as_str() {
-                "off" | "none" => Some(LevelFilter::Off),
-                "trace" => Some(LevelFilter::Trace),
-                "debug" => Some(LevelFilter::Debug),
-                "info" => Some(LevelFilter::Info),
-                "error" => Some(LevelFilter::Error),
-                _ => None,
-            })
-            .unwrap_or(LevelFilter::Warn);
-        SimpleLogger::new().with_level(log).init().unwrap();
-
-        let service = Service::load_model(
-            self.model,
-            if self.nvidia {
-                Device::NvidiaGpu(0)
-            } else {
-                Device::Cpu
-            },
-        );
+        init_logger(self.log);
+        let service = service(&self.model, self.nvidia);
+        let mut session = service.launch();
+        let mut sessions = HashMap::new();
 
         println!("{}", WELCOME_MSG);
         println!("{}", HELP_MSG);
         println!("=====================================");
-
-        let mut sessions = HashMap::new();
-        let mut session = service.launch();
-
         loop {
             println!("{}", format!("会话 {}:", session.id()).yellow());
             let mut input = String::new();
@@ -87,12 +64,7 @@ fn execute_command(
     sessions: &mut HashMap<usize, Session>,
     service: &Service,
 ) {
-    match command
-        .trim()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .as_slice()
-    {
+    match command.split_whitespace().collect::<Vec<_>>().as_slice() {
         ["/create"] => {
             let old = std::mem::replace(session, service.launch());
             sessions.insert(old.id(), old);
