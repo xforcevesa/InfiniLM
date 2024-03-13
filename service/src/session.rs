@@ -23,12 +23,17 @@ impl From<Arc<SessionComponent>> for Session {
 
 impl Session {
     #[inline]
-    pub fn chat(&self, prompt: &str, f: impl FnMut(&str)) {
+    pub const fn id(&self) -> usize {
+        self.id
+    }
+
+    #[inline]
+    pub fn chat(&mut self, prompt: &str, f: impl FnMut(&str)) {
         self.send(&self.component.template.apply_chat(prompt), f)
     }
 
     #[inline]
-    pub fn generate(&self, prompt: &str, f: impl FnMut(&str)) {
+    pub fn generate(&mut self, prompt: &str, f: impl FnMut(&str)) {
         self.send(&self.component.template.normalize(prompt), f)
     }
 

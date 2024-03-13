@@ -53,7 +53,7 @@ impl GenerateArgs {
             },
         );
 
-        let session = service.launch();
+        let mut session = service.launch();
         session.generate(&self.prompt, |piece| {
             print!("{piece}");
             std::io::stdout().flush().unwrap();
