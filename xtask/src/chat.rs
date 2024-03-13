@@ -1,26 +1,17 @@
-﻿use crate::{init_logger, service};
+﻿use crate::InferenceArgs;
 use ::service::{Service, Session};
 use colored::Colorize;
 use std::{collections::HashMap, io::Write};
 
 #[derive(Args, Default)]
 pub(crate) struct ChatArgs {
-    /// Model directory.
-    #[clap(short, long)]
-    model: String,
-    /// Log level, may be "off", "trace", "debug", "info" or "error".
-    #[clap(long)]
-    log: Option<String>,
-
-    /// Use Nvidia GPU.
-    #[clap(long)]
-    nvidia: bool,
+    #[clap(flatten)]
+    inference: InferenceArgs,
 }
 
 impl ChatArgs {
     pub fn invoke(self) {
-        init_logger(self.log);
-        let service = service(&self.model, self.nvidia);
+        let service: Service = self.inference.into();
         let mut session = service.launch();
         let mut sessions = HashMap::new();
 

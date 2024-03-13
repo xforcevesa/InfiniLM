@@ -35,30 +35,44 @@ enum Commands {
     Chat(chat::ChatArgs),
 }
 
-fn init_logger(log: Option<String>) {
-    use log::LevelFilter;
-    use simple_logger::SimpleLogger;
-    let log = log
-        .as_ref()
-        .and_then(|log| match log.to_lowercase().as_str() {
-            "off" | "none" => Some(LevelFilter::Off),
-            "trace" => Some(LevelFilter::Trace),
-            "debug" => Some(LevelFilter::Debug),
-            "info" => Some(LevelFilter::Info),
-            "error" => Some(LevelFilter::Error),
-            _ => None,
-        })
-        .unwrap_or(LevelFilter::Warn);
-    SimpleLogger::new().with_level(log).init().unwrap();
+#[derive(Args, Default)]
+struct InferenceArgs {
+    /// Model directory.
+    #[clap(short, long)]
+    model: String,
+    /// Log level, may be "off", "trace", "debug", "info" or "error".
+    #[clap(long)]
+    log: Option<String>,
+    /// Use Nvidia GPU.
+    #[clap(long)]
+    nvidia: bool,
 }
 
-fn service(model_dir: &str, nvidia: bool) -> Service {
-    Service::load_model(
-        model_dir,
-        if nvidia {
-            Device::NvidiaGpu(0)
-        } else {
-            Device::Cpu
-        },
-    )
+impl From<InferenceArgs> for Service {
+    fn from(args: InferenceArgs) -> Self {
+        use log::LevelFilter;
+        use simple_logger::SimpleLogger;
+        let log = args
+            .log
+            .as_ref()
+            .and_then(|log| match log.to_lowercase().as_str() {
+                "off" | "none" => Some(LevelFilter::Off),
+                "trace" => Some(LevelFilter::Trace),
+                "debug" => Some(LevelFilter::Debug),
+                "info" => Some(LevelFilter::Info),
+                "error" => Some(LevelFilter::Error),
+                _ => None,
+            })
+            .unwrap_or(LevelFilter::Warn);
+        SimpleLogger::new().with_level(log).init().unwrap();
+
+        Service::load_model(
+            args.model,
+            if args.nvidia {
+                Device::NvidiaGpu(0)
+            } else {
+                Device::Cpu
+            },
+        )
+    }
 }

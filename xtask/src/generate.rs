@@ -1,27 +1,19 @@
-﻿use crate::{init_logger, service};
+﻿use crate::InferenceArgs;
+use service::Service;
 use std::io::Write;
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
-    /// Model directory.
-    #[clap(short, long)]
-    model: String,
+    #[clap(flatten)]
+    inference: InferenceArgs,
     /// Prompt.
     #[clap(short, long)]
     prompt: String,
-    /// Log level, may be "off", "trace", "debug", "info" or "error".
-    #[clap(long)]
-    log: Option<String>,
-
-    /// Use Nvidia GPU.
-    #[clap(long)]
-    nvidia: bool,
 }
 
 impl GenerateArgs {
     pub fn invoke(self) {
-        init_logger(self.log);
-        let service = service(&self.model, self.nvidia);
+        let service: Service = self.inference.into();
 
         print!("{}", self.prompt);
         service.launch().generate(&self.prompt, |piece| {
