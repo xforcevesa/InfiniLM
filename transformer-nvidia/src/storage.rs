@@ -41,7 +41,7 @@ impl<'ctx> Deref for MemRef<'_, 'ctx> {
     type Target = DevMem<'ctx>;
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &self.0
     }
 }
 
@@ -49,14 +49,14 @@ impl<'ctx> Deref for MemRefMut<'_, 'ctx> {
     type Target = DevMem<'ctx>;
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &self.0
     }
 }
 
 impl<'ctx> DerefMut for MemRefMut<'_, 'ctx> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.0
+        &mut self.0
     }
 }
 

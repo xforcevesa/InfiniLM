@@ -61,7 +61,7 @@ impl Drop for Session {
 }
 
 pub(crate) struct SessionComponent {
-    pub template: Box<dyn Template>,
-    pub tokenizer: Box<dyn Tokenizer>,
+    pub template: Box<dyn Template + Send + Sync>,
+    pub tokenizer: Box<dyn Tokenizer + Send + Sync>,
     pub sender: Sender<Command>,
 }

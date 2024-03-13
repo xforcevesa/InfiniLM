@@ -14,7 +14,6 @@ use std::{
         Arc,
     },
     thread::{self, JoinHandle},
-    time::Instant,
 };
 use template::Template;
 use tokenizer::{Tokenizer, VocabTxt, BPE};
@@ -30,35 +29,20 @@ pub struct Service {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[non_exhaustive]
 pub enum Device {
     Cpu,
-    #[cfg(detected_cuda)]
     NvidiaGpu(i32),
 }
 
 impl Service {
     pub fn load_model(path: impl AsRef<Path>, device: Device) -> Self {
         let model_dir = path.as_ref().to_owned();
-
-        let template: Box<dyn Template> = {
-            let path: String = model_dir.display().to_string();
-            let path = path.to_ascii_lowercase();
-            if path.contains("tinyllama") {
-                Box::new(template::ChatTinyLlama)
-            } else {
-                Box::new(template::ChatCPM)
-            }
-        };
-
-        let time = Instant::now();
-        let tokenizer = tokenizer(&model_dir);
-        info!("build tokenizer ... {:?}", time.elapsed());
-
         let (sender, receiver) = channel();
         Service {
             session_component: Arc::new(SessionComponent {
-                template,
-                tokenizer,
+                template: template(&model_dir),
+                tokenizer: tokenizer(&model_dir),
                 sender,
             }),
             _manager: thread::spawn(move || match device {
@@ -78,6 +62,8 @@ impl Service {
                     dev.set_mempool_threshold(u64::MAX);
                     dev.context().apply(|ctx| task(model_dir, receiver, ctx));
                 }
+                #[cfg(not(detected_cuda))]
+                _ => panic!("Unsupported device"),
             }),
         }
     }
@@ -99,7 +85,17 @@ enum Command {
     },
 }
 
-fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer> {
+fn template(model_dir: impl AsRef<Path>) -> Box<dyn Template + Send + Sync> {
+    let path: String = model_dir.as_ref().display().to_string();
+    let path = path.to_ascii_lowercase();
+    if path.contains("tinyllama") {
+        Box::new(template::ChatTinyLlama)
+    } else {
+        Box::new(template::ChatCPM)
+    }
+}
+
+fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
     use std::io::ErrorKind::NotFound;
     match BPE::from_model_file(model_dir.as_ref().join("tokenizer.model")) {
         Ok(bpe) => return Box::new(bpe),
