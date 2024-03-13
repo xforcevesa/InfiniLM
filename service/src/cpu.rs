@@ -43,7 +43,7 @@ impl CpuTask {
                     .or_insert_with_key(|&id| SessionContext::new(&self.transformer, id));
 
                 let time = Instant::now();
-                let mut logits = self.transformer.decode(vec![ctx.request(&prompt)]);
+                let mut logits = self.transformer.decode(vec![ctx.request(&prompt)]).1;
                 info!("prefill transformer ... {:?}", time.elapsed());
 
                 let max_seq_len = self.transformer.max_seq_len() as upos;
@@ -54,7 +54,7 @@ impl CpuTask {
                     }
                     responsing.send(token).unwrap();
 
-                    logits = self.transformer.decode(vec![ctx.request(&[token])]);
+                    logits = self.transformer.decode(vec![ctx.request(&[token])]).1;
                 }
             }
             Command::Drop { id } => {
@@ -71,6 +71,7 @@ struct SessionContext {
 }
 
 impl SessionContext {
+    #[inline]
     fn new(transformer: &Transformer, id: usize) -> Self {
         Self {
             id,
@@ -79,6 +80,7 @@ impl SessionContext {
         }
     }
 
+    #[inline]
     fn request<'a>(&'a mut self, tokens: &'a [utok]) -> Request<usize> {
         let pos = self.pos;
         self.pos += tokens.len() as upos;

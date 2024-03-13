@@ -27,7 +27,7 @@ impl Transformer {
         self.0.max_position_embeddings()
     }
 
-    pub fn decode<Id>(&mut self, mut requests: Vec<Request<Id>>) -> Tensor<Storage> {
+    pub fn decode<Id>(&mut self, mut requests: Vec<Request<Id>>) -> (Vec<Id>, Tensor<Storage>) {
         requests.sort_unstable_by_key(|t| t.tokens.len());
 
         // println!("tokens:");
@@ -221,7 +221,7 @@ impl Transformer {
         mat_mul(&mut logits.access_mut(), 0., &x.access(), &lm_head, 1.);
         // println!("pos {pos} logits:\n{}", logits.access());
 
-        logits
+        (requests.into_iter().map(|r| r.id).collect(), logits)
     }
 }
 
