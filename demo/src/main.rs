@@ -81,7 +81,12 @@ fn execute_command(
 fn infer(text: &str, session_id: usize, sessions: &mut Vec<service::Session>) {
     println!("{}", "AI:".green());
     sessions[session_id].chat(text, |s| {
-        print!("{s}");
+        match s {
+            "</s>" => println!(""),
+            "\\n" => println!(""),
+            _ => print!("{s}"),
+        }
+
         std::io::stdout().flush().unwrap();
     });
     println!("");
