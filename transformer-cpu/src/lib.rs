@@ -3,11 +3,11 @@ mod storage;
 
 use common::utok;
 use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
-use storage::{Cell, Unique};
+use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
 
-pub type Request<'a, Id> = transformer::Request<'a, Id, Unique>;
-pub type LayerCache = transformer::LayerCache<Unique>;
+pub type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
+pub type LayerCache = transformer::LayerCache<Storage>;
 pub use transformer::{save, Llama2, Memory};
 
 pub struct Transformer(Box<dyn Llama2>);
@@ -20,7 +20,7 @@ impl Transformer {
 
     #[inline]
     pub fn new_cache(&self) -> Vec<LayerCache> {
-        LayerCache::new_layers(&*self.0, |dt, shape| tensor(dt, shape, Unique::new))
+        LayerCache::new_layers(&*self.0, tensor)
     }
 
     #[inline]
@@ -73,41 +73,47 @@ impl Transformer {
         }
         let pos = Tensor::new(DataType::U32, &[nt], reslice(&pos));
 
-        let mut x0 = tensor(dt, &[nt, d], Unique::new);
-        let mut x1 = tensor(dt, &[nt, d], Unique::new);
-        let mut qkv = tensor(dt, &[nt, d + dkv + dkv], Cell::new);
-        let mut q_buf = Unique::new((nh * max_seq_len * dh) as usize * dt.size());
-        let mut att_buf =
-            Unique::new((nkvh * head_group * max_seq_len * max_att_len) as usize * dt.size());
-        let mut gate_up = tensor(dt, &[nt, di + di], Cell::new);
+        let mut x0 = tensor(dt, &[nt, d]);
+        let mut x1 = tensor(dt, &[nt, d]);
+        let mut qkv = tensor(dt, &[nt, d + dkv + dkv]);
+        let mut q_buf = Storage::new((nh * max_seq_len * dh) as usize * dt.size());
+        let mut att_buf = Storage::new((nh * max_seq_len * max_att_len) as usize * dt.size());
+        let mut gate_up = tensor(dt, &[nt, di + di]);
 
         let tokens = requests.iter().map(|r| r.tokens).flatten().copied();
         gather(&mut x0, &self.0.embed_tokens(), tokens);
-        // println!("gather:\n{}", x0.access());
+        // println!("gather:\n{x0}");
 
         for layer in 0..self.0.num_hidden_layers() {
             let input_layernorm = self.0.input_layernorm(layer);
             rms_norm(&mut x1, &x0, &input_layernorm, epsilon);
-            // println!("layer {layer} input norm:\n{}", x1.access());
+            // println!("layer {layer} input norm:\n{x1}");
+
             let w_qkv = self.0.w_qkv(layer).transpose(&[1, 0]);
-            mat_mul(&mut qkv.access_mut(), 0., &x1, &w_qkv, 1.);
+            mat_mul(&mut qkv, 0., &x1, &w_qkv, 1.);
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
             let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
             let mut q = qkv.pop().unwrap().reshape(&[nt, nh, dh]);
-            // println!("layer {layer} q:\n{}", q.access());
-            // println!("layer {layer} k:\n{}", k.access());
-            // println!("layer {layer} v:\n{}", v.access());
-            rotary_embedding(q.access_mut(), &pos, theta);
-            rotary_embedding(k.access_mut(), &pos, theta);
-            // println!("layer {layer} rot q:\n{}", q.access());
-            // println!("layer {layer} rot k:\n{}", k.access());
-            let q = q.transpose(&[1, 0, 2]);
-            let k = k.transpose(&[1, 0, 2]);
-            let v = v.transpose(&[1, 0, 2]);
+            // println!("layer {layer} q:\n{q}");
+            // println!("layer {layer} k:\n{k}");
+            // println!("layer {layer} v:\n{v}");
+
+            rotary_embedding(&mut q, &pos, theta);
+            rotary_embedding(&mut k, &pos, theta);
+            // println!("layer {layer} rot q:\n{q}");
+            // println!("layer {layer} rot k:\n{k}");
+
+            let q = q.as_ref().transpose(&[1, 0, 2]);
+            let k = k.as_ref().transpose(&[1, 0, 2]);
+            let v = v.as_ref().transpose(&[1, 0, 2]);
+            let mut o = x1.as_mut().reshape(&[nt, nh, dh]).transpose(&[1, 0, 2]);
+
+            let q = unsafe { q.map_physical(|u| &**u) };
+            let k = unsafe { k.map_physical(|u| &**u) };
+            let v = unsafe { v.map_physical(|u| &**u) };
 
             let mut req = 0;
-            let mut o = x1.as_mut().reshape(&[nt, nh, dh]).transpose(&[1, 0, 2]);
             for r in requests.iter_mut() {
                 let pos = r.pos;
                 let seq_len = r.seq_len();
@@ -130,9 +136,9 @@ impl Transformer {
                 let v_cat = v_cache.as_mut().slice(cat_slice);
                 let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
                 let mut v_cat = unsafe { v_cat.map_physical(|u| &mut **u) };
-                q.access().reform_to(&mut q_att);
-                k.access().reform_to(&mut k_cat);
-                v.access().reform_to(&mut v_cat);
+                q.reform_to(&mut q_att);
+                k.reform_to(&mut k_cat);
+                v.reform_to(&mut v_cat);
 
                 let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
                 let k_att = k_cache.as_ref().slice(att_slice).transpose(&[0, 2, 1]);
@@ -166,18 +172,18 @@ impl Transformer {
             // println!("layer {layer} post norm:\n{}", x1.access());
 
             let w_gate_up = self.0.mlp_gate_up(layer).transpose(&[1, 0]);
-            mat_mul(&mut gate_up.access_mut(), 0., &x1, &w_gate_up, 1.);
+            mat_mul(&mut gate_up, 0., &x1, &w_gate_up, 1.);
             let mut gate_up = gate_up.split(1, &[di as _, di as _]);
             let up = gate_up.pop().unwrap();
             let mut gate = gate_up.pop().unwrap();
             // println!("layer {layer} gate:\n{}", gate.access());
             // println!("layer {layer} up:\n{}", up.access());
 
-            swiglu(gate.access_mut(), unsafe { &up.access_unchecked() });
+            swiglu(&mut gate, &up);
             // println!("layer {layer} swiglu:\n{}", gate.access());
 
             let mlp_down = self.0.mlp_down(layer).transpose(&[1, 0]);
-            mat_mul(&mut x0, 1., &gate.access(), &mlp_down, 1.);
+            mat_mul(&mut x0, 1., &gate, &mlp_down, 1.);
             // println!("layer {layer} down:\n{}", x0.access());
         }
 
@@ -225,9 +231,9 @@ impl Transformer {
 }
 
 #[inline]
-fn tensor<T>(dt: DataType, shape: &[udim], f: impl FnOnce(usize) -> T) -> Tensor<T> {
+fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
     let size = shape.iter().product::<udim>() as usize * dt.size();
-    Tensor::new(dt, shape, f(size))
+    Tensor::new(dt, shape, Storage::new(size))
 }
 
 #[test]

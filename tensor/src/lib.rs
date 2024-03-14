@@ -22,6 +22,7 @@ pub use nalgebra::DVector;
 pub use pattern::{expand_indices, idx_strides, Affine, Shape};
 pub use physical_cell::PhysicalCell;
 pub use slice::SliceDim;
+pub use split::Splitable;
 pub use tensor::Tensor;
 
 use std::mem::{align_of, size_of, size_of_val};

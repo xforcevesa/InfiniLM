@@ -1,6 +1,17 @@
 ﻿use crate::{idim, pattern::Pattern, udim, Affine, Shape, Tensor};
 
-impl<Physical: Clone> Tensor<Physical> {
+pub trait Splitable {
+    fn split(&self) -> Self;
+}
+
+impl<T: Clone> Splitable for T {
+    #[inline]
+    fn split(&self) -> Self {
+        self.clone()
+    }
+}
+
+impl<Physical: Splitable> Tensor<Physical> {
     pub fn split(&self, axis: usize, segments: &[udim]) -> Vec<Self> {
         build(axis, segments, &self.shape)
             .into_iter()
@@ -8,7 +19,7 @@ impl<Physical: Clone> Tensor<Physical> {
                 data_type: self.data_type,
                 shape,
                 pattern: Pattern(affine * &self.pattern.0),
-                physical: self.physical.clone(),
+                physical: self.physical.split(),
             })
             .collect()
     }

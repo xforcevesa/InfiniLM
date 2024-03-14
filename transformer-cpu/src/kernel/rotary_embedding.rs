@@ -5,7 +5,7 @@ use tensor::{expand_indices, idx_strides, udim, Tensor};
 
 /// - t:   [num_token, num_head, head_dim]
 /// - pos: [num_token]
-pub fn rotary_embedding<T, U>(mut t: Tensor<T>, pos: &Tensor<U>, theta: f32)
+pub fn rotary_embedding<T, U>(t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32)
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,
