@@ -6,7 +6,7 @@ use std::{
 };
 use tensor::{reslice, reslice_mut, DataType, Tensor};
 
-pub fn rms_norm<T, U, V>(mut o: Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
+pub fn rms_norm<T, U, V>(o: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,

@@ -3,11 +3,11 @@ use common::utok;
 use std::ops::{Deref, DerefMut};
 use tensor::Tensor;
 
-pub fn gather<'a, T, U, I>(mut x: Tensor<T>, table: &Tensor<U>, requests: I)
+pub fn gather<'a, T, U, I>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: I)
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,
-    I: IntoIterator<Item = &'a [utok]>,
+    I: IntoIterator<Item = utok>,
 {
     let &[_, d] = x.shape() else { panic!() };
 
@@ -20,7 +20,7 @@ where
 
     let x = x.as_mut_slice();
     let table = table.as_slice();
-    for (i, &t) in requests.into_iter().flatten().enumerate() {
+    for (i, t) in tokens.into_iter().enumerate() {
         slice!(x; d; [i]).copy_from_slice(&slice!(table; d; [t]))
     }
 }

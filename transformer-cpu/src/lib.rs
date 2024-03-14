@@ -3,11 +3,11 @@ mod storage;
 
 use common::utok;
 use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
-use storage::Storage;
+use storage::{Cell, Unique};
 use tensor::{reslice, slice, udim, DataType, Tensor};
 
-pub type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
-pub type LayerCache = transformer::LayerCache<Storage>;
+pub type Request<'a, Id> = transformer::Request<'a, Id, Cell>;
+pub type LayerCache = transformer::LayerCache<Cell>;
 pub use transformer::{save, Llama2, Memory};
 
 pub struct Transformer(Box<dyn Llama2>);
@@ -20,7 +20,7 @@ impl Transformer {
 
     #[inline]
     pub fn new_cache(&self) -> Vec<LayerCache> {
-        LayerCache::new_layers(&*self.0, tensor)
+        LayerCache::new_layers(&*self.0, |dt, shape| tensor(dt, shape, Cell::new))
     }
 
     #[inline]
@@ -73,32 +73,24 @@ impl Transformer {
         }
         let pos = Tensor::new(DataType::U32, &[nt], reslice(&pos));
 
-        let mut x0 = tensor(dt, &[nt, d]);
-        let mut x1 = tensor(dt, &[nt, d]);
-        let mut qkv = tensor(dt, &[nt, d + dkv + dkv]);
-        let mut q_buf = vec![0u8; (nh * max_seq_len * dh) as usize * dt.size()];
+        let mut x0 = tensor(dt, &[nt, d], Unique::new);
+        let mut x1 = tensor(dt, &[nt, d], Unique::new);
+        let mut qkv = tensor(dt, &[nt, d + dkv + dkv], Cell::new);
+        let mut q_buf = Unique::new((nh * max_seq_len * dh) as usize * dt.size());
         let mut att_buf =
-            vec![0u8; (nkvh * head_group * max_seq_len * max_att_len) as usize * dt.size()];
-        //                         `num_token x hidden_size`
-        // -|reshape|------------> `num_token x (num_kv_head x head_group x head_dim)`
-        // -|transpose(1,2,0,3)|-> `num_kv_head x head_group x num_token x head_dim`
-        // -|reshape|------------> `num_kv_head x (head_group x num_token) x head_dim`
-        let mut x2 = tensor(dt, &[nkvh, head_group * nt, dh]);
-        let mut gate_up = tensor(dt, &[nt, di + di]);
+            Unique::new((nkvh * head_group * max_seq_len * max_att_len) as usize * dt.size());
+        let mut gate_up = tensor(dt, &[nt, di + di], Cell::new);
 
-        gather(
-            x0.access_mut(),
-            &self.0.embed_tokens(),
-            requests.iter().map(|r| r.tokens),
-        );
+        let tokens = requests.iter().map(|r| r.tokens).flatten().copied();
+        gather(&mut x0, &self.0.embed_tokens(), tokens);
         // println!("gather:\n{}", x0.access());
 
         for layer in 0..self.0.num_hidden_layers() {
             let input_layernorm = self.0.input_layernorm(layer);
-            rms_norm(x1.access_mut(), &x0.access(), &input_layernorm, epsilon);
+            rms_norm(&mut x1, &x0, &input_layernorm, epsilon);
             // println!("layer {layer} input norm:\n{}", x1.access());
             let w_qkv = self.0.w_qkv(layer).transpose(&[1, 0]);
-            mat_mul(&mut qkv.access_mut(), 0., &x1.access_mut(), &w_qkv, 1.);
+            mat_mul(&mut qkv.access_mut(), 0., &x1, &w_qkv, 1.);
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
             let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
@@ -115,6 +107,7 @@ impl Transformer {
             let v = v.transpose(&[1, 0, 2]);
 
             let mut req = 0;
+            let mut o = x1.as_mut().reshape(&[nt, nh, dh]).transpose(&[1, 0, 2]);
             for r in requests.iter_mut() {
                 let pos = r.pos;
                 let seq_len = r.seq_len();
@@ -128,9 +121,11 @@ impl Transformer {
                 let q = q.clone().slice(req_slice);
                 let k = k.clone().slice(req_slice);
                 let v = v.clone().slice(req_slice);
+                let o = o.as_mut().slice(req_slice);
+                let mut o = unsafe { o.map_physical(|u| &mut ***u) };
 
                 let (k_cache, v_cache) = r.cache[layer].get();
-                let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], q_buf.as_mut_slice());
+                let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], &mut q_buf[..]);
                 let mut k_cat = k_cache.clone().slice(cat_slice);
                 let mut v_cat = v_cache.clone().slice(cat_slice);
                 q.access().reform_to(&mut q_att);
@@ -138,45 +133,36 @@ impl Transformer {
                 v.access().reform_to(&mut v_cat.access_mut());
 
                 let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
-                let k_att = k_cache.clone().slice(att_slice);
+                let k_att = k_cache.clone().slice(att_slice).transpose(&[0, 2, 1]);
                 let v_att = v_cache.clone().slice(att_slice);
                 // println!("layer {layer} q attention:\n{}", q_att);
                 // println!("layer {layer} k attention:\n{}", k_att.access());
                 // println!("layer {layer} v attention:\n{}", v_att.access());
 
-                let mut att = Tensor::new(
-                    dt,
-                    &[nkvh, head_group * seq_len, att_len],
-                    att_buf.as_mut_slice(),
-                );
-                {
-                    let k_att = k_att.transpose(&[0, 2, 1]);
-                    mat_mul(&mut att, 0., &q_att, &k_att.access(), head_div);
-                    // println!("layer {layer} before softmax:\n{}", att.access());
-                    att = att.reshape(&[nh, seq_len, att_len]);
-                    softmax(&mut att);
-                    // println!("layer {layer} after softmax:\n{}", att.access());
-                    att = att.reshape(&[nkvh, head_group * seq_len, att_len]);
-                    {
-                        mat_mul(&mut x2.access_mut(), 0., &att, &v_att.access(), 1.);
-                        let x2 = x2.clone().reshape(&[nh, seq_len, dh]).transpose(&[1, 0, 2]);
-                        let mut x1 = x1.clone().reshape(&[seq_len, nh, dh]);
-                        x2.access().reform_to(&mut x1.access_mut());
-                    }
-                    // println!("layer {layer} after attention:\n{}", x1.access());
-                }
+                let shape_att0 = &[nkvh, head_group * seq_len, att_len];
+                let shape_att1 = &[nkvh * head_group, seq_len, att_len];
+
+                let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
+                mat_mul(&mut att, 0., &q_att, &k_att.access(), head_div);
+                let mut att = att.reshape(shape_att1);
+                softmax(&mut att);
+                let mut x2 = q_att;
+                mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att.access(), 1.);
+
+                x2.reshape(&[nh, seq_len, dh]).reform_to(&mut o);
+                // println!("layer {layer} after attention:\n{}", o);
             }
 
             let wo = self.0.self_attn_o_proj(layer).transpose(&[1, 0]);
-            mat_mul(&mut x0.access_mut(), 1., &x1.access(), &wo, 1.);
+            mat_mul(&mut x0, 1., &x1, &wo, 1.);
             // println!("layer {layer} o_proj:\n{}", x0.access());
 
             let post_layernorm = self.0.post_attention_layernorm(layer);
-            rms_norm(x1.access_mut(), &x0.access(), &post_layernorm, epsilon);
+            rms_norm(&mut x1, &x0, &post_layernorm, epsilon);
             // println!("layer {layer} post norm:\n{}", x1.access());
 
             let w_gate_up = self.0.mlp_gate_up(layer).transpose(&[1, 0]);
-            mat_mul(&mut gate_up.access_mut(), 0., &x1.access(), &w_gate_up, 1.);
+            mat_mul(&mut gate_up.access_mut(), 0., &x1, &w_gate_up, 1.);
             let mut gate_up = gate_up.split(1, &[di as _, di as _]);
             let up = gate_up.pop().unwrap();
             let mut gate = gate_up.pop().unwrap();
@@ -187,7 +173,7 @@ impl Transformer {
             // println!("layer {layer} swiglu:\n{}", gate.access());
 
             let mlp_down = self.0.mlp_down(layer).transpose(&[1, 0]);
-            mat_mul(&mut x0.access_mut(), 1., &gate.access(), &mlp_down, 1.);
+            mat_mul(&mut x0, 1., &gate.access(), &mlp_down, 1.);
             // println!("layer {layer} down:\n{}", x0.access());
         }
 
@@ -196,8 +182,7 @@ impl Transformer {
             let begin = head.tokens.len();
             let mut i = begin;
             let mut j = begin;
-            let mut buf = x0.access_mut();
-            let buf = buf.as_mut_slice();
+            let buf = x0.as_mut_slice();
             let len = d as usize * dt.size();
             for r in others {
                 i += r.tokens.len();
@@ -219,17 +204,16 @@ impl Transformer {
         let mut x = x0.slice(&[tokens, slice![all]]);
         // println!("decode slice:\n{}", x.access());
 
-        let x_ = x.clone();
-        rms_norm(
-            x.access_mut(),
-            &unsafe { x_.access_unchecked() },
-            &self.0.model_norm(),
-            self.0.rms_norm_eps(),
-        );
+        // 复制一个 x 以实现原地归一化
+        let x_ = unsafe {
+            x.as_ref()
+                .map_physical(|u| std::slice::from_raw_parts(u.as_ptr(), u.len()))
+        };
+        rms_norm(&mut x, &x_, &self.0.model_norm(), self.0.rms_norm_eps());
         // println!("model norm:\n{}", x.access());
 
         let lm_head = self.0.lm_head().transpose(&[1, 0]);
-        mat_mul(&mut logits, 0., &x.access(), &lm_head, 1.);
+        mat_mul(&mut logits, 0., &x, &lm_head, 1.);
         // println!("logits:\n{}", logits.access());
 
         (requests.into_iter().map(|r| r.id).collect(), logits)
@@ -237,12 +221,9 @@ impl Transformer {
 }
 
 #[inline]
-fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
-    Tensor::new(
-        dt,
-        shape,
-        Storage::new(shape.iter().product::<udim>() as usize * dt.size()),
-    )
+fn tensor<T>(dt: DataType, shape: &[udim], f: impl FnOnce(usize) -> T) -> Tensor<T> {
+    let size = shape.iter().product::<udim>() as usize * dt.size();
+    Tensor::new(dt, shape, f(size))
 }
 
 #[test]
