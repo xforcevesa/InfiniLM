@@ -15,7 +15,15 @@ impl ChatArgs {
         let mut session = service.launch();
         let mut sessions = HashMap::new();
 
-        println!("{}", WELCOME_MSG);
+        println!(
+            "\
+###########################################
+# 欢迎使用九源推理框架-大模型单机对话demo #
+###########################################
+PID = {}
+",
+            std::process::id()
+        );
         println!("{}", HELP_MSG);
         println!("=====================================");
         loop {
@@ -35,19 +43,13 @@ impl ChatArgs {
     }
 }
 
-const WELCOME_MSG: &str = r#"
-###########################################
-# 欢迎使用九源推理框架-大模型单机对话demo #
-###########################################
-"#;
-const HELP_MSG: &str = r#"
-    /create        新建会话session
-    /switch [0-9+] 切换至指定会话
-    /drop [0-9+]   丢弃指定会话
-    /help          打印帮助信息
+const HELP_MSG: &str = "\
+/create        新建会话session
+/switch [0-9+] 切换至指定会话
+/drop [0-9+]   丢弃指定会话
+/help          打印帮助信息
 
-    使用 /exit 或 Ctrl + C 结束程序
-"#;
+使用 /exit 或 Ctrl + C 结束程序";
 
 fn execute_command(
     command: &str,
