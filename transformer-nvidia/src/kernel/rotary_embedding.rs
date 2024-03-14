@@ -1,4 +1,4 @@
-﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, DevMem, Module, Ptx, Stream};
+﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, DevSlice, Module, Ptx, Stream};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::Deref,
@@ -43,10 +43,10 @@ extern "C" __global__ void {name}(
 }
 
 impl RotaryEmbedding<'_> {
-    pub fn launch<'a, T, U>(&self, t: &Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
+    pub fn launch<T, U>(&self, t: &Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
     where
-        T: Deref<Target = DevMem<'a>>,
-        U: Deref<Target = DevMem<'a>>,
+        T: Deref<Target = DevSlice>,
+        U: Deref<Target = DevSlice>,
     {
         let &[n, nh, dh] = t.shape() else {
             panic!("Invalid shape");

@@ -1,5 +1,5 @@
 ﻿use cublas::{bindings::cublasOperation_t, cublas, Cublas};
-use cuda::{AsRaw, DevMem};
+use cuda::{AsRaw, DevSlice};
 use half::f16;
 use std::{
     ffi::{c_int, c_longlong, c_void},
@@ -8,7 +8,7 @@ use std::{
 };
 use tensor::{DataType, Tensor};
 
-pub fn mat_mul<'a, T>(
+pub fn mat_mul<T>(
     handle: &Cublas,
     c: &Tensor<T>,
     beta: f32,
@@ -16,7 +16,7 @@ pub fn mat_mul<'a, T>(
     b: &Tensor<T>,
     alpha: f32,
 ) where
-    T: Deref<Target = DevMem<'a>>,
+    T: Deref<Target = DevSlice>,
 {
     assert_eq!(c.data_type(), DataType::F16);
     assert_eq!(a.data_type(), DataType::F16);
@@ -93,9 +93,9 @@ struct Matrix {
     ptr: *mut c_void,
 }
 
-impl<'a, T> From<&Tensor<T>> for Matrix
+impl<T> From<&Tensor<T>> for Matrix
 where
-    T: Deref<Target = DevMem<'a>>,
+    T: Deref<Target = DevSlice>,
 {
     fn from(tensor: &Tensor<T>) -> Self {
         let strides = tensor.strides();

@@ -1,4 +1,4 @@
-﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, DevMem, Module, Ptx, Stream};
+﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, DevSlice, Module, Ptx, Stream};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -62,10 +62,10 @@ extern "C" __global__ void {name}(
 }
 
 impl Reform<'_> {
-    pub fn launch<'a, T, U>(&self, dst: Tensor<T>, src: &Tensor<U>, stream: &Stream)
+    pub fn launch<T, U>(&self, dst: Tensor<T>, src: &Tensor<U>, stream: &Stream)
     where
-        T: DerefMut<Target = DevMem<'a>>,
-        U: Deref<Target = DevMem<'a>>,
+        T: DerefMut<Target = DevSlice>,
+        U: Deref<Target = DevSlice>,
     {
         assert_eq!(dst.data_type(), src.data_type());
         assert_eq!(dst.shape(), src.shape());

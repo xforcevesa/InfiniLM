@@ -1,4 +1,6 @@
-﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
+﻿use cuda::{
+    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevSlice, Module, Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::Deref,
@@ -44,9 +46,9 @@ extern "C" __global__ void {name}(
 }
 
 impl Swiglu<'_> {
-    pub fn launch<'a, T>(&self, gate: &Tensor<T>, up: &Tensor<T>, stream: &Stream)
+    pub fn launch<T>(&self, gate: &Tensor<T>, up: &Tensor<T>, stream: &Stream)
     where
-        T: Deref<Target = DevMem<'a>>,
+        T: Deref<Target = DevSlice>,
     {
         assert_eq!(gate.data_type(), up.data_type());
         assert_eq!(gate.shape(), up.shape());

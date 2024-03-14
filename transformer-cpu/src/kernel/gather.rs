@@ -3,7 +3,7 @@ use common::utok;
 use std::ops::{Deref, DerefMut};
 use tensor::Tensor;
 
-pub fn gather<'a, T, U, I>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: I)
+pub fn gather<T, U, I>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: I)
 where
     T: DerefMut<Target = [u8]>,
     U: Deref<Target = [u8]>,

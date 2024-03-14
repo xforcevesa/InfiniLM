@@ -1,4 +1,4 @@
-﻿use cuda::{DevMem, Stream};
+﻿use cuda::{DevMem, DevSlice, Stream};
 use std::{
     cell::{Ref, RefCell, RefMut},
     ops::{Deref, DerefMut},
@@ -12,7 +12,7 @@ pub struct MemRef<'a, 'ctx: 'a>(Ref<'a, DevMem<'ctx>>);
 pub struct MemRefMut<'a, 'ctx: 'a>(RefMut<'a, DevMem<'ctx>>);
 
 impl<'ctx> PhysicalCell for Storage<'ctx> {
-    type Raw = DevMem<'ctx>;
+    type Raw = DevSlice;
     type Access<'a> = MemRef<'a, 'ctx> where Self: 'a;
     type AccessMut<'a> = MemRefMut<'a, 'ctx> where Self: 'a;
 
@@ -38,7 +38,7 @@ impl<'ctx> PhysicalCell for Storage<'ctx> {
 }
 
 impl<'ctx> Deref for MemRef<'_, 'ctx> {
-    type Target = DevMem<'ctx>;
+    type Target = DevSlice;
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -46,7 +46,7 @@ impl<'ctx> Deref for MemRef<'_, 'ctx> {
 }
 
 impl<'ctx> Deref for MemRefMut<'_, 'ctx> {
-    type Target = DevMem<'ctx>;
+    type Target = DevSlice;
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0

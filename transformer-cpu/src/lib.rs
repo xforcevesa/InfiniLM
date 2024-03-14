@@ -80,7 +80,7 @@ impl Transformer {
         let mut att_buf = Storage::new((nh * max_seq_len * max_att_len) as usize * dt.size());
         let mut gate_up = tensor(dt, &[nt, di + di]);
 
-        let tokens = requests.iter().map(|r| r.tokens).flatten().copied();
+        let tokens = requests.iter().flat_map(|r| r.tokens).copied();
         gather(&mut x0, &self.0.embed_tokens(), tokens);
         // println!("gather:\n{x0}");
 

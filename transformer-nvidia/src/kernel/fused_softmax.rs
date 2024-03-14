@@ -1,4 +1,6 @@
-﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
+﻿use cuda::{
+    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevSlice, Module, Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::Deref,
@@ -68,9 +70,9 @@ extern "C" __global__ void {folding}(
 }
 
 impl FusedSoftmax<'_> {
-    pub fn launch<'a, T>(&self, att: &Tensor<T>, stream: &Stream)
+    pub fn launch<T>(&self, att: &Tensor<T>, stream: &Stream)
     where
-        T: Deref<Target = DevMem<'a>>,
+        T: Deref<Target = DevSlice>,
     {
         assert!(att.is_contiguous());
         let &[nh, seq_len, att_len] = att.shape() else {

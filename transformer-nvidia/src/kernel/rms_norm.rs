@@ -1,4 +1,6 @@
-use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevMem, Module, Ptx, Stream};
+use cuda::{
+    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevSlice, Module, Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -69,7 +71,7 @@ extern "C" __global__ void {folding}(
 }
 
 impl RmsNormalization<'_> {
-    pub fn launch<'a, T, U, V>(
+    pub fn launch<T, U, V>(
         &self,
         y: Tensor<T>,
         x: &Tensor<U>,
@@ -77,9 +79,9 @@ impl RmsNormalization<'_> {
         epsilon: f32,
         stream: &Stream,
     ) where
-        T: DerefMut<Target = DevMem<'a>>,
-        U: Deref<Target = DevMem<'a>>,
-        V: Deref<Target = DevMem<'a>>,
+        T: DerefMut<Target = DevSlice>,
+        U: Deref<Target = DevSlice>,
+        V: Deref<Target = DevSlice>,
     {
         debug_assert_eq!(x.shape(), y.shape());
         let &[row, col] = x.shape() else { panic!() };
