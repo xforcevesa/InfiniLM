@@ -19,41 +19,23 @@ pub trait PhysicalCell {
 impl<Physical: PhysicalCell> Tensor<Physical> {
     #[inline]
     pub unsafe fn access_unchecked(&self) -> Tensor<&Physical::Raw> {
-        Tensor {
-            data_type: self.data_type,
-            shape: self.shape.clone(),
-            pattern: self.pattern.clone(),
-            physical: self.physical.get_unchecked(),
-        }
+        self.as_ref()
+            .map_physical(|physical| physical.get_unchecked())
     }
 
     #[inline]
     pub unsafe fn access_unchecked_mut(&mut self) -> Tensor<&mut Physical::Raw> {
-        Tensor {
-            data_type: self.data_type,
-            shape: self.shape.clone(),
-            pattern: self.pattern.clone(),
-            physical: self.physical.get_unchecked_mut(),
-        }
+        self.as_mut()
+            .map_physical(|physical| physical.get_unchecked_mut())
     }
 
     #[inline]
     pub fn access(&self) -> Tensor<Physical::Access<'_>> {
-        Tensor {
-            data_type: self.data_type,
-            shape: self.shape.clone(),
-            pattern: self.pattern.clone(),
-            physical: self.physical.access(),
-        }
+        unsafe { self.as_ref().map_physical(|physical| physical.access()) }
     }
 
     #[inline]
     pub fn access_mut(&mut self) -> Tensor<Physical::AccessMut<'_>> {
-        Tensor {
-            data_type: self.data_type,
-            shape: self.shape.clone(),
-            pattern: self.pattern.clone(),
-            physical: self.physical.access_mut(),
-        }
+        unsafe { self.as_mut().map_physical(|physical| physical.access_mut()) }
     }
 }

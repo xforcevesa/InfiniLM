@@ -15,6 +15,7 @@ impl<'ctx> ModelParameters<'ctx> {
             ($param:ident) => {
                 unsafe {
                     host.$param()
+                        .as_ref()
                         .map_physical(|slice| stream.from_host(slice).into())
                 }
             };
@@ -88,6 +89,7 @@ impl<'ctx> LayerParameter<'ctx> {
             ($param:ident) => {
                 unsafe {
                     host.$param(layer)
+                        .as_ref()
                         .map_physical(|slice| stream.from_host(slice).into())
                 }
             };

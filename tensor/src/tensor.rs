@@ -113,16 +113,36 @@ impl<Physical> Tensor<Physical> {
             .count()
     }
 
-    /// # Safety
-    ///
-    /// The caller must ensure that the new `physical` matches data_type, shape and pattern of `self`.
     #[inline]
-    pub unsafe fn map_physical<U>(&self, f: impl FnOnce(&Physical) -> U) -> Tensor<U> {
+    pub fn as_ref(&self) -> Tensor<&Physical> {
         Tensor {
             data_type: self.data_type,
             shape: self.shape.clone(),
             pattern: self.pattern.clone(),
-            physical: f(&self.physical),
+            physical: &self.physical,
+        }
+    }
+
+    #[inline]
+    pub fn as_mut(&mut self) -> Tensor<&mut Physical> {
+        Tensor {
+            data_type: self.data_type,
+            shape: self.shape.clone(),
+            pattern: self.pattern.clone(),
+            physical: &mut self.physical,
+        }
+    }
+
+    /// # Safety
+    ///
+    /// The caller must ensure that the new `physical` matches data_type, shape and pattern of `self`.
+    #[inline]
+    pub unsafe fn map_physical<U>(self, f: impl FnOnce(Physical) -> U) -> Tensor<U> {
+        Tensor {
+            data_type: self.data_type,
+            shape: self.shape,
+            pattern: self.pattern,
+            physical: f(self.physical),
         }
     }
 }

@@ -33,7 +33,7 @@ impl Transformer {
         self.0.eos_token_id()
     }
 
-    pub fn decode<Id>(&mut self, mut requests: Vec<Request<Id>>) -> (Vec<Id>, Tensor<Storage>) {
+    pub fn decode<Id>(&mut self, mut requests: Vec<Request<Id>>) -> (Vec<Id>, Tensor<Vec<u8>>) {
         requests.sort_unstable_by_key(|t| t.tokens.len());
 
         // println!("tokens:");
@@ -211,7 +211,11 @@ impl Transformer {
             slice![from begin, take len]
         };
 
-        let mut logits = tensor(dt, &[tokens.len, voc]);
+        let mut logits = Tensor::new(
+            dt,
+            &[tokens.len, voc],
+            vec![0u8; (tokens.len * voc) as usize * dt.size()],
+        );
         let mut x = x0.slice(&[tokens, slice![all]]);
         // println!("decode slice:\n{}", x.access());
 
@@ -225,13 +229,14 @@ impl Transformer {
         // println!("model norm:\n{}", x.access());
 
         let lm_head = self.0.lm_head().transpose(&[1, 0]);
-        mat_mul(&mut logits.access_mut(), 0., &x.access(), &lm_head, 1.);
+        mat_mul(&mut logits, 0., &x.access(), &lm_head, 1.);
         // println!("logits:\n{}", logits.access());
 
         (requests.into_iter().map(|r| r.id).collect(), logits)
     }
 }
 
+#[inline]
 fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
     Tensor::new(
         dt,

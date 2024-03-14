@@ -341,7 +341,11 @@ impl<'ctx> Transformer<'ctx> {
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&x));
 
-        let mut logits = unsafe { logits_dev.map_physical(|dev| vec![0; dev.access().len()]) };
+        let mut logits = unsafe {
+            logits_dev
+                .as_ref()
+                .map_physical(|dev| vec![0; dev.access().len()])
+        };
         mat_mul(
             &self.cublas,
             &logits_dev.access(),
@@ -373,7 +377,7 @@ fn tensor<'ctx>(dt: DataType, shape: &[udim], stream: &Stream<'ctx>) -> Tensor<S
 #[allow(unused)]
 fn map_tensor(tensor: &Tensor<Storage>) -> Tensor<Vec<u8>> {
     unsafe {
-        tensor.map_physical(|dev| {
+        tensor.as_ref().map_physical(|dev| {
             let dev = dev.access();
             let mut buf = vec![0; dev.len()];
             dev.copy_out(&mut buf);

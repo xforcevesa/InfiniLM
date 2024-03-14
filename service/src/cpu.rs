@@ -50,7 +50,7 @@ impl CpuTask {
                 info!("prefill transformer ... {:?}", time.elapsed());
 
                 loop {
-                    let token = argmax(reslice::<u8, f16>(logits.access().as_slice()));
+                    let token = argmax(reslice::<u8, f16>(logits.as_slice()));
                     if token == eos {
                         break;
                     }
