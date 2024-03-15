@@ -3,7 +3,7 @@
 };
 use std::{
     ffi::{c_uint, c_void, CString},
-    ops::Deref,
+    ops::DerefMut,
 };
 use tensor::Tensor;
 
@@ -70,9 +70,9 @@ extern "C" __global__ void {folding}(
 }
 
 impl FusedSoftmax<'_> {
-    pub fn launch<T>(&self, att: &Tensor<T>, stream: &Stream)
+    pub fn launch<T>(&self, att: &mut Tensor<T>, stream: &Stream)
     where
-        T: Deref<Target = DevSlice>,
+        T: DerefMut<Target = DevSlice>,
     {
         assert!(att.is_contiguous());
         let &[nh, seq_len, att_len] = att.shape() else {

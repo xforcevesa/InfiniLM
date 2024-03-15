@@ -255,7 +255,7 @@ checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 [[package]]
 name = "cublas"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-bench#58578c127e31efc68387d779c40392551cdc527c"
+source = "git+https://github.com/YdrMaster/cuda-bench#7d9722c44530087f686270f66471efca6205338d"
 dependencies = [
  "bindgen",
  "cuda",
@@ -265,7 +265,7 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-bench#58578c127e31efc68387d779c40392551cdc527c"
+source = "git+https://github.com/YdrMaster/cuda-bench#7d9722c44530087f686270f66471efca6205338d"
 dependencies = [
  "bindgen",
  "find_cuda_helper",

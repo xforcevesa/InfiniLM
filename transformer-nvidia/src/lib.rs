@@ -12,7 +12,7 @@ use cuda::{AsRaw, CudaDataType::half, Stream};
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayersParameters, ModelParameters};
 use storage::Storage;
-use tensor::{slice, udim, DataType, PhysicalCell, Tensor};
+use tensor::{slice, udim, DataType, Tensor};
 
 pub type Request<'a, 'b, Id> = transformer::Request<'a, Id, Storage<'b>>;
 pub type LayerCache<'a> = transformer::LayerCache<Storage<'a>>;
@@ -99,34 +99,21 @@ impl<'ctx> Transformer<'ctx> {
         for request in requests.iter() {
             pos_.extend(request.pos..request.att_len());
         }
-        pos.access_mut()
-            .physical_mut()
-            .copy_in_async(&pos_, transfer);
+        pos.physical_mut().copy_in_async(&pos_, transfer);
 
-        let mut x0 = tensor(dt, &[nt, d], transfer);
-        let e_alloc_x0 = transfer.record();
+        let mut x0 = tensor(dt, &[nt, d], compute);
         let mut x1 = tensor(dt, &[nt, d], transfer);
-        let qkv = tensor(dt, &[nt, d + dkv + dkv], transfer);
-        let q_buf = Storage::new((nh * max_seq_len * dh) as usize * dt.size(), transfer);
-        let att_buf = Storage::new(
-            (nkvh * head_group * max_seq_len * max_att_len) as usize * dt.size(),
+        let mut qkv = tensor(dt, &[nt, d + dkv + dkv], transfer);
+        let mut q_buf = Storage::new((nh * max_seq_len * dh) as usize * dt.size(), transfer);
+        let mut att_buf = Storage::new(
+            (nh * max_seq_len * max_att_len) as usize * dt.size(),
             transfer,
         );
-        //                         `num_token x hidden_size`
-        // -|reshape|------------> `num_token x (num_kv_head x head_group x head_dim)`
-        // -|transpose(1,2,0,3)|-> `num_kv_head x head_group x num_token x head_dim`
-        // -|reshape|------------> `num_kv_head x (head_group x num_token) x head_dim`
-        let x2 = tensor(dt, &[nkvh, head_group * nt, dh], transfer);
-        let gate_up = tensor(dt, &[nt, di + di], transfer);
+        let mut gate_up = tensor(dt, &[nt, di + di], transfer);
         let e_alloc = transfer.record();
 
-        compute.wait_for(&e_alloc_x0);
-        gather(
-            x0.access_mut(),
-            &self.host.embed_tokens(),
-            requests.iter().map(|r| r.tokens),
-            compute,
-        );
+        let tokens = requests.iter().flat_map(|r| r.tokens).copied();
+        gather(&mut x0, &self.host.embed_tokens(), tokens, compute);
         // compute.synchronize();
         // println!("gather:\n{}", map_tensor(&x0));
 
@@ -136,42 +123,35 @@ impl<'ctx> Transformer<'ctx> {
             self.layers.load(layer, self.host, transfer);
             let params = self.layers.sync(layer, compute);
 
-            self.rms_norm.launch(
-                x1.access_mut(),
-                &x0.access(),
-                &params.input_layernorm.access(),
-                epsilon,
-                compute,
-            );
+            self.rms_norm
+                .launch(&mut x1, &x0, &params.input_layernorm, epsilon, compute);
             // compute.synchronize();
             // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
-            let w_qkv = params.w_qkv.clone().transpose(&[1, 0]);
-            mat_mul(
-                &self.cublas,
-                &qkv.access(),
-                0.,
-                &x1.access(),
-                &w_qkv.access(),
-                1.,
-            );
+
+            mat_mul(&self.cublas, &mut qkv, 0., &x1, &params.w_qkv, 1.);
             let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
             let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
-            let k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
-            let q = qkv.pop().unwrap().reshape(&[nt, nh, dh]);
+            let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
+            let mut q = qkv.pop().unwrap().reshape(&[nt, nh, dh]);
             // compute.synchronize();
             // println!("layer {layer} q:\n{}", map_tensor(&q));
             // println!("layer {layer} k:\n{}", map_tensor(&k));
             // println!("layer {layer} v:\n{}", map_tensor(&v));
-            self.rotary_embedding
-                .launch(&q.access(), &pos.access(), theta, compute);
-            self.rotary_embedding
-                .launch(&k.access(), &pos.access(), theta, compute);
+
+            self.rotary_embedding.launch(&mut q, &pos, theta, compute);
+            self.rotary_embedding.launch(&mut k, &pos, theta, compute);
             // compute.synchronize();
             // println!("layer {layer} rot q:\n{}", map_tensor(&q));
             // println!("layer {layer} rot k:\n{}", map_tensor(&k));
-            let q = q.transpose(&[1, 0, 2]);
-            let k = k.transpose(&[1, 0, 2]);
-            let v = v.transpose(&[1, 0, 2]);
+
+            let q = q.as_ref().transpose(&[1, 0, 2]);
+            let k = k.as_ref().transpose(&[1, 0, 2]);
+            let v = v.as_ref().transpose(&[1, 0, 2]);
+            let mut o = x1.as_mut().reshape(&[nt, nh, dh]).transpose(&[1, 0, 2]);
+
+            let q = unsafe { q.map_physical(|u| &**u) };
+            let k = unsafe { k.map_physical(|u| &**u) };
+            let v = unsafe { v.map_physical(|u| &**u) };
 
             let mut req = 0;
             for r in requests.iter_mut() {
@@ -187,116 +167,72 @@ impl<'ctx> Transformer<'ctx> {
                 let q = q.clone().slice(req_slice);
                 let k = k.clone().slice(req_slice);
                 let v = v.clone().slice(req_slice);
+                let o = o.as_mut().slice(req_slice);
+                let mut o = unsafe { o.map_physical(|u| &mut ***u) };
 
+                let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], &mut *q_buf);
                 let (k_cache, v_cache) = r.cache[layer].get();
-                let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], q_buf.clone());
-                let mut k_cat = k_cache.clone().slice(cat_slice);
-                let mut v_cat = v_cache.clone().slice(cat_slice);
-                self.reform.launch(q_att.access_mut(), &q.access(), compute);
-                self.reform.launch(k_cat.access_mut(), &k.access(), compute);
-                self.reform.launch(v_cat.access_mut(), &v.access(), compute);
+                let k_cat = k_cache.as_mut().slice(cat_slice);
+                let v_cat = v_cache.as_mut().slice(cat_slice);
+                let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
+                let mut v_cat = unsafe { v_cat.map_physical(|u| &mut **u) };
+                self.reform.launch(&mut q_att, &q, compute);
+                self.reform.launch(&mut k_cat, &k, compute);
+                self.reform.launch(&mut v_cat, &v, compute);
 
                 let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
-                let k_att = k_cache.clone().slice(att_slice);
-                let v_att = v_cache.clone().slice(att_slice);
-                // println!("layer {layer} q attention:\n{}", map_tensor(&q_att));
-                // println!("layer {layer} k attention:\n{}", map_tensor(&k_att));
-                // println!("layer {layer} v attention:\n{}", map_tensor(&v_att));
+                let k_att = k_cache.as_ref().slice(att_slice).transpose(&[0, 2, 1]);
+                let v_att = v_cache.as_ref().slice(att_slice);
+                let k_att = unsafe { k_att.map_physical(|u| &**u) };
+                let v_att = unsafe { v_att.map_physical(|u| &**u) };
+                // println!("layer {layer} q attention:\n{}", q_att);
+                // println!("layer {layer} k attention:\n{}", k_att.access());
+                // println!("layer {layer} v attention:\n{}", v_att.access());
 
-                let mut att =
-                    Tensor::new(dt, &[nkvh, head_group * seq_len, att_len], att_buf.clone());
-                {
-                    let k_att = k_att.transpose(&[0, 2, 1]);
-                    mat_mul(
-                        &self.cublas,
-                        &att.access(),
-                        0.,
-                        &q_att.access(),
-                        &k_att.access(),
-                        head_div,
-                    );
-                    att = att.reshape(&[nh, seq_len, att_len]);
-                    // compute.synchronize();
-                    // println!("layer {layer} before softmax:\n{}", map_tensor(&att));
-                    self.fused_softmax.launch(&att.access(), compute);
-                    // compute.synchronize();
-                    // println!("layer {layer} after softmax:\n{}", map_tensor(&att));
-                    att = att.reshape(&[nkvh, head_group * seq_len, att_len]);
-                    {
-                        mat_mul(
-                            &self.cublas,
-                            &x2.access(),
-                            0.,
-                            &att.access(),
-                            &v_att.access(),
-                            1.,
-                        );
-                        self.reform.launch(
-                            x1.clone().reshape(&[seq_len, nh, dh]).access_mut(),
-                            &x2.clone()
-                                .reshape(&[nh, seq_len, dh])
-                                .transpose(&[1, 0, 2])
-                                .access(),
-                            compute,
-                        );
-                    }
-                    // compute.synchronize();
-                    // println!("layer {layer} after attention:\n{}", map_tensor(&x1));
-                }
+                let shape_att0 = &[nkvh, head_group * seq_len, att_len];
+                let shape_att1 = &[nkvh * head_group, seq_len, att_len];
+
+                let mut att = Tensor::new(dt, shape_att0, &mut *att_buf);
+                mat_mul(&self.cublas, &mut att, 0., &q_att, &k_att, head_div);
+                let mut att = att.reshape(shape_att1);
+                self.fused_softmax.launch(&mut att, compute);
+                let mut x2 = q_att;
+                let att = att.reshape(shape_att0);
+                mat_mul(&self.cublas, &mut x2, 0., &att, &v_att, 1.);
+
+                self.reform
+                    .launch(&mut o, &x2.reshape(&[nh, seq_len, dh]), compute);
+                // println!("layer {layer} after attention:\n{}", o);
             }
 
-            let wo = params.self_attn_o_proj.clone().transpose(&[1, 0]);
-            mat_mul(
-                &self.cublas,
-                &x0.access(),
-                1.,
-                &x1.access(),
-                &wo.access(),
-                1.,
-            );
+            mat_mul(&self.cublas, &mut x0, 1., &x1, &params.self_attn_o_proj, 1.);
             // compute.synchronize();
             // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
 
             self.rms_norm.launch(
-                x1.access_mut(),
-                &x0.access(),
-                &params.post_attention_layernorm.access(),
+                &mut x1,
+                &x0,
+                &params.post_attention_layernorm,
                 epsilon,
                 compute,
             );
             // compute.synchronize();
             // println!("layer {layer} post norm:\n{}", map_tensor(&x1));
 
-            let w_gate_up = params.mlp_gate_up.clone().transpose(&[1, 0]);
-            mat_mul(
-                &self.cublas,
-                &gate_up.access(),
-                0.,
-                &x1.access(),
-                &w_gate_up.access(),
-                1.,
-            );
+            mat_mul(&self.cublas, &mut gate_up, 0., &x1, &params.mlp_gate_up, 1.);
             let mut gate_up = gate_up.split(1, &[di as _, di as _]);
             let up = gate_up.pop().unwrap();
-            let gate = gate_up.pop().unwrap();
+            let mut gate = gate_up.pop().unwrap();
             // compute.synchronize();
             // println!("layer {layer} gate:\n{}", map_tensor(&gate));
             // println!("layer {layer} up:\n{}", map_tensor(&up));
 
-            self.swiglu.launch(&gate.access(), &up.access(), compute);
+            self.swiglu.launch(&mut gate, &up, compute);
             // compute.synchronize();
             // println!("layer {layer} swiglu:\n{}", map_tensor(&gate));
 
-            let mlp_down = params.mlp_down.clone().transpose(&[1, 0]);
-            mat_mul(
-                &self.cublas,
-                &x0.access(),
-                1.,
-                &gate.access(),
-                &mlp_down.access(),
-                1.,
-            );
-            compute.synchronize();
+            mat_mul(&self.cublas, &mut x0, 1., &gate, &params.mlp_down, 1.);
+            // compute.synchronize();
             // println!("layer {layer} down:\n{}", map_tensor(&x0));
         }
 
@@ -305,15 +241,15 @@ impl<'ctx> Transformer<'ctx> {
             let begin = head.tokens.len();
             let mut i = begin;
             let mut j = begin;
-            let buf = unsafe { x0.access().physical().as_raw() };
+            let buf = unsafe { x0.physical().as_raw() };
             let len = d as usize * dt.size();
             for r in others {
                 i += r.tokens.len();
                 j += 1;
                 if i > j {
                     cuda::driver!(cuMemcpyDtoDAsync_v2(
-                        buf + ((j - 1) * len) as cuda::bindings::CUdeviceptr,
-                        buf + ((i - 1) * len) as cuda::bindings::CUdeviceptr,
+                        buf + ((j - 1) * len) as CUdeviceptr,
+                        buf + ((i - 1) * len) as CUdeviceptr,
                         len,
                         compute.as_raw()
                     ));
@@ -324,41 +260,30 @@ impl<'ctx> Transformer<'ctx> {
             slice![from begin, take len]
         };
 
-        let logits_dev = tensor(dt, &[tokens.len, voc], compute);
+        let mut logits_dev = tensor(dt, &[tokens.len, voc], compute);
         let mut x = x0.slice(&[tokens, slice![all]]);
         // compute.synchronize();
         // println!("decode slice:\n{}", map_tensor(&x));
 
         compute.wait_for(&self.model.sync_event);
-        let x_ = x.clone();
-        self.rms_norm.launch(
-            x.access_mut(),
-            &unsafe { x_.access_unchecked() },
-            &self.model.model_norm.access(),
-            self.host.rms_norm_eps(),
-            compute,
-        );
+        // 复制一个 x 以实现原地归一化
+        let x_ = unsafe { x.as_ref().map_physical(|u| u.borrow()) };
+        self.rms_norm
+            .launch(&mut x, &x_, &self.model.model_norm, epsilon, compute);
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&x));
 
-        let mut logits = unsafe {
-            logits_dev
-                .as_ref()
-                .map_physical(|dev| vec![0; dev.access().len()])
-        };
+        let mut logits = unsafe { logits_dev.as_ref().map_physical(|dev| vec![0; dev.len()]) };
         mat_mul(
             &self.cublas,
-            &logits_dev.access(),
+            &mut logits_dev,
             0.,
-            &x.access(),
-            &self.model.lm_head.clone().transpose(&[1, 0]).access(),
+            &x,
+            &self.model.lm_head,
             1.,
         );
         compute.synchronize();
-        logits_dev
-            .access()
-            .physical()
-            .copy_out(logits.physical_mut());
+        logits_dev.physical().copy_out(logits.physical_mut());
         // println!("logits:\n{}", logits);
 
         (requests.into_iter().map(|r| r.id).collect(), logits)
@@ -378,7 +303,6 @@ fn tensor<'ctx>(dt: DataType, shape: &[udim], stream: &Stream<'ctx>) -> Tensor<S
 fn map_tensor(tensor: &Tensor<Storage>) -> Tensor<Vec<u8>> {
     unsafe {
         tensor.as_ref().map_physical(|dev| {
-            let dev = dev.access();
             let mut buf = vec![0; dev.len()];
             dev.copy_out(&mut buf);
             buf

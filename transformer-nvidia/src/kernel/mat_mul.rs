@@ -4,25 +4,27 @@ use half::f16;
 use std::{
     ffi::{c_int, c_longlong, c_void},
     mem::swap,
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 use tensor::{DataType, Tensor};
 
-pub fn mat_mul<T>(
+pub fn mat_mul<T, U, V>(
     handle: &Cublas,
-    c: &Tensor<T>,
+    c: &mut Tensor<T>,
     beta: f32,
-    a: &Tensor<T>,
-    b: &Tensor<T>,
+    a: &Tensor<U>,
+    b: &Tensor<V>,
     alpha: f32,
 ) where
-    T: Deref<Target = DevSlice>,
+    T: DerefMut<Target = DevSlice>,
+    U: Deref<Target = DevSlice>,
+    V: Deref<Target = DevSlice>,
 {
     assert_eq!(c.data_type(), DataType::F16);
     assert_eq!(a.data_type(), DataType::F16);
     assert_eq!(b.data_type(), DataType::F16);
 
-    let mut c = Matrix::from(c);
+    let mut c = Matrix::from(&*c);
     let mut a = Matrix::from(a);
     let mut b = Matrix::from(b);
     assert_eq!(c.r, a.r); // m

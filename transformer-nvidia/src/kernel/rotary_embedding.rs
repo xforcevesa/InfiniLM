@@ -43,7 +43,7 @@ extern "C" __global__ void {name}(
 }
 
 impl RotaryEmbedding<'_> {
-    pub fn launch<T, U>(&self, t: &Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
+    pub fn launch<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
     where
         T: Deref<Target = DevSlice>,
         U: Deref<Target = DevSlice>,

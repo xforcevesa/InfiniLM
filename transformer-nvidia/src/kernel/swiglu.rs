@@ -46,7 +46,7 @@ extern "C" __global__ void {name}(
 }
 
 impl Swiglu<'_> {
-    pub fn launch<T>(&self, gate: &Tensor<T>, up: &Tensor<T>, stream: &Stream)
+    pub fn launch<T>(&self, gate: &mut Tensor<T>, up: &Tensor<T>, stream: &Stream)
     where
         T: Deref<Target = DevSlice>,
     {

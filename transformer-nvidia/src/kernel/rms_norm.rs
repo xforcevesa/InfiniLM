@@ -73,7 +73,7 @@ extern "C" __global__ void {folding}(
 impl RmsNormalization<'_> {
     pub fn launch<T, U, V>(
         &self,
-        y: Tensor<T>,
+        y: &mut Tensor<T>,
         x: &Tensor<U>,
         w: &Tensor<V>,
         epsilon: f32,

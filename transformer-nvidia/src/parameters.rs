@@ -22,7 +22,7 @@ impl<'ctx> ModelParameters<'ctx> {
         }
         Self {
             model_norm: map!(model_norm),
-            lm_head: map!(lm_head),
+            lm_head: map!(lm_head).transpose(&[1, 0]),
             sync_event: stream.record(),
         }
     }
@@ -96,11 +96,11 @@ impl<'ctx> LayerParameter<'ctx> {
         }
         Self {
             input_layernorm: map!(input_layernorm),
-            w_qkv: map!(w_qkv),
-            self_attn_o_proj: map!(self_attn_o_proj),
+            w_qkv: map!(w_qkv).transpose(&[1, 0]),
+            self_attn_o_proj: map!(self_attn_o_proj).transpose(&[1, 0]),
             post_attention_layernorm: map!(post_attention_layernorm),
-            mlp_gate_up: map!(mlp_gate_up),
-            mlp_down: map!(mlp_down),
+            mlp_gate_up: map!(mlp_gate_up).transpose(&[1, 0]),
+            mlp_down: map!(mlp_down).transpose(&[1, 0]),
             layer,
             sync_event: stream.record(),
         }
@@ -114,7 +114,6 @@ impl<'ctx> LayerParameter<'ctx> {
         macro_rules! update {
             ($param:ident) => {
                 self.$param
-                    .access_mut()
                     .physical_mut()
                     .copy_in_async(host.$param(layer).as_slice(), stream)
             };

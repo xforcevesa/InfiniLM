@@ -3,11 +3,11 @@ use cuda::{bindings::CUdeviceptr, AsRaw, DevSlice, Stream};
 use std::ops::{Deref, DerefMut};
 use tensor::Tensor;
 
-pub fn gather<'a, T, U, I>(x: Tensor<T>, table: &Tensor<U>, requests: I, stream: &Stream)
+pub fn gather<T, U, I>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: I, stream: &Stream)
 where
     T: DerefMut<Target = DevSlice>,
     U: Deref<Target = [u8]>,
-    I: IntoIterator<Item = &'a [utok]>,
+    I: IntoIterator<Item = utok>,
 {
     let &[_, d] = x.shape() else { panic!() };
 
@@ -21,7 +21,7 @@ where
     let x = unsafe { x.physical().as_raw() };
     let table = table.as_slice();
     let stream = unsafe { stream.as_raw() };
-    for (i, &t) in requests.into_iter().flatten().enumerate() {
+    for (i, t) in tokens.into_iter().enumerate() {
         let src = table[d * t as usize..].as_ptr().cast();
         let dst = x + (d * i) as CUdeviceptr;
         cuda::driver!(cuMemcpyHtoDAsync_v2(dst, src, d, stream));

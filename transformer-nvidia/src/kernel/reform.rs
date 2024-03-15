@@ -62,7 +62,7 @@ extern "C" __global__ void {name}(
 }
 
 impl Reform<'_> {
-    pub fn launch<T, U>(&self, dst: Tensor<T>, src: &Tensor<U>, stream: &Stream)
+    pub fn launch<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>, stream: &Stream)
     where
         T: DerefMut<Target = DevSlice>,
         U: Deref<Target = DevSlice>,

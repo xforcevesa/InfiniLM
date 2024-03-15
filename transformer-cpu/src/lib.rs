@@ -219,7 +219,7 @@ impl Transformer {
             x.as_ref()
                 .map_physical(|u| std::slice::from_raw_parts(u.as_ptr(), u.len()))
         };
-        rms_norm(&mut x, &x_, &self.0.model_norm(), self.0.rms_norm_eps());
+        rms_norm(&mut x, &x_, &self.0.model_norm(), epsilon);
         // println!("model norm:\n{}", x.access());
 
         let lm_head = self.0.lm_head().transpose(&[1, 0]);
