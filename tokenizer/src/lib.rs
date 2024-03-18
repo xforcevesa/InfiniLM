@@ -1,4 +1,5 @@
 mod bpe;
+mod normalizer;
 mod vocab_txt;
 
 use common::utok;
@@ -11,6 +12,7 @@ pub trait Tokenizer {
 }
 
 pub use bpe::BPE;
+pub use normalizer::{BPECommonNormalizer, Normalizer};
 pub use vocab_txt::VocabTxt;
 
 struct ByteDecoder([u8; 256]);

@@ -4,7 +4,7 @@ use std::sync::{
     mpsc::{channel, Sender},
     Arc,
 };
-use tokenizer::Tokenizer;
+use tokenizer::{Normalizer, Tokenizer};
 
 pub struct Session {
     id: usize,
@@ -38,7 +38,8 @@ impl Session {
     }
 
     fn send(&self, prompt: &str, mut f: impl FnMut(&str)) {
-        let prompt = self.component.tokenizer.encode(prompt);
+        let prompt = self.component.normalizer.encode(prompt);
+        let prompt = self.component.tokenizer.encode(&prompt);
 
         let (responsing, receiver) = channel();
         let chat = Command::Infer {
@@ -50,8 +51,8 @@ impl Session {
         self.component.sender.send(chat).unwrap();
         while let Ok(token) = receiver.recv() {
             let piece = self.component.tokenizer.decode(token);
-            let piece = self.component.template.decode(piece);
-            f(piece.as_ref());
+            let piece = self.component.normalizer.decode(piece);
+            f(&piece);
         }
     }
 }
@@ -67,6 +68,7 @@ impl Drop for Session {
 
 pub(crate) struct SessionComponent {
     pub template: Box<dyn Template + Send + Sync>,
+    pub normalizer: Box<dyn Normalizer + Send + Sync>,
     pub tokenizer: Box<dyn Tokenizer + Send + Sync>,
     pub sender: Sender<Command>,
 }

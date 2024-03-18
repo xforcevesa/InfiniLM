@@ -16,7 +16,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 use template::Template;
-use tokenizer::{Tokenizer, VocabTxt, BPE};
+use tokenizer::{BPECommonNormalizer, Normalizer, Tokenizer, VocabTxt, BPE};
 
 pub use session::Session;
 
@@ -42,6 +42,7 @@ impl Service {
         Service {
             session_component: Arc::new(SessionComponent {
                 template: template(&model_dir),
+                normalizer: normalizer(&model_dir),
                 tokenizer: tokenizer(&model_dir),
                 sender,
             }),
@@ -93,6 +94,21 @@ fn template(model_dir: impl AsRef<Path>) -> Box<dyn Template + Send + Sync> {
     } else {
         Box::new(template::ChatCPM)
     }
+}
+
+fn normalizer(model_dir: impl AsRef<Path>) -> Box<dyn Normalizer + Send + Sync> {
+    use std::io::ErrorKind::NotFound;
+    match BPE::from_model_file(model_dir.as_ref().join("tokenizer.model")) {
+        Ok(_) => return Box::new(BPECommonNormalizer {}),
+        Err(e) if e.kind() == NotFound => {}
+        Err(e) => panic!("{e:?}"),
+    }
+    match VocabTxt::from_txt_file(model_dir.as_ref().join("vocabs.txt")) {
+        Ok(_) => return Box::new(()),
+        Err(e) if e.kind() == NotFound => {}
+        Err(e) => panic!("{e:?}"),
+    }
+    panic!("Tokenizer file not found");
 }
 
 fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
