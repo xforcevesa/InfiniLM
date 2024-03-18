@@ -13,8 +13,8 @@ fn main() {
     use Commands::*;
     match Cli::parse().command {
         Cast(cast) => cast.invode(),
-        Generate(generate) => generate.invoke(),
-        Chat(chat) => chat.invoke(),
+        Generate(args) => args.inference.generate(&args.prompt),
+        Chat(chat) => chat.chat(),
     }
 }
 
@@ -33,7 +33,7 @@ enum Commands {
     /// Generate following text
     Generate(generate::GenerateArgs),
     /// Start service
-    Chat(chat::ChatArgs),
+    Chat(InferenceArgs),
 }
 
 #[derive(Args, Default)]
@@ -85,19 +85,13 @@ impl From<InferenceArgs> for Service {
             .unwrap_or(LevelFilter::Warn);
         SimpleLogger::new().with_level(log).init().unwrap();
 
-        let sample = if temperature <= 0. || top_k < 2 || top_p <= 0. {
-            SampleArgs::Top
-        } else {
-            SampleArgs::Random {
+        Service::load_model(
+            model,
+            SampleArgs {
                 temperature,
                 top_k,
                 top_p,
-            }
-        };
-
-        Service::load_model(
-            model,
-            sample,
+            },
             if nvidia {
                 Device::NvidiaGpu(0)
             } else {

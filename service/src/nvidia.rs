@@ -1,7 +1,12 @@
-﻿use crate::Command;
+﻿use crate::{session, Command};
 use common::utok;
 use std::{
-    collections::HashMap, fs::File, io::Read, path::Path, sync::mpsc::Receiver, time::Instant,
+    collections::HashMap,
+    fs::File,
+    io::Read,
+    path::Path,
+    sync::{mpsc::Receiver, Arc, Mutex},
+    time::Instant,
 };
 use transformer_cpu::{Llama2, Memory, SampleArgs};
 use transformer_nvidia::{
@@ -11,7 +16,7 @@ use transformer_nvidia::{
 
 pub fn task(
     model_dir: impl AsRef<Path>,
-    sample: SampleArgs,
+    sample: Arc<Mutex<SampleArgs>>,
     receiver: Receiver<Command>,
     ctx: &ContextGuard,
 ) {
@@ -54,7 +59,7 @@ pub fn task(
                 let time = Instant::now();
                 let mut token = transformer.decode(
                     vec![ctx.request(&prompt, max_seq_len)],
-                    &sample,
+                    &*sample.lock().unwrap(),
                     &compute,
                     &transfer,
                 )[0]
@@ -65,7 +70,7 @@ pub fn task(
                     responsing.send(token).unwrap();
                     token = transformer.decode(
                         vec![ctx.request(&[token], max_seq_len)],
-                        &sample,
+                        &*sample.lock().unwrap(),
                         &compute,
                         &transfer,
                     )[0]
@@ -79,12 +84,12 @@ pub fn task(
     }
 }
 
-struct SessionContext<'a>(super::SessionContext<LayerCache<'a>>);
+struct SessionContext<'a>(session::SessionContext<LayerCache<'a>>);
 
 impl<'a> SessionContext<'a> {
     #[inline]
     fn new(transformer: &Transformer, id: usize, stream: &'a Stream) -> Self {
-        Self(super::SessionContext::new(
+        Self(session::SessionContext::new(
             transformer.new_cache(stream),
             id,
         ))

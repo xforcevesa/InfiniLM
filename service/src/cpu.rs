@@ -1,16 +1,21 @@
-﻿use crate::Command;
+﻿use crate::{session, Command};
 use common::utok;
-use std::{collections::HashMap, path::Path, time::Instant};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use transformer_cpu::{LayerCache, Memory, Request, SampleArgs, Transformer};
 
 pub struct CpuTask {
     transformer: Transformer,
     sessions: HashMap<usize, SessionContext>,
-    sample: SampleArgs,
+    sample: Arc<Mutex<SampleArgs>>,
 }
 
 impl CpuTask {
-    pub fn new(model_dir: impl AsRef<Path>, sample: SampleArgs) -> Self {
+    pub fn new(model_dir: impl AsRef<Path>, sample: Arc<Mutex<SampleArgs>>) -> Self {
         let time = Instant::now();
         let model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
         info!("load model ... {:?}", time.elapsed());
@@ -43,18 +48,20 @@ impl CpuTask {
                 let eos = self.transformer.eos_token_id();
 
                 let time = Instant::now();
-                let mut token = self
-                    .transformer
-                    .decode(vec![ctx.request(&prompt, max_seq_len)], &self.sample)[0]
-                    .1;
+                let mut token = self.transformer.decode(
+                    vec![ctx.request(&prompt, max_seq_len)],
+                    &*self.sample.lock().unwrap(),
+                )[0]
+                .1;
                 info!("prefill transformer ... {:?}", time.elapsed());
 
                 while token != eos {
                     responsing.send(token).unwrap();
-                    token = self
-                        .transformer
-                        .decode(vec![ctx.request(&[token], max_seq_len)], &self.sample)[0]
-                        .1;
+                    token = self.transformer.decode(
+                        vec![ctx.request(&[token], max_seq_len)],
+                        &*self.sample.lock().unwrap(),
+                    )[0]
+                    .1;
                 }
             }
             Command::Drop { id } => {
@@ -64,12 +71,12 @@ impl CpuTask {
     }
 }
 
-struct SessionContext(super::SessionContext<LayerCache>);
+struct SessionContext(session::SessionContext<LayerCache>);
 
 impl SessionContext {
     #[inline]
     fn new(transformer: &Transformer, id: usize) -> Self {
-        Self(super::SessionContext::new(transformer.new_cache(), id))
+        Self(session::SessionContext::new(transformer.new_cache(), id))
     }
 
     #[inline]

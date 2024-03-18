@@ -1,4 +1,5 @@
 ﻿use crate::{template::Template, Command};
+use common::utok;
 use std::sync::{
     atomic::{AtomicUsize, Ordering::Relaxed},
     mpsc::{channel, Sender},
@@ -71,4 +72,44 @@ pub(crate) struct SessionComponent {
     pub normalizer: Box<dyn Normalizer + Send + Sync>,
     pub tokenizer: Box<dyn Tokenizer + Send + Sync>,
     pub sender: Sender<Command>,
+}
+
+pub(crate) struct SessionContext<Cache> {
+    pub id: usize,
+    pub tokens: Vec<utok>,
+    pub cache: Vec<Cache>,
+}
+
+impl<Cache> SessionContext<Cache> {
+    #[inline]
+    pub fn new(cache: Vec<Cache>, id: usize) -> Self {
+        Self {
+            id,
+            tokens: Vec::new(),
+            cache,
+        }
+    }
+
+    #[inline]
+    pub fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> usize {
+        if self.tokens.len() + tokens.len() > max_seq_len {
+            let pos = self.tokens.len().min(16);
+            if tokens.len() > max_seq_len / 2 {
+                let tokens = &tokens[tokens.len() - max_seq_len / 2..];
+                self.tokens.truncate(pos);
+                self.tokens.extend_from_slice(tokens);
+            } else {
+                let tail_len = (self.tokens.len() - pos).min(64);
+                let tail = self.tokens.len() - tail_len;
+                self.tokens.copy_within(tail.., pos);
+                self.tokens.truncate(pos + tail_len);
+                self.tokens.extend_from_slice(tokens);
+            }
+            pos
+        } else {
+            let pos = self.tokens.len();
+            self.tokens.extend_from_slice(tokens);
+            pos
+        }
+    }
 }

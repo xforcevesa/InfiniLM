@@ -5,18 +5,18 @@ use std::io::Write;
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
     #[clap(flatten)]
-    inference: InferenceArgs,
+    pub inference: InferenceArgs,
     /// Prompt.
     #[clap(short, long)]
-    prompt: String,
+    pub prompt: String,
 }
 
-impl GenerateArgs {
-    pub fn invoke(self) {
-        let service: Service = self.inference.into();
+impl InferenceArgs {
+    pub fn generate(self, prompt: &str) {
+        let service: Service = self.into();
 
-        print!("{}", self.prompt);
-        service.launch().generate(&self.prompt, |piece| {
+        print!("{prompt}");
+        service.launch().generate(prompt, |piece| {
             print!("{piece}");
             std::io::stdout().flush().unwrap();
         });

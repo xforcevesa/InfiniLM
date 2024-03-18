@@ -9,7 +9,6 @@ use tensor::{reslice, slice, udim, DataType, Tensor};
 
 pub type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 pub type LayerCache = transformer::LayerCache<Storage>;
-use transformer::{argmax, random};
 pub use transformer::{save, Llama2, Memory, SampleArgs};
 
 pub struct Transformer(Box<dyn Llama2>);
@@ -236,20 +235,7 @@ impl Transformer {
         requests
             .into_iter()
             .enumerate()
-            .map(|(i, r)| {
-                let logits = &kernel::slice!(logits; voc; [i]);
-                (
-                    r.id,
-                    match sample {
-                        SampleArgs::Top => argmax(logits),
-                        SampleArgs::Random {
-                            temperature,
-                            top_k,
-                            top_p,
-                        } => random(logits, *temperature, *top_k, *top_p),
-                    },
-                )
-            })
+            .map(|(i, r)| (r.id, sample.random(&kernel::slice!(logits; voc; [i]))))
             .collect()
     }
 }

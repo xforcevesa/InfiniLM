@@ -15,7 +15,7 @@ use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbe
 use parameters::{LayersParameters, ModelParameters};
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
-use transformer::{argmax, random, SampleArgs};
+use transformer::SampleArgs;
 
 pub type Request<'a, 'b, Id> = transformer::Request<'a, Id, Storage<'b>>;
 pub type LayerCache<'a> = transformer::LayerCache<Storage<'a>>;
@@ -295,17 +295,9 @@ impl<'ctx> Transformer<'ctx> {
             .into_iter()
             .enumerate()
             .map(|(i, r)| {
-                let logits = &logits[i * voc as usize..][..voc as usize];
                 (
                     r.id,
-                    match sample {
-                        SampleArgs::Top => argmax(logits),
-                        SampleArgs::Random {
-                            temperature,
-                            top_k,
-                            top_p,
-                        } => random(logits, *temperature, *top_k, *top_p),
-                    },
+                    sample.random(&logits[i * voc as usize..][..voc as usize]),
                 )
             })
             .collect()

@@ -11,7 +11,7 @@ use std::{
     path::Path,
     sync::{
         mpsc::{channel, Sender},
-        Arc,
+        Arc, Mutex,
     },
     thread::{self, JoinHandle},
 };
@@ -26,6 +26,7 @@ extern crate log;
 
 pub struct Service {
     session_component: Arc<SessionComponent>,
+    sample: Arc<Mutex<SampleArgs>>,
     _manager: JoinHandle<()>,
 }
 
@@ -39,6 +40,7 @@ pub enum Device {
 impl Service {
     pub fn load_model(path: impl AsRef<Path>, sample: SampleArgs, device: Device) -> Self {
         let model_dir = path.as_ref().to_owned();
+        let sample = Arc::new(Mutex::new(sample));
         let (sender, receiver) = channel();
         Service {
             session_component: Arc::new(SessionComponent {
@@ -47,6 +49,7 @@ impl Service {
                 tokenizer: tokenizer(&model_dir),
                 sender,
             }),
+            sample: sample.clone(),
             _manager: thread::spawn(move || match device {
                 Device::Cpu => {
                     let mut task = CpuTask::new(model_dir, sample);
@@ -74,6 +77,16 @@ impl Service {
     #[inline]
     pub fn launch(&self) -> Session {
         self.session_component.clone().into()
+    }
+
+    #[inline]
+    pub fn sample_args(&self) -> SampleArgs {
+        self.sample.lock().unwrap().clone()
+    }
+
+    #[inline]
+    pub fn set_sample_args(&self, sample: SampleArgs) {
+        *self.sample.lock().unwrap() = sample;
     }
 }
 
@@ -126,44 +139,4 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
         Err(e) => panic!("{e:?}"),
     }
     panic!("Tokenizer file not found");
-}
-
-struct SessionContext<Cache> {
-    id: usize,
-    tokens: Vec<utok>,
-    cache: Vec<Cache>,
-}
-
-impl<Cache> SessionContext<Cache> {
-    #[inline]
-    fn new(cache: Vec<Cache>, id: usize) -> Self {
-        Self {
-            id,
-            tokens: Vec::new(),
-            cache,
-        }
-    }
-
-    #[inline]
-    fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> usize {
-        if self.tokens.len() + tokens.len() > max_seq_len {
-            let pos = self.tokens.len().min(16);
-            if tokens.len() > max_seq_len / 2 {
-                let tokens = &tokens[tokens.len() - max_seq_len / 2..];
-                self.tokens.truncate(pos);
-                self.tokens.extend_from_slice(tokens);
-            } else {
-                let tail_len = (self.tokens.len() - pos).min(64);
-                let tail = self.tokens.len() - tail_len;
-                self.tokens.copy_within(tail.., pos);
-                self.tokens.truncate(pos + tail_len);
-                self.tokens.extend_from_slice(tokens);
-            }
-            pos
-        } else {
-            let pos = self.tokens.len();
-            self.tokens.extend_from_slice(tokens);
-            pos
-        }
-    }
 }

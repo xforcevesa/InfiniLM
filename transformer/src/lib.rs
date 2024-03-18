@@ -12,4 +12,4 @@ pub use cache::LayerCache;
 pub use host_memory::HostMemory;
 pub use parameters::{save, Llama2, Memory, SafeTensorError};
 pub use request::Request;
-pub use sample::{argmax, random, SampleArgs};
+pub use sample::SampleArgs;
