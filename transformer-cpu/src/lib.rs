@@ -9,6 +9,7 @@ use tensor::{reslice, slice, udim, DataType, Tensor};
 
 pub type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 pub type LayerCache = transformer::LayerCache<Storage>;
+use transformer::{argmax, random};
 pub use transformer::{save, Llama2, Memory, SampleArgs};
 
 pub struct Transformer(Box<dyn Llama2>);
@@ -37,7 +38,7 @@ impl Transformer {
     pub fn decode<Id>(
         &mut self,
         mut requests: Vec<Request<Id>>,
-        sample: SampleArgs,
+        sample: &SampleArgs,
     ) -> Vec<(Id, utok)> {
         requests.sort_unstable_by_key(|t| t.tokens.len());
 
@@ -242,10 +243,10 @@ impl Transformer {
                     match sample {
                         SampleArgs::Top => argmax(logits),
                         SampleArgs::Random {
-                            temperature: _,
-                            top_k: _,
-                            top_p: _,
-                        } => todo!(),
+                            temperature,
+                            top_k,
+                            top_p,
+                        } => random(logits, *temperature, *top_k, *top_p),
                     },
                 )
             })
@@ -279,13 +280,4 @@ fn test_build() {
     let _transformer = Transformer::new(Box::new(safetensors));
     let t1 = Instant::now();
     println!("build transformer {:?}", t1 - t0);
-}
-
-fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
-    logits
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap()
-        .0 as _
 }

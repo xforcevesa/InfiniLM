@@ -17,6 +17,7 @@ use std::{
 };
 use template::Template;
 use tokenizer::{BPECommonNormalizer, Normalizer, Tokenizer, VocabTxt, BPE};
+use transformer_cpu::SampleArgs;
 
 pub use session::Session;
 
@@ -36,7 +37,7 @@ pub enum Device {
 }
 
 impl Service {
-    pub fn load_model(path: impl AsRef<Path>, device: Device) -> Self {
+    pub fn load_model(path: impl AsRef<Path>, sample: SampleArgs, device: Device) -> Self {
         let model_dir = path.as_ref().to_owned();
         let (sender, receiver) = channel();
         Service {
@@ -48,7 +49,7 @@ impl Service {
             }),
             _manager: thread::spawn(move || match device {
                 Device::Cpu => {
-                    let mut task = CpuTask::new(model_dir);
+                    let mut task = CpuTask::new(model_dir, sample);
                     while let Ok(cmd) = receiver.recv() {
                         task.invoke(cmd);
                     }
@@ -61,7 +62,8 @@ impl Service {
                     cuda::init();
                     let dev = cuda::Device::new(n);
                     dev.set_mempool_threshold(u64::MAX);
-                    dev.context().apply(|ctx| task(model_dir, receiver, ctx));
+                    dev.context()
+                        .apply(|ctx| task(model_dir, sample, receiver, ctx));
                 }
                 #[cfg(not(detected_cuda))]
                 _ => panic!("Unsupported device"),

@@ -6,10 +6,11 @@ use transformer_cpu::{LayerCache, Memory, Request, SampleArgs, Transformer};
 pub struct CpuTask {
     transformer: Transformer,
     sessions: HashMap<usize, SessionContext>,
+    sample: SampleArgs,
 }
 
 impl CpuTask {
-    pub fn new(model_dir: impl AsRef<Path>) -> Self {
+    pub fn new(model_dir: impl AsRef<Path>, sample: SampleArgs) -> Self {
         let time = Instant::now();
         let model = Box::new(Memory::load_safetensors_from_dir(model_dir).unwrap());
         info!("load model ... {:?}", time.elapsed());
@@ -22,6 +23,7 @@ impl CpuTask {
         Self {
             transformer,
             sessions,
+            sample,
         }
     }
 
@@ -43,7 +45,7 @@ impl CpuTask {
                 let time = Instant::now();
                 let mut token = self
                     .transformer
-                    .decode(vec![ctx.request(&prompt, max_seq_len)], SampleArgs::Top)[0]
+                    .decode(vec![ctx.request(&prompt, max_seq_len)], &self.sample)[0]
                     .1;
                 info!("prefill transformer ... {:?}", time.elapsed());
 
@@ -51,7 +53,7 @@ impl CpuTask {
                     responsing.send(token).unwrap();
                     token = self
                         .transformer
-                        .decode(vec![ctx.request(&[token], max_seq_len)], SampleArgs::Top)[0]
+                        .decode(vec![ctx.request(&[token], max_seq_len)], &self.sample)[0]
                         .1;
                 }
             }

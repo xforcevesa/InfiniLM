@@ -9,7 +9,12 @@ use transformer_nvidia::{
     LayerCache, Request, Transformer,
 };
 
-pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &ContextGuard) {
+pub fn task(
+    model_dir: impl AsRef<Path>,
+    sample: SampleArgs,
+    receiver: Receiver<Command>,
+    ctx: &ContextGuard,
+) {
     let model_dir = model_dir.as_ref();
 
     let time = Instant::now();
@@ -49,7 +54,7 @@ pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &Cont
                 let time = Instant::now();
                 let mut token = transformer.decode(
                     vec![ctx.request(&prompt, max_seq_len)],
-                    SampleArgs::Top,
+                    &sample,
                     &compute,
                     &transfer,
                 )[0]
@@ -60,7 +65,7 @@ pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &Cont
                     responsing.send(token).unwrap();
                     token = transformer.decode(
                         vec![ctx.request(&[token], max_seq_len)],
-                        SampleArgs::Top,
+                        &sample,
                         &compute,
                         &transfer,
                     )[0]

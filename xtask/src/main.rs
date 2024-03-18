@@ -4,6 +4,7 @@ mod generate;
 
 use ::service::{Device, Service};
 use clap::Parser;
+use transformer::SampleArgs;
 
 #[macro_use]
 extern crate clap;
@@ -40,6 +41,15 @@ struct InferenceArgs {
     /// Model directory.
     #[clap(short, long)]
     model: String,
+    /// Temperature for random sampling.
+    #[clap(long, default_value = "0.0")]
+    temperature: f32,
+    /// Top-k for random sampling.
+    #[clap(long, default_value = "usize::MAX")]
+    top_k: usize,
+    /// Top-p for random sampling.
+    #[clap(long, default_value = "1.0")]
+    top_p: f32,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
@@ -52,8 +62,17 @@ impl From<InferenceArgs> for Service {
     fn from(args: InferenceArgs) -> Self {
         use log::LevelFilter;
         use simple_logger::SimpleLogger;
-        let log = args
-            .log
+
+        let InferenceArgs {
+            model,
+            temperature,
+            top_k,
+            top_p,
+            nvidia,
+            log,
+        } = args;
+
+        let log = log
             .as_ref()
             .and_then(|log| match log.to_lowercase().as_str() {
                 "off" | "none" => Some(LevelFilter::Off),
@@ -66,9 +85,20 @@ impl From<InferenceArgs> for Service {
             .unwrap_or(LevelFilter::Warn);
         SimpleLogger::new().with_level(log).init().unwrap();
 
+        let sample = if temperature <= 0. || top_k < 2 || top_p <= 0. {
+            SampleArgs::Top
+        } else {
+            SampleArgs::Random {
+                temperature,
+                top_k,
+                top_p,
+            }
+        };
+
         Service::load_model(
-            args.model,
-            if args.nvidia {
+            model,
+            sample,
+            if nvidia {
                 Device::NvidiaGpu(0)
             } else {
                 Device::Cpu

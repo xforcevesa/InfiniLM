@@ -15,10 +15,10 @@ use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbe
 use parameters::{LayersParameters, ModelParameters};
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
+use transformer::{argmax, random, SampleArgs};
 
 pub type Request<'a, 'b, Id> = transformer::Request<'a, Id, Storage<'b>>;
 pub type LayerCache<'a> = transformer::LayerCache<Storage<'a>>;
-use transformer::SampleArgs;
 pub use transformer::{Llama2, Memory};
 pub extern crate cuda;
 
@@ -61,7 +61,7 @@ impl<'ctx> Transformer<'ctx> {
     pub fn decode<Id>(
         &mut self,
         mut requests: Vec<Request<Id>>,
-        sample: SampleArgs,
+        sample: &SampleArgs,
         compute: &Stream<'ctx>,
         transfer: &Stream<'ctx>,
     ) -> Vec<(Id, utok)> {
@@ -301,10 +301,10 @@ impl<'ctx> Transformer<'ctx> {
                     match sample {
                         SampleArgs::Top => argmax(logits),
                         SampleArgs::Random {
-                            temperature: _,
-                            top_k: _,
-                            top_p: _,
-                        } => todo!(),
+                            temperature,
+                            top_k,
+                            top_p,
+                        } => random(logits, *temperature, *top_k, *top_p),
                     },
                 )
             })
@@ -330,13 +330,4 @@ fn map_tensor(tensor: &Tensor<Storage>) -> Tensor<Vec<u8>> {
             buf
         })
     }
-}
-
-fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
-    logits
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap()
-        .0 as _
 }
