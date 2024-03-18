@@ -42,14 +42,14 @@ struct InferenceArgs {
     #[clap(short, long)]
     model: String,
     /// Temperature for random sampling.
-    #[clap(long, default_value = "0.0")]
-    temperature: f32,
+    #[clap(long)]
+    temperature: Option<f32>,
     /// Top-k for random sampling.
-    #[clap(long, default_value = "usize::MAX")]
-    top_k: usize,
+    #[clap(long)]
+    top_k: Option<usize>,
     /// Top-p for random sampling.
-    #[clap(long, default_value = "1.0")]
-    top_p: f32,
+    #[clap(long)]
+    top_p: Option<f32>,
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
@@ -88,9 +88,9 @@ impl From<InferenceArgs> for Service {
         Service::load_model(
             model,
             SampleArgs {
-                temperature,
-                top_k,
-                top_p,
+                temperature: temperature.unwrap_or(0.),
+                top_k: top_k.unwrap_or(usize::MAX),
+                top_p: top_p.unwrap_or(1.),
             },
             if nvidia {
                 Device::NvidiaGpu(0)

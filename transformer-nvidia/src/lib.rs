@@ -14,7 +14,7 @@ use cuda::{AsRaw, CudaDataType::half, Stream};
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayersParameters, ModelParameters};
 use storage::Storage;
-use tensor::{reslice, slice, udim, DataType, Tensor};
+use tensor::{slice, udim, DataType, Tensor};
 use transformer::SampleArgs;
 
 pub type Request<'a, 'b, Id> = transformer::Request<'a, Id, Storage<'b>>;
@@ -277,7 +277,6 @@ impl<'ctx> Transformer<'ctx> {
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&x));
 
-        let mut logits = unsafe { logits_dev.as_ref().map_physical(|dev| vec![0; dev.len()]) };
         mat_mul(
             &self.cublas,
             &mut logits_dev,
@@ -286,18 +285,17 @@ impl<'ctx> Transformer<'ctx> {
             &self.model.lm_head,
             1.,
         );
-        compute.synchronize();
-        logits_dev.physical().copy_out(logits.physical_mut());
-        // println!("logits:\n{}", logits);
 
-        let logits: &[f16] = reslice(logits.as_slice());
+        let mut logits = vec![f16::ZERO; logits_dev.size()];
+        compute.synchronize();
+        logits_dev.physical().copy_out(&mut logits);
         requests
             .into_iter()
             .enumerate()
             .map(|(i, r)| {
                 (
                     r.id,
-                    sample.random(&logits[i * voc as usize..][..voc as usize]),
+                    sample.random(&mut logits[i * voc as usize..][..voc as usize]),
                 )
             })
             .collect()

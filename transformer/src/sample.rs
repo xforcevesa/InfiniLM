@@ -47,20 +47,36 @@ impl SampleArgs {
                 }
             }
         }
+        impl From<(usize, &f16)> for Probability {
+            #[inline]
+            fn from((i, p): (usize, &f16)) -> Self {
+                Self {
+                    val: p.to_f32(),
+                    tok: i as _,
+                }
+            }
+        }
+
         // top-k & max
-        let (logits, max) = {
+        let logits = if self.top_k < logits.len() {
             let mut buf = BinaryHeap::with_capacity(self.top_k + 1);
-            let mut max = f32::NEG_INFINITY;
-            for (i, p) in logits.iter().enumerate() {
-                let val = p.to_f32();
-                max = max.max(val);
-                buf.push(Probability { val, tok: i as _ });
+            for it in logits.iter().enumerate() {
+                buf.push(Probability::from(it));
                 if buf.len() > self.top_k {
                     buf.pop();
                 }
             }
-            (buf.into_vec(), max)
+            buf.into_vec()
+        } else {
+            let mut buf = logits
+                .iter()
+                .enumerate()
+                .map(Probability::from)
+                .collect::<Vec<_>>();
+            buf.sort_unstable();
+            buf
         };
+        let max = logits[0].val;
         // temperature & sum
         let (logits, sum) = {
             let mut logits = logits;
