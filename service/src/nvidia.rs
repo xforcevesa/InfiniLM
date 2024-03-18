@@ -1,11 +1,9 @@
-﻿use crate::{argmax, Command};
+﻿use crate::Command;
 use common::utok;
-use half::f16;
 use std::{
     collections::HashMap, fs::File, io::Read, path::Path, sync::mpsc::Receiver, time::Instant,
 };
-use tensor::reslice;
-use transformer_cpu::{Llama2, Memory};
+use transformer_cpu::{Llama2, Memory, SampleArgs};
 use transformer_nvidia::{
     cuda::{ContextGuard, Stream},
     LayerCache, Request, Transformer,
@@ -49,25 +47,24 @@ pub fn task(model_dir: impl AsRef<Path>, receiver: Receiver<Command>, ctx: &Cont
                     .or_insert_with_key(|&id| SessionContext::new(&transformer, id, &transfer));
 
                 let time = Instant::now();
-                let mut logits = transformer
-                    .decode(vec![ctx.request(&prompt, max_seq_len)], &compute, &transfer)
-                    .1;
+                let mut token = transformer.decode(
+                    vec![ctx.request(&prompt, max_seq_len)],
+                    SampleArgs::Top,
+                    &compute,
+                    &transfer,
+                )[0]
+                .1;
                 info!("prefill transformer ... {:?}", time.elapsed());
 
-                loop {
-                    let token = argmax(reslice::<u8, f16>(logits.as_slice()));
-                    if token == eos {
-                        break;
-                    }
+                while token != eos {
                     responsing.send(token).unwrap();
-
-                    logits = transformer
-                        .decode(
-                            vec![ctx.request(&[token], max_seq_len)],
-                            &compute,
-                            &transfer,
-                        )
-                        .1;
+                    token = transformer.decode(
+                        vec![ctx.request(&[token], max_seq_len)],
+                        SampleArgs::Top,
+                        &compute,
+                        &transfer,
+                    )[0]
+                    .1;
                 }
             }
             Command::Drop { id } => {

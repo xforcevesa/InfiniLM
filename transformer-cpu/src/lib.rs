@@ -2,13 +2,14 @@ mod kernel;
 mod storage;
 
 use common::utok;
+use gemm::f16;
 use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
 
 pub type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 pub type LayerCache = transformer::LayerCache<Storage>;
-pub use transformer::{save, Llama2, Memory};
+pub use transformer::{save, Llama2, Memory, SampleArgs};
 
 pub struct Transformer(Box<dyn Llama2>);
 
@@ -33,7 +34,11 @@ impl Transformer {
         self.0.eos_token_id()
     }
 
-    pub fn decode<Id>(&mut self, mut requests: Vec<Request<Id>>) -> (Vec<Id>, Tensor<Vec<u8>>) {
+    pub fn decode<Id>(
+        &mut self,
+        mut requests: Vec<Request<Id>>,
+        sample: SampleArgs,
+    ) -> Vec<(Id, utok)> {
         requests.sort_unstable_by_key(|t| t.tokens.len());
 
         // println!("tokens:");
@@ -226,7 +231,25 @@ impl Transformer {
         mat_mul(&mut logits, 0., &x, &lm_head, 1.);
         // println!("logits:\n{}", logits.access());
 
-        (requests.into_iter().map(|r| r.id).collect(), logits)
+        let logits: &[f16] = reslice(logits.as_slice());
+        requests
+            .into_iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let logits = &kernel::slice!(logits; voc; [i]);
+                (
+                    r.id,
+                    match sample {
+                        SampleArgs::Top => argmax(logits),
+                        SampleArgs::Random {
+                            temperature: _,
+                            top_k: _,
+                            top_p: _,
+                        } => todo!(),
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -256,4 +279,13 @@ fn test_build() {
     let _transformer = Transformer::new(Box::new(safetensors));
     let t1 = Instant::now();
     println!("build transformer {:?}", t1 - t0);
+}
+
+fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .unwrap()
+        .0 as _
 }

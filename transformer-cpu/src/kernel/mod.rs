@@ -14,8 +14,8 @@ pub(super) use swiglu::swiglu;
 
 macro_rules! slice {
     ($blob:expr; $width:expr; [$line:expr]) => {
-        $blob[$line as usize * $width..][..$width]
+        $blob[$line as usize * $width as usize..][..$width as usize]
     };
 }
 
-use slice;
+pub(super) use slice;

@@ -1,9 +1,7 @@
-﻿use crate::{argmax, Command};
+﻿use crate::Command;
 use common::utok;
-use half::f16;
 use std::{collections::HashMap, path::Path, time::Instant};
-use tensor::reslice;
-use transformer_cpu::{LayerCache, Memory, Request, Transformer};
+use transformer_cpu::{LayerCache, Memory, Request, SampleArgs, Transformer};
 
 pub struct CpuTask {
     transformer: Transformer,
@@ -43,22 +41,17 @@ impl CpuTask {
                 let eos = self.transformer.eos_token_id();
 
                 let time = Instant::now();
-                let mut logits = self
+                let mut token = self
                     .transformer
-                    .decode(vec![ctx.request(&prompt, max_seq_len)])
+                    .decode(vec![ctx.request(&prompt, max_seq_len)], SampleArgs::Top)[0]
                     .1;
                 info!("prefill transformer ... {:?}", time.elapsed());
 
-                loop {
-                    let token = argmax(reslice::<u8, f16>(logits.as_slice()));
-                    if token == eos {
-                        break;
-                    }
+                while token != eos {
                     responsing.send(token).unwrap();
-
-                    logits = self
+                    token = self
                         .transformer
-                        .decode(vec![ctx.request(&[token], max_seq_len)])
+                        .decode(vec![ctx.request(&[token], max_seq_len)], SampleArgs::Top)[0]
                         .1;
                 }
             }

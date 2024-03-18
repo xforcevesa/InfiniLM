@@ -7,15 +7,18 @@ mod storage;
 #[macro_use]
 extern crate log;
 
+use ::half::f16;
+use common::utok;
 use cublas::Cublas;
 use cuda::{AsRaw, CudaDataType::half, Stream};
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayersParameters, ModelParameters};
 use storage::Storage;
-use tensor::{slice, udim, DataType, Tensor};
+use tensor::{reslice, slice, udim, DataType, Tensor};
 
 pub type Request<'a, 'b, Id> = transformer::Request<'a, Id, Storage<'b>>;
 pub type LayerCache<'a> = transformer::LayerCache<Storage<'a>>;
+use transformer::SampleArgs;
 pub use transformer::{Llama2, Memory};
 pub extern crate cuda;
 
@@ -57,10 +60,11 @@ impl<'ctx> Transformer<'ctx> {
 
     pub fn decode<Id>(
         &mut self,
-        mut requests: Vec<Request<'_, 'ctx, Id>>,
+        mut requests: Vec<Request<Id>>,
+        sample: SampleArgs,
         compute: &Stream<'ctx>,
         transfer: &Stream<'ctx>,
-    ) -> (Vec<Id>, Tensor<Vec<u8>>) {
+    ) -> Vec<(Id, utok)> {
         requests.sort_unstable_by_key(|t| t.tokens.len());
 
         // println!("tokens:");
@@ -286,7 +290,25 @@ impl<'ctx> Transformer<'ctx> {
         logits_dev.physical().copy_out(logits.physical_mut());
         // println!("logits:\n{}", logits);
 
-        (requests.into_iter().map(|r| r.id).collect(), logits)
+        let logits: &[f16] = reslice(logits.as_slice());
+        requests
+            .into_iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let logits = &logits[i * voc as usize..][..voc as usize];
+                (
+                    r.id,
+                    match sample {
+                        SampleArgs::Top => argmax(logits),
+                        SampleArgs::Random {
+                            temperature: _,
+                            top_k: _,
+                            top_p: _,
+                        } => todo!(),
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -308,4 +330,13 @@ fn map_tensor(tensor: &Tensor<Storage>) -> Tensor<Vec<u8>> {
             buf
         })
     }
+}
+
+fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .unwrap()
+        .0 as _
 }

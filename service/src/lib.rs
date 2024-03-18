@@ -165,12 +165,3 @@ impl<Cache> SessionContext<Cache> {
         }
     }
 }
-
-fn argmax<T: PartialOrd>(logits: &[T]) -> utok {
-    logits
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap()
-        .0 as _
-}
