@@ -151,9 +151,9 @@ impl Transformer {
                 let v_att = v_cache.as_ref().slice(att_slice);
                 let k_att = unsafe { k_att.map_physical(|u| &**u) };
                 let v_att = unsafe { v_att.map_physical(|u| &**u) };
-                // println!("layer {layer} q attention:\n{}", q_att);
-                // println!("layer {layer} k attention:\n{}", k_att.access());
-                // println!("layer {layer} v attention:\n{}", v_att.access());
+                // println!("layer {layer} q attention:\n{q_att}");
+                // println!("layer {layer} k attention:\n{k_att}");
+                // println!("layer {layer} v attention:\n{v_att}");
 
                 let shape_att0 = &[nkvh, head_group * seq_len, att_len];
                 let shape_att1 = &[nkvh * head_group, seq_len, att_len];
@@ -171,26 +171,26 @@ impl Transformer {
 
             let wo = self.0.self_attn_o_proj(layer).transpose(&[1, 0]);
             mat_mul(&mut x0, 1., &x1, &wo, 1.);
-            // println!("layer {layer} o_proj:\n{}", x0.access());
+            // println!("layer {layer} o_proj:\n{x0}");
 
             let post_layernorm = self.0.post_attention_layernorm(layer);
             rms_norm(&mut x1, &x0, &post_layernorm, epsilon);
-            // println!("layer {layer} post norm:\n{}", x1.access());
+            // println!("layer {layer} post norm:\n{x1}");
 
             let w_gate_up = self.0.mlp_gate_up(layer).transpose(&[1, 0]);
             mat_mul(&mut gate_up, 0., &x1, &w_gate_up, 1.);
             let mut gate_up = gate_up.split(1, &[di as _, di as _]);
             let up = gate_up.pop().unwrap();
             let mut gate = gate_up.pop().unwrap();
-            // println!("layer {layer} gate:\n{}", gate.access());
-            // println!("layer {layer} up:\n{}", up.access());
+            // println!("layer {layer} gate:\n{gate}");
+            // println!("layer {layer} up:\n{up}");
 
             swiglu(&mut gate, &up);
-            // println!("layer {layer} swiglu:\n{}", gate.access());
+            // println!("layer {layer} swiglu:\n{gate}");
 
             let mlp_down = self.0.mlp_down(layer).transpose(&[1, 0]);
             mat_mul(&mut x0, 1., &gate, &mlp_down, 1.);
-            // println!("layer {layer} down:\n{}", x0.access());
+            // println!("layer {layer} down:\n{x0}");
         }
 
         let tokens = {
@@ -218,7 +218,7 @@ impl Transformer {
             vec![0u8; (tokens.len * voc) as usize * dt.size()],
         );
         let mut x = x0.slice(&[tokens, slice![all]]);
-        // println!("decode slice:\n{}", x.access());
+        // println!("decode slice:\n{x}");
 
         // 复制一个 x 以实现原地归一化
         let x_ = unsafe {
@@ -226,11 +226,11 @@ impl Transformer {
                 .map_physical(|u| std::slice::from_raw_parts(u.as_ptr(), u.len()))
         };
         rms_norm(&mut x, &x_, &self.0.model_norm(), epsilon);
-        // println!("model norm:\n{}", x.access());
+        // println!("model norm:\n{x}");
 
         let lm_head = self.0.lm_head().transpose(&[1, 0]);
         mat_mul(&mut logits, 0., &x, &lm_head, 1.);
-        // println!("logits:\n{}", logits.access());
+        // println!("logits:\n{logits}");
 
         macro_rules! sample {
             ($ty:ty) => {{

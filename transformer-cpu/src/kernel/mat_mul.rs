@@ -50,7 +50,21 @@ where
 
     assert_eq!(c.batch, a.batch);
     assert_eq!(c.batch, b.batch);
+    // const LAYER: usize = 40;
+    // static mut I: usize = 0;
+    // unsafe {
+    //     if I == 0 {
+    //         println!();
+    //         // #[cfg(detected_mkl)]
+    //         // {
+    //         //     println!("MKL threads: {}", mkl::mkl_get_max_threads());
+    //         //     println!("MKL dynamic: {}", mkl::mkl_get_dynamic());
+    //         // }
+    //     }
+    // }
+    // let time = std::time::Instant::now();
     match dt {
+        // DataType::F16 => mkl::gemm(dt, c, beta, alpha, a, b),
         DataType::F16 => gemm_as_blas::<f16>(c, beta, alpha, a, b),
         #[cfg(not(detected_mkl))]
         DataType::F32 => gemm_as_blas::<f32>(c, beta, alpha, a, b),
@@ -58,6 +72,17 @@ where
         DataType::F32 => mkl::gemm(dt, c, beta, alpha, a, b),
         _ => unreachable!(),
     }
+    // unsafe {
+    //     if I % 6 == 0 {
+    //         println!();
+    //     }
+    //     println!("{}:{} {}", I / 6, I % 6, time.elapsed().as_micros());
+    //     if I == LAYER * 6 {
+    //         I = 0;
+    //     } else {
+    //         I += 1;
+    //     }
+    // }
 }
 
 fn gemm_as_blas<T: 'static + BetweenF32>(c: Matrix, beta: f32, alpha: f32, a: Matrix, b: Matrix) {
@@ -108,9 +133,10 @@ fn gemm_as_blas<T: 'static + BetweenF32>(c: Matrix, beta: f32, alpha: f32, a: Ma
 #[cfg(detected_mkl)]
 mod mkl {
     use gemm::f16;
+    use std::ffi::c_int;
     use tensor::DataType;
     use transformer::Matrix;
-    const COL_MAJOR: i32 = 102;
+    const COL_MAJOR: c_int = 102;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     #[repr(C)]
@@ -120,39 +146,45 @@ mod mkl {
         Ordinary = 112,
     }
 
+    #[allow(unused)]
     extern "C" {
+        pub fn mkl_get_max_threads() -> c_int;
+        pub fn mkl_get_dynamic() -> c_int;
+        pub fn mkl_set_num_threads(nt: c_int);
+        pub fn mkl_set_num_threads_local(nt: c_int);
+
         fn cblas_hgemm(
-            layout: i32,
+            layout: c_int,
             transa: CBLAS_TRANSPOSE,
             transb: CBLAS_TRANSPOSE,
-            m: i32,
-            n: i32,
-            k: i32,
+            m: c_int,
+            n: c_int,
+            k: c_int,
             alpha: f16,
             a: *const f16,
-            lda: i32,
+            lda: c_int,
             b: *const f16,
-            ldb: i32,
+            ldb: c_int,
             beta: f16,
             c: *mut f16,
-            ldc: i32,
+            ldc: c_int,
         );
 
         fn cblas_sgemm(
-            layout: i32,
+            layout: c_int,
             transa: CBLAS_TRANSPOSE,
             transb: CBLAS_TRANSPOSE,
-            m: i32,
-            n: i32,
-            k: i32,
+            m: c_int,
+            n: c_int,
+            k: c_int,
             alpha: f32,
             a: *const f32,
-            lda: i32,
+            lda: c_int,
             b: *const f32,
-            ldb: i32,
+            ldb: c_int,
             beta: f32,
             c: *mut f32,
-            ldc: i32,
+            ldc: c_int,
         );
     }
 
@@ -183,10 +215,10 @@ mod mkl {
             DataType::F16 => unsafe {
                 let alpha = f16::from_f32(alpha);
                 let beta = f16::from_f32(beta);
-                for i in 0..batch {
-                    let a_ = a.base.cast::<f16>().offset(i as isize * a.stride as isize);
-                    let b_ = b.base.cast::<f16>().offset(i as isize * b.stride as isize);
-                    let c_ = c.base.cast::<f16>().offset(i as isize * c.stride as isize);
+                for i in 0..batch as isize {
+                    let a_ = a.base.cast::<f16>().offset(i * a.stride as isize);
+                    let b_ = b.base.cast::<f16>().offset(i * b.stride as isize);
+                    let c_ = c.base.cast::<f16>().offset(i * c.stride as isize);
                     cblas_hgemm(
                         COL_MAJOR,
                         trans(&a),
@@ -206,10 +238,10 @@ mod mkl {
                 }
             },
             DataType::F32 => unsafe {
-                for i in 0..batch {
-                    let a_ = a.base.cast::<f32>().offset(i as isize * a.stride as isize);
-                    let b_ = b.base.cast::<f32>().offset(i as isize * b.stride as isize);
-                    let c_ = c.base.cast::<f32>().offset(i as isize * c.stride as isize);
+                for i in 0..batch as isize {
+                    let a_ = a.base.cast::<f32>().offset(i * a.stride as isize);
+                    let b_ = b.base.cast::<f32>().offset(i * b.stride as isize);
+                    let c_ = c.base.cast::<f32>().offset(i * c.stride as isize);
                     cblas_sgemm(
                         COL_MAJOR,
                         trans(&a),

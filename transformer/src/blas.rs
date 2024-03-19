@@ -5,6 +5,7 @@
 };
 use tensor::Tensor;
 
+#[derive(Clone, Debug)]
 pub struct Matrix {
     pub batch: c_int,
     pub stride: c_longlong,
