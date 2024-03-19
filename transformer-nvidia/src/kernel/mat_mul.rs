@@ -2,11 +2,12 @@
 use cuda::{AsRaw, DevSlice};
 use half::f16;
 use std::{
-    ffi::{c_int, c_longlong, c_void},
     mem::swap,
     ops::{Deref, DerefMut},
+    os::raw::c_void,
 };
 use tensor::{DataType, Tensor};
+use transformer::Matrix;
 
 pub fn mat_mul<T, U, V>(
     handle: &Cublas,
@@ -25,9 +26,14 @@ pub fn mat_mul<T, U, V>(
     assert_eq!(a.data_type(), dt);
     assert_eq!(b.data_type(), dt);
 
-    let mut c = Matrix::from(&*c);
-    let mut a = Matrix::from(a);
-    let mut b = Matrix::from(b);
+    #[inline]
+    fn base(tensor: &impl Deref<Target = DevSlice>) -> *mut c_void {
+        unsafe { tensor.as_raw() as _ }
+    }
+
+    let mut c = Matrix::new(c, base);
+    let mut a = Matrix::new(a, base);
+    let mut b = Matrix::new(b, base);
     assert_eq!(c.r, a.r); // m
     assert_eq!(c.c, b.c); // n
     assert_eq!(a.c, b.r); // k
@@ -55,98 +61,40 @@ pub fn mat_mul<T, U, V>(
     let n = c.c;
     let k = a.c;
 
-    let (lda, transa) = a.ld_op();
-    let (ldb, transb) = b.ld_op();
-    let ldc = c.cs;
+    #[inline]
+    fn trans(m: &Matrix) -> cublasOperation_t {
+        if m.rs == 1 {
+            cublasOperation_t::CUBLAS_OP_N
+        } else if m.cs == 1 {
+            cublasOperation_t::CUBLAS_OP_T
+        } else {
+            panic!("Matrix is not contiguous");
+        }
+    }
 
     cublas!(cublasGemmStridedBatchedEx(
         handle.as_raw(),
-        transa,
-        transb,
+        trans(&a),
+        trans(&b),
         m,
         n,
         k,
         ((&alpha) as *const f16).cast(),
-        a.ptr,
+        a.base as _,
         cudaDataType_t::CUDA_R_16F,
-        lda,
+        a.ld(),
         a.stride,
-        b.ptr,
+        b.base as _,
         cudaDataType_t::CUDA_R_16F,
-        ldb,
+        b.ld(),
         b.stride,
         ((&beta) as *const f16).cast(),
-        c.ptr,
+        c.base as _,
         cudaDataType_t::CUDA_R_16F,
-        ldc,
+        c.ld(),
         c.stride,
         batch,
         cublasComputeType_t::CUBLAS_COMPUTE_16F,
         cublasGemmAlgo_t::CUBLAS_GEMM_DFALT,
     ));
-}
-
-struct Matrix {
-    batch: c_int,
-    stride: c_longlong,
-    r: c_int,
-    c: c_int,
-    rs: c_int,
-    cs: c_int,
-    ptr: *mut c_void,
-}
-
-impl<T> From<&Tensor<T>> for Matrix
-where
-    T: Deref<Target = DevSlice>,
-{
-    fn from(tensor: &Tensor<T>) -> Self {
-        let strides = tensor.strides();
-        let ptr = (unsafe { tensor.physical().as_raw() } as isize + tensor.bytes_offset()) as _;
-        match tensor.shape() {
-            &[r, c] => Self {
-                batch: 1,
-                stride: 0,
-                r: r as _,
-                c: c as _,
-                rs: strides[0] as _,
-                cs: strides[1] as _,
-                ptr,
-            },
-            &[batch, r, c] => Self {
-                batch: batch as _,
-                stride: if batch == 1 { 0 } else { strides[0] as _ },
-                r: r as _,
-                c: c as _,
-                rs: strides[1] as _,
-                cs: strides[2] as _,
-                ptr,
-            },
-            s => panic!("Invalid matrix shape: {s:?}"),
-        }
-    }
-}
-
-impl Matrix {
-    #[inline]
-    fn match_batch(&self, batch: c_int) -> bool {
-        self.batch == batch || self.batch == 1
-    }
-
-    #[inline]
-    fn transpose(&mut self) {
-        swap(&mut self.r, &mut self.c);
-        swap(&mut self.rs, &mut self.cs);
-    }
-
-    #[inline]
-    fn ld_op(&self) -> (c_int, cublasOperation_t) {
-        if self.rs == 1 {
-            (self.cs, cublasOperation_t::CUBLAS_OP_N)
-        } else if self.cs == 1 {
-            (self.rs, cublasOperation_t::CUBLAS_OP_T)
-        } else {
-            panic!("Matrix is not contiguous");
-        }
-    }
 }

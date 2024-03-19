@@ -2,12 +2,14 @@
 
 #![deny(warnings)]
 
+mod blas;
 mod cache;
 mod host_memory;
 mod parameters;
 mod request;
 mod sample;
 
+pub use blas::Matrix;
 pub use cache::LayerCache;
 pub use host_memory::HostMemory;
 pub use parameters::{save, Llama2, Memory, SafeTensorError};
