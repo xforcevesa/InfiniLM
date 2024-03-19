@@ -53,6 +53,7 @@ struct InferenceArgs {
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
+    #[cfg(feature = "nvidia")]
     /// Use Nvidia GPU.
     #[clap(long)]
     nvidia: bool,
@@ -68,6 +69,7 @@ impl From<InferenceArgs> for Service {
             temperature,
             top_k,
             top_p,
+            #[cfg(feature = "nvidia")]
             nvidia,
             log,
         } = args;
@@ -92,9 +94,16 @@ impl From<InferenceArgs> for Service {
                 top_k: top_k.unwrap_or(usize::MAX),
                 top_p: top_p.unwrap_or(1.),
             },
-            if nvidia {
-                Device::NvidiaGpu(0)
-            } else {
+            #[cfg(feature = "nvidia")]
+            {
+                if nvidia {
+                    Device::NvidiaGpu(0)
+                } else {
+                    Device::Cpu
+                }
+            },
+            #[cfg(not(feature = "nvidia"))]
+            {
                 Device::Cpu
             },
         )
