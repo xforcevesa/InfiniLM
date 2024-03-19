@@ -20,9 +20,10 @@ pub fn mat_mul<T, U, V>(
     U: Deref<Target = DevSlice>,
     V: Deref<Target = DevSlice>,
 {
-    assert_eq!(c.data_type(), DataType::F16);
-    assert_eq!(a.data_type(), DataType::F16);
-    assert_eq!(b.data_type(), DataType::F16);
+    let dt = c.data_type();
+    assert_eq!(dt, DataType::F16);
+    assert_eq!(a.data_type(), dt);
+    assert_eq!(b.data_type(), dt);
 
     let mut c = Matrix::from(&*c);
     let mut a = Matrix::from(a);

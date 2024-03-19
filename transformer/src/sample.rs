@@ -1,7 +1,5 @@
-﻿use std::{cmp::Ordering, collections::BinaryHeap};
-
-use common::utok;
-use half::f16;
+﻿use common::utok;
+use std::{cmp::Ordering, collections::BinaryHeap, fmt::Debug};
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct SampleArgs {
@@ -16,7 +14,10 @@ impl SampleArgs {
         self.temperature <= 0. || self.top_k < 2 || self.top_p <= 0.
     }
 
-    pub fn random(&self, logits: &[f16]) -> utok {
+    pub fn random<T>(&self, logits: &[T]) -> utok
+    where
+        T: BetweenF32 + PartialOrd,
+    {
         if self.is_argmax() {
             return logits
                 .iter()
@@ -47,11 +48,11 @@ impl SampleArgs {
                 }
             }
         }
-        impl From<(usize, &f16)> for Probability {
+        impl<T: BetweenF32> From<(usize, &T)> for Probability {
             #[inline]
-            fn from((i, p): (usize, &f16)) -> Self {
+            fn from((i, p): (usize, &T)) -> Self {
                 Self {
-                    val: p.to_f32(),
+                    val: p.get(),
                     tok: i as _,
                 }
             }
@@ -114,5 +115,41 @@ impl SampleArgs {
             })
             .unwrap_or(logits.last().unwrap())
             .tok
+    }
+}
+
+pub trait BetweenF32 {
+    fn zero() -> Self;
+    fn cast(f: f32) -> Self;
+    fn get(&self) -> f32;
+}
+
+impl BetweenF32 for f32 {
+    #[inline]
+    fn zero() -> Self {
+        0.
+    }
+    #[inline]
+    fn cast(f: f32) -> Self {
+        f
+    }
+    #[inline]
+    fn get(&self) -> f32 {
+        *self
+    }
+}
+
+impl BetweenF32 for half::f16 {
+    #[inline]
+    fn zero() -> Self {
+        Self::ZERO
+    }
+    #[inline]
+    fn cast(f: f32) -> Self {
+        Self::from_f32(f)
+    }
+    #[inline]
+    fn get(&self) -> f32 {
+        Self::to_f32(*self)
     }
 }

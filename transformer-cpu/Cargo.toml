@@ -11,6 +11,4 @@ common = { path = "../common" }
 tensor = { path = "../tensor" }
 transformer = { path = "../transformer" }
 gemm = "0.17"
-
-[dev-dependencies]
-tokenizer = { path = "../tokenizer" }
+intel-mkl-src = "0.8"

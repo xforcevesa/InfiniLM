@@ -16,6 +16,7 @@ pub struct Transformer(Box<dyn Llama2>);
 impl Transformer {
     #[inline]
     pub fn new(model: Box<dyn Llama2 + 'static>) -> Self {
+        assert!(model.data_type() == DataType::F16 || model.data_type() == DataType::F32);
         Self(model)
     }
 
@@ -231,12 +232,22 @@ impl Transformer {
         mat_mul(&mut logits, 0., &x, &lm_head, 1.);
         // println!("logits:\n{}", logits.access());
 
-        let logits: &[f16] = reslice(logits.as_slice());
-        requests
-            .into_iter()
-            .enumerate()
-            .map(|(i, r)| (r.id, sample.random(&kernel::slice!(logits; voc; [i]))))
-            .collect()
+        macro_rules! sample {
+            ($ty:ty) => {{
+                let logits: &[$ty] = reslice(logits.as_slice());
+                requests
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, r)| (r.id, sample.random(&kernel::slice!(logits; voc; [i]))))
+                    .collect()
+            }};
+        }
+
+        match dt {
+            DataType::F16 => sample!(f16),
+            DataType::F32 => sample!(f32),
+            _ => unreachable!(),
+        }
     }
 }
 

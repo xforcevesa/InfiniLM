@@ -1,12 +1,25 @@
 ﻿use super::slice;
 use gemm::f16;
 use std::ops::DerefMut;
-use tensor::{expand_indices, idx_strides, Tensor};
+use tensor::{expand_indices, idx_strides, DataType, Tensor};
+use transformer::BetweenF32;
 
 /// - x: [N0, N1, ... , N_, seq_len, att_len]
 pub fn softmax<T>(x: &mut Tensor<T>)
 where
     T: DerefMut<Target = [u8]>,
+{
+    match x.data_type() {
+        DataType::F16 => typed::<T, f16>(x),
+        DataType::F32 => typed::<T, f32>(x),
+        _ => unreachable!(),
+    }
+}
+
+fn typed<T, U>(x: &mut Tensor<T>)
+where
+    T: DerefMut<Target = [u8]>,
+    U: BetweenF32 + PartialOrd + Clone,
 {
     assert!(x.contiguous_len() >= 2);
     let (batch, dim) = x.shape().split_at(x.shape().len() - 2);
@@ -18,7 +31,7 @@ where
         let ptr = x
             .locate_mut(&expand_indices(i, &idx_strides, &[0, 0, 1]).as_view())
             .unwrap()
-            .cast::<f16>();
+            .cast::<U>();
         let slice = unsafe { std::slice::from_raw_parts_mut(ptr, seq_len * att_len) };
         for r in 0..seq_len {
             let slice = &mut slice!(slice; att_len; [r]);
@@ -28,19 +41,18 @@ where
                 .iter()
                 .max_by(|a, b| a.partial_cmp(b).unwrap())
                 .unwrap()
-                .to_f32();
+                .get();
             let sum = att
                 .iter_mut()
                 .map(|x| {
-                    let exp = (x.to_f32() - max).exp();
-                    *x = f16::from_f32(exp);
+                    let exp = (x.get() - max).exp();
+                    *x = U::cast(exp);
                     exp
                 })
                 .sum::<f32>();
-            let sum = f16::from_f32(sum);
-            att.iter_mut().for_each(|x| *x /= sum);
+            att.iter_mut().for_each(|x| *x = U::cast(x.get() / sum));
 
-            tail.fill(f16::ZERO);
+            tail.fill(U::zero());
         }
     }
 }
