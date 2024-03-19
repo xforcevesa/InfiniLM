@@ -56,7 +56,7 @@ pub fn task(
                     .entry(id)
                     .or_insert_with_key(|&id| SessionContext::new(&transformer, id, &transfer));
 
-                let time = Instant::now();
+                let t0 = Instant::now();
                 let mut token = transformer.decode(
                     vec![ctx.request(&prompt, max_seq_len)],
                     &*sample.lock().unwrap(),
@@ -64,8 +64,8 @@ pub fn task(
                     &transfer,
                 )[0]
                 .1;
-                info!("prefill transformer ... {:?}", time.elapsed());
-
+                let t1 = Instant::now();
+                let mut len = 0;
                 while token != eos {
                     responsing.send(token).unwrap();
                     token = transformer.decode(
@@ -75,7 +75,14 @@ pub fn task(
                         &transfer,
                     )[0]
                     .1;
+                    len += 1;
                 }
+                let t2 = Instant::now();
+                info!(
+                    "First token delay: {:?}, average speed = {:?}/tok",
+                    t1 - t0,
+                    (t2 - t1).div_f32(len as _)
+                );
             }
             Command::Drop { id } => {
                 sessions.remove(&id);

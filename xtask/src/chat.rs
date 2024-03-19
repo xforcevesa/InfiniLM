@@ -19,18 +19,21 @@ impl InferenceArgs {
         Chating::print_help();
         println!("=====================================");
 
+        let mut input = String::new();
         loop {
             chating.print_session();
-            let mut input = String::new();
+            input.clear();
             std::io::stdin()
                 .read_line(&mut input)
                 .expect("Unable to read line.");
-
-            // 以 / 开头则为用户指令
-            if input.trim_start().starts_with('/') {
-                chating.execute_command(&input);
-            } else {
-                chating.infer(&input);
+            let input = input.trim();
+            if !input.is_empty() {
+                // 以 / 开头则为用户指令
+                if input.starts_with('/') {
+                    chating.execute_command(&input);
+                } else {
+                    chating.infer(&input);
+                }
             }
         }
     }

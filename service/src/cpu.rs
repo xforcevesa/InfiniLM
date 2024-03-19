@@ -47,14 +47,14 @@ impl CpuTask {
                 let max_seq_len = self.transformer.max_seq_len();
                 let eos = self.transformer.eos_token_id();
 
-                let time = Instant::now();
+                let t0 = Instant::now();
                 let mut token = self.transformer.decode(
                     vec![ctx.request(&prompt, max_seq_len)],
                     &*self.sample.lock().unwrap(),
                 )[0]
                 .1;
-                info!("prefill transformer ... {:?}", time.elapsed());
-
+                let t1 = Instant::now();
+                let mut len = 0;
                 while token != eos {
                     responsing.send(token).unwrap();
                     token = self.transformer.decode(
@@ -62,7 +62,14 @@ impl CpuTask {
                         &*self.sample.lock().unwrap(),
                     )[0]
                     .1;
+                    len += 1;
                 }
+                let t2 = Instant::now();
+                info!(
+                    "First token delay: {:?}, average speed = {:?}/tok",
+                    t1 - t0,
+                    (t2 - t1).div_f32(len as _)
+                );
             }
             Command::Drop { id } => {
                 self.sessions.remove(&id);
