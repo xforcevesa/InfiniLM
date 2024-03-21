@@ -107,9 +107,10 @@ impl<'a> SessionContext<'a> {
         let pos = self.0.request(tokens, max_seq_len);
         Request {
             id: self.0.id,
-            tokens: &self.0.tokens[pos..],
+            tokens: &self.0.cache_map[pos..],
             cache: &mut self.0.cache,
             pos: pos as _,
+            decode: true,
         }
     }
 }

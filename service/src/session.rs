@@ -75,9 +75,12 @@ pub(crate) struct SessionComponent {
 }
 
 pub(crate) struct SessionContext<Cache> {
+    /// 会话标识符。
     pub id: usize,
-    pub tokens: Vec<utok>,
+    /// 上文缓存。
     pub cache: Vec<Cache>,
+    /// 上文缓存对应的上文 token。
+    pub cache_map: Vec<utok>,
 }
 
 impl<Cache> SessionContext<Cache> {
@@ -85,30 +88,30 @@ impl<Cache> SessionContext<Cache> {
     pub fn new(cache: Vec<Cache>, id: usize) -> Self {
         Self {
             id,
-            tokens: Vec::new(),
+            cache_map: Vec::new(),
             cache,
         }
     }
 
     #[inline]
     pub fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> usize {
-        if self.tokens.len() + tokens.len() > max_seq_len {
-            let pos = self.tokens.len().min(16);
+        if self.cache_map.len() + tokens.len() > max_seq_len {
+            let pos = self.cache_map.len().min(16);
             if tokens.len() > max_seq_len / 2 {
                 let tokens = &tokens[tokens.len() - max_seq_len / 2..];
-                self.tokens.truncate(pos);
-                self.tokens.extend_from_slice(tokens);
+                self.cache_map.truncate(pos);
+                self.cache_map.extend_from_slice(tokens);
             } else {
-                let tail_len = (self.tokens.len() - pos).min(64);
-                let tail = self.tokens.len() - tail_len;
-                self.tokens.copy_within(tail.., pos);
-                self.tokens.truncate(pos + tail_len);
-                self.tokens.extend_from_slice(tokens);
+                let tail_len = (self.cache_map.len() - pos).min(64);
+                let tail = self.cache_map.len() - tail_len;
+                self.cache_map.copy_within(tail.., pos);
+                self.cache_map.truncate(pos + tail_len);
+                self.cache_map.extend_from_slice(tokens);
             }
             pos
         } else {
-            let pos = self.tokens.len();
-            self.tokens.extend_from_slice(tokens);
+            let pos = self.cache_map.len();
+            self.cache_map.extend_from_slice(tokens);
             pos
         }
     }

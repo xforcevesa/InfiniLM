@@ -21,9 +21,7 @@ impl Normalizer for () {
 pub struct BPECommonNormalizer;
 
 impl Normalizer for BPECommonNormalizer {
-    fn encode<'a>(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
-        let text = text.trim();
-
+    fn encode<'a>(&self, text: &'a str) -> Cow<'a, str> {
         let mut ans = String::new();
         if text
             .chars()
@@ -43,7 +41,7 @@ impl Normalizer for BPECommonNormalizer {
     }
 
     #[inline]
-    fn decode<'a>(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
+    fn decode<'a>(&self, text: &'a str) -> Cow<'a, str> {
         if text.contains('▁') {
             Cow::Owned(text.replace('▁', " "))
         } else {

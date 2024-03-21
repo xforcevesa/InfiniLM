@@ -16,8 +16,8 @@ impl InferenceArgs {
         );
         chating.print_args();
         println!();
-        Chating::print_help();
-        println!("=====================================");
+        print_help();
+        print_splitter();
 
         let mut input = String::new();
         loop {
@@ -60,10 +60,18 @@ impl From<InferenceArgs> for Chating {
     }
 }
 
-impl Chating {
-    fn print_help() {
-        println!(
-            "\
+macro_rules! print_now {
+    ($($arg:tt)*) => {{
+        print!($($arg)*);
+        std::io::stdout().flush().unwrap();
+    }};
+}
+fn print_splitter() {
+    println!("=====================================");
+}
+fn print_help() {
+    println!(
+        "\
 /create         新建会话session
 /switch [0-9+]  切换至指定会话
 /drop [0-9+]    丢弃指定会话
@@ -72,9 +80,10 @@ impl Chating {
 /help           打印帮助信息
 
 使用 /exit 或 Ctrl + C 结束程序"
-        );
-    }
+    );
+}
 
+impl Chating {
     fn print_args(&self) {
         println!(
             "PID = {}, temperature = {}, top-k = {}, top-p = {}",
@@ -86,7 +95,12 @@ impl Chating {
     }
 
     fn print_session(&mut self) {
-        println!("{}", format!("会话 {}:", self.session.id()).yellow());
+        print_now!(
+            "{}{}{}",
+            "User[".yellow(),
+            self.session.id(),
+            "]: ".yellow()
+        );
     }
 
     fn execute_command(&mut self, command: &str) {
@@ -153,21 +167,18 @@ impl Chating {
                     println!("Invalid top-p");
                 }
             }
-            ["/help"] => Self::print_help(),
+            ["/help"] => print_help(),
             ["/exit"] => std::process::exit(0),
             _ => println!("Unknown Command"),
         }
-        println!("=====================================");
+        print_splitter();
     }
 
     fn infer(&mut self, text: &str) {
-        println!("{}", "AI:".green());
+        print_now!("{}", "AI: ".green());
         self.session.chat(text, |s| match s {
             "\\n" => println!(),
-            _ => {
-                print!("{s}");
-                std::io::stdout().flush().unwrap();
-            }
+            _ => print_now!("{s}"),
         });
         println!();
     }

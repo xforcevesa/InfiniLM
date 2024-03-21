@@ -24,11 +24,11 @@ impl Template for ChatCPM {
 impl Template for ChatTinyLlama {
     #[inline]
     fn normalize<'a>(&self, prompt: &'a str) -> Cow<'a, str> {
-        Cow::Borrowed(prompt.trim())
+        Cow::Borrowed(prompt)
     }
 
     #[inline]
     fn apply_chat<'a>(&self, prompt: &'a str) -> Cow<'a, str> {
-        Cow::Owned(format!("<|user|>\n{}</s><|assistant|>\n", prompt.trim()))
+        Cow::Owned(format!("<|user|>\n{prompt}</s><|assistant|>\n"))
     }
 }

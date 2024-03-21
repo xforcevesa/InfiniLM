@@ -11,6 +11,8 @@ pub struct Request<'a, Id, Storage> {
     pub cache: &'a mut [LayerCache<Storage>],
     /// Position of `prompt` in context.
     pub pos: upos,
+    /// Whether to decode the output.
+    pub decode: bool,
 }
 
 impl<T, U> Request<'_, T, U> {
