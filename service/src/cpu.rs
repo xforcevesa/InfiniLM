@@ -89,12 +89,12 @@ impl SessionContext {
     #[inline]
     fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> Request<usize> {
         let pos = self.0.request(tokens, max_seq_len);
-        Request {
-            id: self.0.id,
-            tokens: &self.0.cache_map[pos..],
-            cache: &mut self.0.cache,
-            pos: pos as _,
-            decode: true,
-        }
+        Request::new(
+            self.0.id,
+            &self.0.cache_map[pos..],
+            &mut self.0.cache,
+            pos as _,
+            true,
+        )
     }
 }

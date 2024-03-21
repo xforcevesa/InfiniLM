@@ -65,7 +65,8 @@ impl<'ctx> Transformer<'ctx> {
         compute: &Stream<'ctx>,
         transfer: &Stream<'ctx>,
     ) -> Vec<(Id, utok)> {
-        requests.sort_unstable_by_key(|t| t.tokens.len());
+        // 归拢所有纯解码的请求到前面，减少解码 batching 的拷贝开销
+        requests.sort_unstable_by_key(Request::purely_decode);
 
         // println!("tokens:");
         // for request in requests.iter() {
@@ -101,7 +102,7 @@ impl<'ctx> Transformer<'ctx> {
         let mut pos = tensor(DataType::U32, &[nt], transfer);
         let mut pos_ = Vec::<u32>::with_capacity(nt as usize);
         for request in requests.iter() {
-            pos_.extend(request.pos..request.att_len());
+            pos_.extend(request.pos()..request.att_len());
         }
         pos.physical_mut().copy_in_async(&pos_, transfer);
 
@@ -116,7 +117,7 @@ impl<'ctx> Transformer<'ctx> {
         let mut gate_up = tensor(dt, &[nt, di + di], transfer);
         let e_alloc = transfer.record();
 
-        let tokens = requests.iter().flat_map(|r| r.tokens).copied();
+        let tokens = requests.iter().flat_map(Request::tokens).copied();
         gather(&mut x0, &self.host.embed_tokens(), tokens, compute);
         // compute.synchronize();
         // println!("gather:\n{}", map_tensor(&x0));
@@ -159,7 +160,7 @@ impl<'ctx> Transformer<'ctx> {
 
             let mut req = 0;
             for r in requests.iter_mut() {
-                let pos = r.pos;
+                let pos = r.pos();
                 let seq_len = r.seq_len();
                 let att_len = r.att_len();
 
@@ -175,7 +176,7 @@ impl<'ctx> Transformer<'ctx> {
                 let mut o = unsafe { o.map_physical(|u| &mut ***u) };
 
                 let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], &mut *q_buf);
-                let (k_cache, v_cache) = r.cache[layer].get();
+                let (k_cache, v_cache) = r.cache(layer);
                 let k_cat = k_cache.as_mut().slice(cat_slice);
                 let v_cat = v_cache.as_mut().slice(cat_slice);
                 let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
@@ -240,17 +241,21 @@ impl<'ctx> Transformer<'ctx> {
             // println!("layer {layer} down:\n{}", map_tensor(&x0));
         }
 
+        let (head, others) = requests.split_first().unwrap();
+        if !head.decode() {
+            return vec![];
+        }
+
         let tokens = {
-            let (head, others) = requests.split_first().unwrap();
-            let begin = head.tokens.len();
+            let begin = head.seq_len() as usize;
             let mut i = begin;
             let mut j = begin;
             let buf = unsafe { x0.physical().as_raw() };
             let len = d as usize * dt.size();
             for r in others {
-                i += r.tokens.len();
+                i += r.seq_len() as usize;
                 j += 1;
-                if i > j {
+                if r.decode() && i > j {
                     cuda::driver!(cuMemcpyDtoDAsync_v2(
                         buf + ((j - 1) * len) as CUdeviceptr,
                         buf + ((i - 1) * len) as CUdeviceptr,
@@ -294,7 +299,7 @@ impl<'ctx> Transformer<'ctx> {
             .enumerate()
             .map(|(i, r)| {
                 (
-                    r.id,
+                    r.id(),
                     sample.random(&mut logits[i * voc as usize..][..voc as usize]),
                 )
             })

@@ -40,7 +40,8 @@ impl Transformer {
         mut requests: Vec<Request<Id>>,
         sample: &SampleArgs,
     ) -> Vec<(Id, utok)> {
-        requests.sort_unstable_by_key(|t| t.tokens.len());
+        // 归拢所有纯解码的请求到前面，减少解码 batching 的拷贝开销
+        requests.sort_unstable_by_key(Request::purely_decode);
 
         // println!("tokens:");
         // for request in requests.iter() {
@@ -75,7 +76,7 @@ impl Transformer {
         let theta = self.0.rope_theta();
         let mut pos = Vec::<u32>::with_capacity(nt as usize);
         for request in requests.iter() {
-            pos.extend(request.pos..request.att_len());
+            pos.extend(request.pos()..request.att_len());
         }
         let pos = Tensor::new(DataType::U32, &[nt], reslice(&pos));
 
@@ -86,7 +87,7 @@ impl Transformer {
         let mut att_buf = Storage::new((nh * max_seq_len * max_att_len) as usize * dt.size());
         let mut gate_up = tensor(dt, &[nt, di + di]);
 
-        let tokens = requests.iter().flat_map(|r| r.tokens).copied();
+        let tokens = requests.iter().flat_map(Request::tokens).copied();
         gather(&mut x0, &self.0.embed_tokens(), tokens);
         // println!("gather:\n{x0}");
 
@@ -121,7 +122,7 @@ impl Transformer {
 
             let mut req = 0;
             for r in requests.iter_mut() {
-                let pos = r.pos;
+                let pos = r.pos();
                 let seq_len = r.seq_len();
                 let att_len = r.att_len();
 
@@ -137,7 +138,7 @@ impl Transformer {
                 let mut o = unsafe { o.map_physical(|u| &mut ***u) };
 
                 let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], &mut q_buf[..]);
-                let (k_cache, v_cache) = r.cache[layer].get();
+                let (k_cache, v_cache) = r.cache(layer);
                 let k_cat = k_cache.as_mut().slice(cat_slice);
                 let v_cat = v_cache.as_mut().slice(cat_slice);
                 let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
@@ -193,17 +194,21 @@ impl Transformer {
             // println!("layer {layer} down:\n{x0}");
         }
 
+        let (head, others) = requests.split_first().unwrap();
+        if !head.decode() {
+            return vec![];
+        }
+
         let tokens = {
-            let (head, others) = requests.split_first().unwrap();
-            let begin = head.tokens.len();
+            let begin = head.seq_len() as usize;
             let mut i = begin;
             let mut j = begin;
             let buf = x0.as_mut_slice();
             let len = d as usize * dt.size();
             for r in others {
-                i += r.tokens.len();
+                i += r.seq_len() as usize;
                 j += 1;
-                if i > j {
+                if r.decode() && i > j {
                     buf.copy_within((i - 1) * len..i * len, (j - 1) * len);
                 }
             }
@@ -238,7 +243,7 @@ impl Transformer {
                 requests
                     .into_iter()
                     .enumerate()
-                    .map(|(i, r)| (r.id, sample.random(&kernel::slice!(logits; voc; [i]))))
+                    .map(|(i, r)| (r.id(), sample.random(&kernel::slice!(logits; voc; [i]))))
                     .collect()
             }};
         }
