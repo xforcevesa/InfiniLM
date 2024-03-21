@@ -12,3 +12,6 @@ tensor = { path = "../tensor" }
 transformer = { path = "../transformer" }
 gemm = "0.17"
 intel-mkl-src = "0.8"
+
+[build-dependencies]
+intel-mkl-tool = "0.8"
