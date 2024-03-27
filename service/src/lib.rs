@@ -5,7 +5,6 @@ mod session;
 mod template;
 
 use common::utok;
-use cpu::CpuTask;
 use session::SessionComponent;
 use std::{
     path::Path,
@@ -51,22 +50,12 @@ impl Service {
             }),
             sample: sample.clone(),
             _manager: thread::spawn(move || match device {
-                Device::Cpu => {
-                    let mut task = CpuTask::new(model_dir, sample);
-                    while let Ok(cmd) = receiver.recv() {
-                        task.invoke(cmd);
-                    }
-                }
+                Device::Cpu => cpu::task(model_dir, sample, receiver),
                 #[cfg(detected_cuda)]
                 Device::NvidiaGpu(n) => {
-                    use nvidia::task;
                     use transformer_nvidia::cuda;
-
                     cuda::init();
-                    let dev = cuda::Device::new(n);
-                    dev.set_mempool_threshold(u64::MAX);
-                    dev.context()
-                        .apply(|ctx| task(model_dir, sample, receiver, ctx));
+                    nvidia::task(cuda::Device::new(n), model_dir, sample, receiver);
                 }
                 #[cfg(not(detected_cuda))]
                 _ => panic!("Unsupported device"),

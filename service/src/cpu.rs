@@ -3,12 +3,23 @@ use common::utok;
 use std::{
     collections::HashMap,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{mpsc::Receiver, Arc, Mutex},
     time::Instant,
 };
 use transformer_cpu::{LayerCache, Memory, Request, SampleArgs, Transformer};
 
-pub struct CpuTask {
+pub fn task(
+    model_dir: impl AsRef<Path>,
+    sample: Arc<Mutex<SampleArgs>>,
+    receiver: Receiver<Command>,
+) {
+    let mut task = CpuTask::new(model_dir, sample);
+    while let Ok(cmd) = receiver.recv() {
+        task.invoke(cmd);
+    }
+}
+
+struct CpuTask {
     transformer: Transformer,
     sessions: HashMap<usize, SessionContext>,
     sample: Arc<Mutex<SampleArgs>>,

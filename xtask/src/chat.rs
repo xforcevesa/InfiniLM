@@ -6,7 +6,7 @@ use transformer::SampleArgs;
 
 impl InferenceArgs {
     pub fn chat(self) {
-        let mut chating = Chating::from(self);
+        let mut chatting = Chatting::from(self);
 
         println!(
             "\
@@ -14,14 +14,14 @@ impl InferenceArgs {
 # 欢迎使用九源推理框架-大模型单机对话demo #
 ###########################################"
         );
-        chating.print_args();
+        chatting.print_args();
         println!();
         print_help();
         print_splitter();
 
         let mut input = String::new();
         loop {
-            chating.print_session();
+            chatting.print_session();
             input.clear();
             std::io::stdin()
                 .read_line(&mut input)
@@ -30,23 +30,23 @@ impl InferenceArgs {
             if !input.is_empty() {
                 // 以 / 开头则为用户指令
                 if input.starts_with('/') {
-                    chating.execute_command(input);
+                    chatting.execute_command(input);
                 } else {
-                    chating.infer(input);
+                    chatting.infer(input);
                 }
             }
         }
     }
 }
 
-struct Chating {
+struct Chatting {
     service: Service,
     sample: SampleArgs,
     session: Session,
     sessions: HashMap<usize, Session>,
 }
 
-impl From<InferenceArgs> for Chating {
+impl From<InferenceArgs> for Chatting {
     fn from(args: InferenceArgs) -> Self {
         let service: Service = args.into();
         let session = service.launch();
@@ -83,7 +83,7 @@ fn print_help() {
     );
 }
 
-impl Chating {
+impl Chatting {
     fn print_args(&self) {
         println!(
             "PID = {}, temperature = {}, top-k = {}, top-p = {}",

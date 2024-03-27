@@ -10,16 +10,17 @@ use std::{
 };
 use transformer_cpu::{Llama2, Memory, SampleArgs};
 use transformer_nvidia::{
-    cuda::{ContextGuard, Stream},
+    cuda::{Device, Stream},
     LayerCache, Request, Transformer,
 };
 
 pub fn task(
+    device: Device,
     model_dir: impl AsRef<Path>,
     sample: Arc<Mutex<SampleArgs>>,
     receiver: Receiver<Command>,
-    ctx: &ContextGuard,
 ) {
+    device.set_mempool_threshold(u64::MAX);
     let model_dir = model_dir.as_ref();
 
     let time = Instant::now();
@@ -27,68 +28,70 @@ pub fn task(
     let mut safetensors = File::open(model_dir.join("model.safetensors")).unwrap();
     info!("open file {:?}", time.elapsed());
 
-    let time = Instant::now();
-    let mut host = ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _);
-    safetensors.read_exact(&mut host).unwrap();
-    drop(safetensors);
-    info!("read to host {:?}", time.elapsed());
+    device.context().apply(|ctx| {
+        let time = Instant::now();
+        let mut host = ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _);
+        safetensors.read_exact(&mut host).unwrap();
+        drop(safetensors);
+        info!("read to host {:?}", time.elapsed());
 
-    let compute = ctx.stream();
-    let transfer = ctx.stream();
+        let compute = ctx.stream();
+        let transfer = ctx.stream();
 
-    let time = Instant::now();
-    let host = Memory::load_safetensors(config, host, false).unwrap();
-    let max_seq_len = host.max_position_embeddings();
-    let eos = host.eos_token_id();
-    let mut transformer = Transformer::new(&host, usize::MAX, &transfer);
-    info!("build model host: {:?}", time.elapsed());
+        let time = Instant::now();
+        let host = Memory::load_safetensors(config, host, false).unwrap();
+        let max_seq_len = host.max_position_embeddings();
+        let eos = host.eos_token_id();
+        let mut transformer = Transformer::new(&host, usize::MAX, &transfer);
+        info!("build model host: {:?}", time.elapsed());
 
-    let mut sessions = HashMap::new();
+        let mut sessions = HashMap::new();
 
-    while let Ok(cmd) = receiver.recv() {
-        match cmd {
-            Command::Infer {
-                id,
-                prompt,
-                responsing,
-            } => {
-                let ctx = sessions
-                    .entry(id)
-                    .or_insert_with_key(|&id| SessionContext::new(&transformer, id, &transfer));
+        while let Ok(cmd) = receiver.recv() {
+            match cmd {
+                Command::Infer {
+                    id,
+                    prompt,
+                    responsing,
+                } => {
+                    let ctx = sessions
+                        .entry(id)
+                        .or_insert_with_key(|&id| SessionContext::new(&transformer, id, &transfer));
 
-                let t0 = Instant::now();
-                let mut token = transformer.decode(
-                    vec![ctx.request(&prompt, max_seq_len)],
-                    &sample.lock().unwrap(),
-                    &compute,
-                    &transfer,
-                )[0]
-                .1;
-                let t1 = Instant::now();
-                let mut len = 0;
-                while token != eos {
-                    responsing.send(token).unwrap();
-                    token = transformer.decode(
-                        vec![ctx.request(&[token], max_seq_len)],
+                    let t0 = Instant::now();
+                    let mut token = transformer.decode(
+                        vec![ctx.request(&prompt, max_seq_len)],
                         &sample.lock().unwrap(),
                         &compute,
                         &transfer,
                     )[0]
                     .1;
-                    len += 1;
+                    let t1 = Instant::now();
+                    let mut len = 0;
+                    while token != eos {
+                        responsing.send(token).unwrap();
+                        token = transformer.decode(
+                            vec![ctx.request(&[token], max_seq_len)],
+                            &sample.lock().unwrap(),
+                            &compute,
+                            &transfer,
+                        )[0]
+                        .1;
+                        len += 1;
+                    }
+                    let t2 = Instant::now();
+                    info!(
+                        "First token delay: {:?}, average speed = {:?}/tok",
+                        t1 - t0,
+                        (t2 - t1).div_f32(len as _)
+                    );
                 }
-                let t2 = Instant::now();
-                info!(
-                    "First token delay: {:?}, average speed = {:?}/tok",
-                    t1 - t0,
-                    (t2 - t1).div_f32(len as _)
-                );
-            }
-            Command::Drop { id } => {
-                sessions.remove(&id);
+                Command::Drop { id } => {
+                    sessions.remove(&id);
+                }
             }
         }
-    }
+    });
 }
 
 struct SessionContext<'a>(session::SessionContext<LayerCache<'a>>);
