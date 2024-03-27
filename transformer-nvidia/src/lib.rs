@@ -2,12 +2,12 @@
 
 mod kernel;
 mod parameters;
+mod sample;
 mod storage;
 
 #[macro_use]
 extern crate log;
 
-use ::half::f16;
 use common::utok;
 use cublas::Cublas;
 use cuda::{AsRaw, CudaDataType::half, Stream};
@@ -15,10 +15,11 @@ use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbe
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use storage::Storage;
 use tensor::{slice, udim, DataType, Tensor};
-use transformer::SampleArgs;
+use transformer::{Sample as _, SampleArgs};
 
 pub type Request<'a, 'b, Id> = transformer::Request<'a, Id, Storage<'b>>;
 pub type LayerCache<'a> = transformer::LayerCache<Storage<'a>>;
+pub use sample::Sample;
 pub use transformer::{Llama2, Memory};
 pub extern crate cuda;
 
@@ -85,7 +86,6 @@ impl<'ctx> Transformer<'ctx> {
         let dh = d / nh;
         let dkv = nkvh * dh;
         let di = self.host.intermediate_size() as udim;
-        let voc = self.host.vocab_size() as udim;
         let dt = self.host.data_type();
 
         let mut qkv = tensor(dt, &[nt, d + dkv + dkv], transfer);
@@ -118,23 +118,8 @@ impl<'ctx> Transformer<'ctx> {
 
         if requests[0].decode() {
             let x = self.move_decode(&requests, x0, compute);
-            let logits_dev = self.logits(x, compute);
-
-            let mut logits = vec![f16::ZERO; logits_dev.size()];
-            compute.synchronize();
-            logits_dev.physical().copy_out(&mut logits);
-
-            requests
-                .into_iter()
-                .filter(Request::decode)
-                .enumerate()
-                .map(|(i, r)| {
-                    (
-                        r.id(),
-                        sample.random(&logits[i * voc as usize..][..voc as usize]),
-                    )
-                })
-                .collect()
+            let requests = requests.into_iter().map(Request::id).collect::<Vec<_>>();
+            Sample.sample(sample, requests, self.logits(x, compute))
         } else {
             vec![]
         }

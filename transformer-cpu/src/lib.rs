@@ -1,14 +1,16 @@
 mod kernel;
+mod sample;
 mod storage;
 
 use common::utok;
-use gemm::f16;
 use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
+use transformer::Sample as _;
 
 pub type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 pub type LayerCache = transformer::LayerCache<Storage>;
+pub use sample::Sample;
 pub use transformer::{save, Llama2, Memory, SampleArgs};
 
 pub struct Transformer(Box<dyn Llama2>);
@@ -58,7 +60,6 @@ impl Transformer {
         let dh = d / nh;
         let dkv = nkvh * dh;
         let di = self.0.intermediate_size() as udim;
-        let voc = self.0.vocab_size() as udim;
         let dt = self.0.data_type();
 
         let mut qkv = tensor(dt, &[nt, d + dkv + dkv]);
@@ -81,24 +82,8 @@ impl Transformer {
 
         if requests[0].decode() {
             let x = self.move_decode(&requests, x0);
-            let logits = self.logits(x);
-
-            macro_rules! sample {
-                ($ty:ty) => {{
-                    let logits: &[$ty] = reslice(logits.as_slice());
-                    requests
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, r)| (r.id(), sample.random(&kernel::slice!(logits; voc; [i]))))
-                        .collect()
-                }};
-            }
-
-            match dt {
-                DataType::F16 => sample!(f16),
-                DataType::F32 => sample!(f32),
-                _ => unreachable!(),
-            }
+            let requests = requests.into_iter().map(Request::id).collect::<Vec<_>>();
+            Sample.sample(sample, requests, self.logits(x))
         } else {
             vec![]
         }

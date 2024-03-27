@@ -14,4 +14,4 @@ pub use cache::LayerCache;
 pub use host_memory::HostMemory;
 pub use parameters::{save, Llama2, Memory, SafeTensorError};
 pub use request::Request;
-pub use sample::{BetweenF32, SampleArgs};
+pub use sample::{BetweenF32, Sample, SampleArgs};
