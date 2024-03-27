@@ -59,7 +59,7 @@ pub fn task(
                 let t0 = Instant::now();
                 let mut token = transformer.decode(
                     vec![ctx.request(&prompt, max_seq_len)],
-                    &*sample.lock().unwrap(),
+                    &sample.lock().unwrap(),
                     &compute,
                     &transfer,
                 )[0]
@@ -70,7 +70,7 @@ pub fn task(
                     responsing.send(token).unwrap();
                     token = transformer.decode(
                         vec![ctx.request(&[token], max_seq_len)],
-                        &*sample.lock().unwrap(),
+                        &sample.lock().unwrap(),
                         &compute,
                         &transfer,
                     )[0]

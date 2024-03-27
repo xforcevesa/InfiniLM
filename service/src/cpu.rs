@@ -50,7 +50,7 @@ impl CpuTask {
                 let t0 = Instant::now();
                 let mut token = self.transformer.decode(
                     vec![ctx.request(&prompt, max_seq_len)],
-                    &*self.sample.lock().unwrap(),
+                    &self.sample.lock().unwrap(),
                 )[0]
                 .1;
                 let t1 = Instant::now();
@@ -59,7 +59,7 @@ impl CpuTask {
                     responsing.send(token).unwrap();
                     token = self.transformer.decode(
                         vec![ctx.request(&[token], max_seq_len)],
-                        &*self.sample.lock().unwrap(),
+                        &self.sample.lock().unwrap(),
                     )[0]
                     .1;
                     len += 1;

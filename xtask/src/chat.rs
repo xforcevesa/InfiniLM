@@ -30,9 +30,9 @@ impl InferenceArgs {
             if !input.is_empty() {
                 // 以 / 开头则为用户指令
                 if input.starts_with('/') {
-                    chating.execute_command(&input);
+                    chating.execute_command(input);
                 } else {
-                    chating.infer(&input);
+                    chating.infer(input);
                 }
             }
         }

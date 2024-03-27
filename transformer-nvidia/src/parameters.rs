@@ -59,7 +59,7 @@ impl<'ctx> LayersParameters<'ctx> {
     }
 
     #[inline]
-    pub fn sync(&mut self, layer: usize, stream: &Stream<'ctx>) -> &LayerParameter<'ctx> {
+    pub fn sync(&mut self, layer: usize, stream: &Stream<'ctx>) -> usize {
         let i = self.current;
         self.current = (i + 1) % self.layers.len();
 
@@ -67,7 +67,12 @@ impl<'ctx> LayersParameters<'ctx> {
         assert_eq!(params.layer, layer);
         stream.wait_for(&params.sync_event);
 
-        params
+        i
+    }
+
+    #[inline]
+    pub fn get(&self, i: usize) -> &LayerParameter<'ctx> {
+        &self.layers[i]
     }
 }
 
