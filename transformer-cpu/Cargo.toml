@@ -11,7 +11,7 @@ common = { path = "../common" }
 tensor = { path = "../tensor" }
 transformer = { path = "../transformer" }
 gemm = "0.17"
-intel-mkl-src = "0.8"
+intel-mkl-src = { version = "0.8", features = ["mkl-dynamic-lp64-iomp"] }
 
 [build-dependencies]
 intel-mkl-tool = "0.8"
