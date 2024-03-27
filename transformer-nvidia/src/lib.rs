@@ -126,6 +126,7 @@ impl<'ctx> Transformer<'ctx> {
 
             requests
                 .into_iter()
+                .filter(Request::decode)
                 .enumerate()
                 .map(|(i, r)| {
                     (
@@ -330,33 +331,30 @@ impl<'ctx> Transformer<'ctx> {
         x0: Tensor<Storage<'ctx>>,
         compute: &Stream,
     ) -> Tensor<Storage<'ctx>> {
-        let dt = self.host.data_type();
-        let d = self.host.hidden_size() as udim;
+        let buf = unsafe { x0.physical().as_raw() };
+        let len = self.host.hidden_size() * self.host.data_type().size();
 
         let (head, others) = requests.split_first().unwrap();
-        let tokens = {
-            let begin = head.seq_len() as usize;
-            let mut i = begin;
-            let mut j = begin;
-            let buf = unsafe { x0.physical().as_raw() };
-            let len = d as usize * dt.size();
-            for r in others {
-                i += r.seq_len() as usize;
-                j += 1;
-                if r.decode() && i > j {
+        let begin = head.seq_len() as usize - 1;
+
+        let mut src = begin;
+        let mut dst = begin;
+        for r in others {
+            src += r.seq_len() as usize;
+            if r.decode() {
+                dst += 1;
+                if dst < src {
                     cuda::driver!(cuMemcpyDtoDAsync_v2(
-                        buf + ((j - 1) * len) as CUdeviceptr,
-                        buf + ((i - 1) * len) as CUdeviceptr,
+                        buf + (dst * len) as CUdeviceptr,
+                        buf + (src * len) as CUdeviceptr,
                         len,
                         compute.as_raw()
                     ));
                 }
             }
-            let begin = begin as udim - 1;
-            let len = j as udim - begin;
-            slice![from begin, take len]
-        };
-        x0.slice(&[tokens, slice![all]])
+        }
+
+        x0.slice(&[slice![from begin, until dst + 1], slice![all]])
     }
 
     fn logits(&self, mut x: Tensor<Storage>, compute: &Stream<'ctx>) -> Tensor<Storage<'ctx>> {

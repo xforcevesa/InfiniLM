@@ -275,28 +275,25 @@ impl Transformer {
         requests: &[Request<Id>],
         mut x0: Tensor<Storage>,
     ) -> Tensor<Storage> {
-        let dt = self.0.data_type();
-        let d = self.0.hidden_size() as udim;
+        let buf = x0.as_mut_slice();
+        let len = self.0.hidden_size() * self.0.data_type().size();
 
         let (head, others) = requests.split_first().unwrap();
-        let tokens = {
-            let begin = head.seq_len() as usize;
-            let mut i = begin;
-            let mut j = begin;
-            let buf = x0.as_mut_slice();
-            let len = d as usize * dt.size();
-            for r in others {
-                i += r.seq_len() as usize;
-                j += 1;
-                if r.decode() && i > j {
-                    buf.copy_within((i - 1) * len..i * len, (j - 1) * len);
+        let begin = head.seq_len() as usize - 1;
+
+        let mut src = begin;
+        let mut dst = begin;
+        for r in others {
+            src += r.seq_len() as usize;
+            if r.decode() {
+                dst += 1;
+                if dst < src {
+                    buf.copy_within(src * len..(src + 1) * len, dst * len);
                 }
             }
-            let begin = begin as udim - 1;
-            let len = j as udim - begin;
-            slice![from begin, take len]
-        };
-        x0.slice(&[tokens, slice![all]])
+        }
+
+        x0.slice(&[slice![from begin, until dst + 1], slice![all]])
     }
 
     fn logits(&self, mut x: Tensor<Storage>) -> Tensor<Storage> {

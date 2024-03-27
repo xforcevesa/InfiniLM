@@ -1,4 +1,5 @@
 ﻿use crate::{idim, pattern::Pattern, udim, Affine, Shape, Tensor};
+use std::{cmp::Ordering, iter::zip};
 
 impl<Physical> Tensor<Physical> {
     pub fn slice(self, dims: &[SliceDim]) -> Self {
@@ -11,55 +12,13 @@ impl<Physical> Tensor<Physical> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct SliceDim {
-    pub start: udim,
-    pub step: idim,
-    pub len: udim,
-}
-
-#[macro_export]
-macro_rules! slice {
-    [all] => {
-        $crate::SliceDim {
-            start: 0,
-            step: 1,
-            len: udim::MAX,
-        }
-    };
-    [from $start:expr, take $len:expr] => {
-        $crate::SliceDim {
-            start: $start,
-            step: 1,
-            len: $len,
-        }
-    };
-    [$start:expr; $step:expr; $len:expr] => {
-        $crate::SliceDim {
-            start: $start,
-            step: $step,
-            len: $len,
-        }
-    };
-}
-
 fn build(meta: &[SliceDim], input: &[udim]) -> (Shape, Affine) {
     assert_eq!(input.len(), meta.len());
-    assert!(meta
-        .iter()
-        .zip(input)
-        .all(|(d, &i)| { (0..i).contains(&d.start) }));
+    let meta = zip(meta, input)
+        .map(|(d, &len)| d.normalize(len))
+        .collect::<Vec<_>>();
 
-    let shape = meta
-        .iter()
-        .zip(input)
-        .map(|(d, &i)| {
-            let distance = if d.step > 0 { i - d.start } else { d.start };
-            let step = d.step.unsigned_abs();
-            ((distance + step - 1) / step).min(d.len)
-        })
-        .collect::<Shape>();
-
+    let shape = meta.iter().map(|d| d.len).collect::<Shape>();
     let n = meta.len();
     let affine = Affine::from_fn(n + 1, n + 1, |r, c| {
         if r == n {
@@ -75,6 +34,7 @@ fn build(meta: &[SliceDim], input: &[udim]) -> (Shape, Affine) {
 
 #[test]
 fn test() {
+    use crate::slice;
     let (shape, affine) = build(&[slice![2;1;2], slice![0;1;4], slice![1;2;3]], &[5, 6, 7]);
     assert_eq!(shape.as_slice(), &[2, 4, 3]);
     assert_eq!(
@@ -87,4 +47,96 @@ fn test() {
             0, 0, 0, 1, //
         ]
     );
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct SliceDim {
+    pub start: udim,
+    pub step: idim,
+    pub len: udim,
+}
+
+impl SliceDim {
+    #[inline]
+    pub fn normalize(&self, len: udim) -> Self {
+        match self.step.cmp(&0) {
+            Ordering::Greater => {
+                assert!(self.start < len);
+                Self {
+                    start: self.start,
+                    step: self.step,
+                    len: {
+                        let step = self.step as udim;
+                        ((len - self.start + step - 1) / step).min(self.len)
+                    },
+                }
+            }
+            Ordering::Equal => {
+                assert!(self.start < len);
+                Self {
+                    start: self.start,
+                    step: self.step,
+                    len: self.len,
+                }
+            }
+            Ordering::Less => {
+                let start = self.start.min(len - 1);
+                Self {
+                    start,
+                    step: self.step,
+                    len: {
+                        let step = self.step.unsigned_abs();
+                        ((start + 1 + step - 1) / step).min(self.len)
+                    },
+                }
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! slice {
+    [all] => {
+        slice![0; 1; usize::MAX]
+    };
+    [rev] => {
+        slice![usize::MAX; -1; usize::MAX]
+    };
+    [take $len:expr] => {
+        slice![0; 1; $len]
+    };
+    [from $start:expr, until $end:expr] => {
+        slice![$start; 1; $end - $start]
+    };
+    [from $start:expr, take $len:expr] => {
+        slice![$start; 1; $len]
+    };
+    [from $start:expr, take $len:expr, per $step:expr] => {
+        slice![$start; $step; $len]
+    };
+    [$start:expr; $step:expr; $len:expr] => {
+        $crate::SliceDim {
+            start: $start as _,
+            step : $step  as _,
+            len  : $len   as _,
+        }
+    };
+}
+
+#[test]
+fn test_macro() {
+    assert_eq!(
+        slice![5; -3; 2],
+        SliceDim {
+            start: 5,
+            step: -3,
+            len: 2,
+        }
+    );
+    assert_eq!(slice![all], slice![0; 1; usize::MAX]);
+    assert_eq!(slice![rev], slice![usize::MAX; -1; usize::MAX]);
+    assert_eq!(slice![take 5], slice![0; 1; 5]);
+    assert_eq!(slice![from 3, until 5], slice![3; 1; 2]);
+    assert_eq!(slice![from 3, take 5], slice![3; 1; 5]);
+    assert_eq!(slice![from 3, take 5, per 2], slice![3; 2; 5]);
 }
