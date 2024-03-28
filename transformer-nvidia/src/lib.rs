@@ -8,7 +8,6 @@ mod storage;
 #[macro_use]
 extern crate log;
 
-use common::utok;
 use cublas::{Cublas, CublasSpore};
 use cuda::{
     AsRaw, Context, ContextResource, ContextSpore, CudaDataType::half, DevMemSpore, Stream,
@@ -24,10 +23,10 @@ use transformer::{pos, LayerBuffer, Sample as _};
 pub type Request<'a, Id> = transformer::Request<'a, Id, DevMemSpore>;
 pub type LayerCache = transformer::LayerCache<DevMemSpore>;
 pub use sample::Sample;
-pub use transformer::{Llama2, Memory, SampleArgs};
+pub use transformer::{Llama2, Memory, SampleArgs, Transformer};
 pub extern crate cuda;
 
-pub struct Transformer {
+pub struct NvidiaTransformer {
     context: Arc<Context>,
     transfer: StreamSpore,
     host: Memory<'static>,
@@ -41,7 +40,85 @@ pub struct Transformer {
     swiglu: Swiglu,
 }
 
-impl Transformer {
+impl Transformer for NvidiaTransformer {
+    type Cache = DevMemSpore;
+
+    fn model(&self) -> &dyn Llama2 {
+        &self.host
+    }
+
+    fn new_cache(&self) -> Vec<transformer::LayerCache<Self::Cache>> {
+        self.context.apply(|ctx| {
+            let stream = unsafe { self.transfer.sprout(ctx) };
+            LayerCache::new_layers(&self.host, |dt, shape| {
+                let len = shape.iter().product::<udim>() as usize * dt.size();
+                Tensor::new(dt, shape, stream.malloc::<u8>(len).sporulate())
+            })
+        })
+    }
+
+    fn decode<Id>(
+        &self,
+        mut requests: Vec<transformer::Request<Id, Self::Cache>>,
+        sample: &SampleArgs,
+    ) -> Vec<(Id, common::utok)> {
+        // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
+        requests.sort_unstable_by_key(Request::purely_decode);
+        self.context.apply(|ctx| {
+            let transfer = unsafe { self.transfer.sprout(ctx) };
+            let compute = ctx.stream();
+            unsafe { self.cublas.sprout(ctx) }.set_stream(&compute);
+            // 生成词嵌入并预分配空间
+            let mut x0 = self.token_embed(&requests, &compute);
+            let mut x1 = tensor(x0.data_type(), x0.shape(), &transfer);
+            let mut buf =
+                LayerBuffer::alloc(&self.host, &requests, |size| Storage::new(size, &transfer));
+            // 生成位置张量
+            let nt = x0.shape()[0]; // `nt` for number of tokens
+            let pos_ = pos(&requests, nt);
+            let mut pos = tensor(DataType::U32, &[nt], &transfer);
+            pos.physical_mut().copy_in_async(&pos_, &transfer);
+            // 推理
+            compute.wait_for(&transfer.record());
+            {
+                // 层参数滚动加载是有状态的，必须由一个控制流独占。其他逻辑无状态，可以多流并发
+                let mut layers = self.layers.borrow_mut();
+                for layer in 0..self.host.num_hidden_layers() {
+                    let params = {
+                        layers.load(layer, &self.host, &transfer);
+                        layers.sync(layer, &compute)
+                    };
+
+                    let (q, k, v) =
+                        self.before_att(params, &x0, &mut x1, &mut buf.qkv, &pos, &compute);
+                    let o = &mut x1;
+                    self.attention(
+                        layer,
+                        &mut requests,
+                        q,
+                        k,
+                        v,
+                        o,
+                        &mut buf.q_buf,
+                        &mut buf.att_buf,
+                        &compute,
+                    );
+                    self.after_att(params, &mut x0, &mut x1, &mut buf.gate_up, &compute);
+                }
+            }
+            // 解码
+            if requests[0].decode() {
+                let x = self.move_decode(&requests, x0, &compute);
+                let requests = requests.into_iter().map(Request::id).collect();
+                Sample.sample(sample, requests, self.logits(x, &compute))
+            } else {
+                vec![]
+            }
+        })
+    }
+}
+
+impl NvidiaTransformer {
     pub fn new(
         config: File,
         mut safetensors: File,
@@ -101,82 +178,6 @@ impl Transformer {
             fused_softmax,
             swiglu,
         }
-    }
-
-    #[inline]
-    pub fn new_cache(&self) -> Vec<LayerCache> {
-        self.context.apply(|ctx| {
-            let stream = unsafe { self.transfer.sprout(ctx) };
-            LayerCache::new_layers(&self.host, |dt, shape| {
-                let len = shape.iter().product::<udim>() as usize * dt.size();
-                Tensor::new(dt, shape, stream.malloc::<u8>(len).sporulate())
-            })
-        })
-    }
-
-    #[inline]
-    pub fn model(&self) -> &impl Llama2 {
-        &self.host
-    }
-
-    pub fn decode<'ctx, Id>(
-        &self,
-        mut requests: Vec<Request<Id>>,
-        sample: &SampleArgs,
-    ) -> Vec<(Id, utok)> {
-        self.context.apply(|ctx| {
-            let transfer = unsafe { self.transfer.sprout(ctx) };
-            let compute = ctx.stream();
-            unsafe { self.cublas.sprout(ctx) }.set_stream(&compute);
-            // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
-            requests.sort_unstable_by_key(Request::purely_decode);
-            // 生成词嵌入并预分配空间
-            let mut x0 = self.token_embed(&requests, &compute);
-            let mut x1 = tensor(x0.data_type(), x0.shape(), &transfer);
-            let mut buf =
-                LayerBuffer::alloc(&self.host, &requests, |size| Storage::new(size, &transfer));
-            // 生成位置张量
-            let nt = x0.shape()[0]; // `nt` for number of tokens
-            let pos_ = pos(&requests, nt);
-            let mut pos = tensor(DataType::U32, &[nt], &transfer);
-            pos.physical_mut().copy_in_async(&pos_, &transfer);
-            // 推理
-            compute.wait_for(&transfer.record());
-            {
-                // 层参数滚动加载是有状态的，必须由一个控制流独占。其他逻辑无状态，可以多流并发
-                let mut layers = self.layers.borrow_mut();
-                for layer in 0..self.host.num_hidden_layers() {
-                    let params = {
-                        layers.load(layer, &self.host, &transfer);
-                        layers.sync(layer, &compute)
-                    };
-
-                    let (q, k, v) =
-                        self.before_att(params, &x0, &mut x1, &mut buf.qkv, &pos, &compute);
-                    let o = &mut x1;
-                    self.attention(
-                        layer,
-                        &mut requests,
-                        q,
-                        k,
-                        v,
-                        o,
-                        &mut buf.q_buf,
-                        &mut buf.att_buf,
-                        &compute,
-                    );
-                    self.after_att(params, &mut x0, &mut x1, &mut buf.gate_up, &compute);
-                }
-            }
-            // 解码
-            if requests[0].decode() {
-                let x = self.move_decode(&requests, x0, &compute);
-                let requests = requests.into_iter().map(Request::id).collect();
-                Sample.sample(sample, requests, self.logits(x, &compute))
-            } else {
-                vec![]
-            }
-        })
     }
 
     fn token_embed<'ctx, Id>(

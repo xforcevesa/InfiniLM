@@ -2,7 +2,6 @@ mod kernel;
 mod sample;
 mod storage;
 
-use common::utok;
 use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
@@ -11,37 +10,28 @@ use transformer::{pos, LayerBuffer, Sample as _};
 pub type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 pub type LayerCache = transformer::LayerCache<Storage>;
 pub use sample::Sample;
-pub use transformer::{save, Llama2, Memory, SampleArgs};
+pub use transformer::{save, Llama2, Memory, SampleArgs, Transformer};
 
-pub struct Transformer(Box<dyn Llama2>);
+pub struct CpuTransformer(Box<dyn Llama2>);
 
-impl Transformer {
+impl Transformer for CpuTransformer {
+    type Cache = Storage;
+
     #[inline]
-    pub fn new(model: Box<dyn Llama2 + 'static>) -> Self {
-        assert!(model.data_type() == DataType::F16 || model.data_type() == DataType::F32);
-        Self(model)
+    fn model(&self) -> &dyn Llama2 {
+        &*self.0
     }
 
     #[inline]
-    pub fn new_cache(&self) -> Vec<LayerCache> {
+    fn new_cache(&self) -> Vec<transformer::LayerCache<Self::Cache>> {
         LayerCache::new_layers(&*self.0, tensor)
     }
 
-    #[inline]
-    pub fn max_seq_len(&self) -> usize {
-        self.0.max_position_embeddings()
-    }
-
-    #[inline]
-    pub fn eos_token_id(&self) -> utok {
-        self.0.eos_token_id()
-    }
-
-    pub fn decode<Id>(
+    fn decode<Id>(
         &self,
-        mut requests: Vec<Request<Id>>,
+        mut requests: Vec<transformer::Request<Id, Self::Cache>>,
         sample: &SampleArgs,
-    ) -> Vec<(Id, utok)> {
+    ) -> Vec<(Id, common::utok)> {
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
         // 生成词嵌入并预分配空间
@@ -76,6 +66,14 @@ impl Transformer {
         } else {
             vec![]
         }
+    }
+}
+
+impl CpuTransformer {
+    #[inline]
+    pub fn new(model: Box<dyn Llama2 + 'static>) -> Self {
+        assert!(model.data_type() == DataType::F16 || model.data_type() == DataType::F32);
+        Self(model)
     }
 
     fn token_embed<Id>(&self, requests: &[Request<Id>]) -> Tensor<Storage> {
@@ -317,7 +315,7 @@ fn test_build() {
     };
 
     let t0 = Instant::now();
-    let _transformer = Transformer::new(Box::new(safetensors));
+    let _transformer = CpuTransformer::new(Box::new(safetensors));
     let t1 = Instant::now();
     println!("build transformer {:?}", t1 - t0);
 }

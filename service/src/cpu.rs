@@ -6,7 +6,7 @@ use std::{
     sync::{mpsc::Receiver, Arc, Mutex},
     time::Instant,
 };
-use transformer_cpu::{LayerCache, Memory, Request, SampleArgs, Transformer};
+use transformer_cpu::{CpuTransformer, LayerCache, Memory, Request, SampleArgs, Transformer};
 
 pub fn task(
     model_dir: impl AsRef<Path>,
@@ -20,7 +20,7 @@ pub fn task(
 }
 
 struct CpuTask {
-    transformer: Transformer,
+    transformer: CpuTransformer,
     sessions: HashMap<usize, SessionContext>,
     sample: Arc<Mutex<SampleArgs>>,
 }
@@ -32,7 +32,7 @@ impl CpuTask {
         info!("load model ... {:?}", time.elapsed());
 
         let time = Instant::now();
-        let transformer = Transformer::new(model);
+        let transformer = CpuTransformer::new(model);
         info!("build transformer ... {:?}", time.elapsed());
 
         let sessions = HashMap::new();
@@ -55,8 +55,8 @@ impl CpuTask {
                     .entry(id)
                     .or_insert_with_key(|&id| SessionContext::new(&self.transformer, id));
 
-                let max_seq_len = self.transformer.max_seq_len();
-                let eos = self.transformer.eos_token_id();
+                let max_seq_len = self.transformer.model().max_position_embeddings();
+                let eos = self.transformer.model().eos_token_id();
 
                 let t0 = Instant::now();
                 let mut token = self.transformer.decode(
@@ -93,7 +93,7 @@ struct SessionContext(session::SessionContext<LayerCache>);
 
 impl SessionContext {
     #[inline]
-    fn new(transformer: &Transformer, id: usize) -> Self {
+    fn new(transformer: &CpuTransformer, id: usize) -> Self {
         Self(session::SessionContext::new(transformer.new_cache(), id))
     }
 

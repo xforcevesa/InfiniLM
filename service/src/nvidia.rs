@@ -7,7 +7,9 @@ use std::{
     sync::{mpsc::Receiver, Arc, Mutex},
     time::Instant,
 };
-use transformer_nvidia::{cuda::Device, LayerCache, Llama2, Request, SampleArgs, Transformer};
+use transformer_nvidia::{
+    cuda::Device, LayerCache, NvidiaTransformer, Request, SampleArgs, Transformer,
+};
 
 pub fn task(
     device: Device,
@@ -24,7 +26,7 @@ pub fn task(
     info!("open file {:?}", time.elapsed());
 
     let context = Arc::new(device.context());
-    let transformer = Transformer::new(config, safetensors, usize::MAX, context.clone());
+    let transformer = NvidiaTransformer::new(config, safetensors, usize::MAX, context.clone());
     let mut sessions = HashMap::new();
 
     let max_seq_len = transformer.model().max_position_embeddings();
@@ -75,7 +77,7 @@ struct SessionContext(session::SessionContext<LayerCache>);
 
 impl SessionContext {
     #[inline]
-    fn new(transformer: &Transformer, id: usize) -> Self {
+    fn new(transformer: &NvidiaTransformer, id: usize) -> Self {
         Self(session::SessionContext::new(transformer.new_cache(), id))
     }
 
