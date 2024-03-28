@@ -1441,6 +1441,7 @@ dependencies = [
 name = "service"
 version = "0.0.0"
 dependencies = [
+ "colored",
  "common",
  "find_cuda_helper",
  "half",

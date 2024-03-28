@@ -139,3 +139,43 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
     }
     panic!("Tokenizer file not found");
 }
+
+#[test]
+fn test() {
+    use colored::{Color, Colorize};
+    use std::{io::Write, path::Path};
+
+    let model_dir = "../../TinyLlama-1.1B-Chat-v1.0_F16/";
+    if !Path::new(model_dir).exists() {
+        return;
+    }
+
+    let service = Service::load_model(
+        model_dir,
+        SampleArgs {
+            temperature: 0.,
+            top_k: usize::MAX,
+            top_p: 1.,
+        },
+        Device::Cpu,
+    );
+
+    let mut session = service.launch();
+    let t0 = std::thread::spawn(move || {
+        session.chat("Say \"Hi\" to me.", |s| {
+            print!("{}", s.color(Color::Yellow));
+            std::io::stdout().flush().unwrap();
+        });
+    });
+
+    let mut session = service.launch();
+    let t1 = std::thread::spawn(move || {
+        session.chat("Hi", |s| {
+            print!("{}", s.color(Color::Red));
+            std::io::stdout().flush().unwrap();
+        });
+    });
+
+    t0.join().unwrap();
+    t1.join().unwrap();
+}
