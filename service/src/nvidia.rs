@@ -42,7 +42,7 @@ pub fn task(
         let host = Memory::load_safetensors(config, host, false).unwrap();
         let max_seq_len = host.max_position_embeddings();
         let eos = host.eos_token_id();
-        let mut transformer = Transformer::new(&host, usize::MAX, &transfer);
+        let transformer = Transformer::new(&host, usize::MAX, &transfer);
         info!("build model host: {:?}", time.elapsed());
 
         let mut sessions = HashMap::new();

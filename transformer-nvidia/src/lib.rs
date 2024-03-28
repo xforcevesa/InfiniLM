@@ -13,6 +13,7 @@ use cublas::Cublas;
 use cuda::{AsRaw, CudaDataType::half, Stream};
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
+use std::sync::Mutex;
 use storage::Storage;
 use tensor::{slice, udim, DataType, Tensor};
 use transformer::{pos, LayerBuffer, Sample as _, SampleArgs};
@@ -26,7 +27,7 @@ pub extern crate cuda;
 pub struct Transformer<'ctx> {
     host: &'ctx dyn Llama2,
     model: ModelParameters<'ctx>,
-    layers: LayersParameters<'ctx>,
+    layers: Mutex<LayersParameters<'ctx>>,
     cublas: cublas::Cublas<'ctx>,
     rms_norm: RmsNormalization<'ctx>,
     rotary_embedding: RotaryEmbedding<'ctx>,
@@ -43,7 +44,7 @@ impl<'ctx> Transformer<'ctx> {
         let (block_size, _) = dev.max_block_dims();
         Self {
             model: ModelParameters::new(host, stream),
-            layers: LayersParameters::new(load_layers, host, stream),
+            layers: Mutex::new(LayersParameters::new(load_layers, host, stream)),
             cublas: Cublas::new(ctx),
             rms_norm: RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
             rotary_embedding: RotaryEmbedding::new(block_size, ctx),
@@ -60,7 +61,7 @@ impl<'ctx> Transformer<'ctx> {
     }
 
     pub fn decode<Id>(
-        &mut self,
+        &self,
         mut requests: Vec<Request<Id>>,
         sample: &SampleArgs,
         compute: &Stream<'ctx>,
@@ -80,16 +81,21 @@ impl<'ctx> Transformer<'ctx> {
         pos.physical_mut().copy_in_async(&pos_, transfer);
         // 推理
         compute.wait_for(&transfer.record());
-        for layer in 0..self.host.num_hidden_layers() {
-            self.layers.load(layer, self.host, transfer);
-            let i = self.layers.sync(layer, compute);
-            let params = self.layers.get(i);
+        {
+            // 层参数滚动加载是有状态的，必须由一个控制流独占。其他逻辑无状态，可以多流并发
+            let mut layers = self.layers.lock().unwrap();
+            for layer in 0..self.host.num_hidden_layers() {
+                let params = {
+                    layers.load(layer, self.host, transfer);
+                    layers.sync(layer, compute)
+                };
 
-            let (q, k, v) = self.before_att(params, &x0, &mut x1, &mut buf.qkv, &pos, compute);
-            let o = &mut x1;
-            #[rustfmt::skip]
-            self.attention(layer, &mut requests, q, k, v, o, &mut buf.q_buf, &mut buf. att_buf, compute);
-            self.after_att(params, &mut x0, &mut x1, &mut buf.gate_up, compute);
+                let (q, k, v) = self.before_att(params, &x0, &mut x1, &mut buf.qkv, &pos, compute);
+                let o = &mut x1;
+                #[rustfmt::skip]
+                self.attention(layer, &mut requests, q, k, v, o, &mut buf.q_buf, &mut buf. att_buf, compute);
+                self.after_att(params, &mut x0, &mut x1, &mut buf.gate_up, compute);
+            }
         }
         // 解码
         if requests[0].decode() {
