@@ -10,24 +10,29 @@ extern crate log;
 
 use common::utok;
 use cublas::{Cublas, CublasSpore};
-use cuda::{AsRaw, ContextResource, ContextSpore, CudaDataType::half, Stream};
+use cuda::{
+    AsRaw, Context, ContextResource, ContextSpore, CudaDataType::half, DevMemSpore, Stream,
+    StreamSpore,
+};
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
-use std::sync::Mutex;
+use std::{cell::RefCell, fs::File, io::Read, sync::Arc, time::Instant};
 use storage::Storage;
 use tensor::{slice, udim, DataType, Tensor};
-use transformer::{pos, LayerBuffer, Sample as _, SampleArgs};
+use transformer::{pos, LayerBuffer, Sample as _};
 
-pub type Request<'a, 'b, Id> = transformer::Request<'a, Id, Storage<'b>>;
-pub type LayerCache<'a> = transformer::LayerCache<Storage<'a>>;
+pub type Request<'a, Id> = transformer::Request<'a, Id, DevMemSpore>;
+pub type LayerCache = transformer::LayerCache<DevMemSpore>;
 pub use sample::Sample;
-pub use transformer::{Llama2, Memory};
+pub use transformer::{Llama2, Memory, SampleArgs};
 pub extern crate cuda;
 
 pub struct Transformer {
-    host: Box<dyn Llama2>,
+    context: Arc<Context>,
+    transfer: StreamSpore,
+    host: Memory<'static>,
     model: ModelParameters,
-    layers: Mutex<LayersParameters>,
+    layers: RefCell<LayersParameters>,
     cublas: CublasSpore,
     rms_norm: RmsNormalization,
     rotary_embedding: RotaryEmbedding,
@@ -37,76 +42,141 @@ pub struct Transformer {
 }
 
 impl Transformer {
-    pub fn new(host: Box<dyn Llama2>, preload_layers: usize, stream: &Stream) -> Self {
+    pub fn new(
+        config: File,
+        mut safetensors: File,
+        preload_layers: usize,
+        context: Arc<Context>,
+    ) -> Self {
+        let time = Instant::now();
+        let mut host = context.apply(|ctx| {
+            ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _)
+                .sporulate()
+        });
+        safetensors.read_exact(&mut host).unwrap();
+        drop(safetensors);
+        info!("read to host {:?}", time.elapsed());
+
+        let host = Memory::load_safetensors(config, host, false).unwrap();
         let load_layers = preload_layers.min(host.num_hidden_layers());
-        let ctx = stream.ctx();
-        let dev = ctx.dev();
-        let (block_size, _) = dev.max_block_dims();
+
+        let (
+            model,
+            layers,
+            cublas,
+            rms_norm,
+            rotary_embedding,
+            reform,
+            fused_softmax,
+            swiglu,
+            transfer,
+        ) = context.apply(|ctx| {
+            let dev = ctx.dev();
+            let (block_size, _) = dev.max_block_dims();
+            let stream = ctx.stream();
+
+            (
+                ModelParameters::new(&host, &stream),
+                RefCell::new(LayersParameters::new(load_layers, &host, &stream)),
+                Cublas::new(ctx).sporulate(),
+                RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
+                RotaryEmbedding::new(block_size, ctx),
+                Reform::new(block_size, 32, ctx),
+                FusedSoftmax::new(half, host.max_position_embeddings(), block_size, ctx),
+                Swiglu::new(half, block_size, ctx),
+                stream.sporulate(),
+            )
+        });
+
         Self {
-            model: ModelParameters::new(&*host, stream),
-            layers: Mutex::new(LayersParameters::new(load_layers, &*host, stream)),
-            cublas: Cublas::new(ctx).sporulate(),
-            rms_norm: RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
-            rotary_embedding: RotaryEmbedding::new(block_size, ctx),
-            reform: Reform::new(block_size, 32, ctx),
-            fused_softmax: FusedSoftmax::new(half, host.max_position_embeddings(), block_size, ctx),
-            swiglu: Swiglu::new(half, block_size, ctx),
+            context,
+            transfer,
             host,
+            model,
+            layers,
+            cublas,
+            rms_norm,
+            rotary_embedding,
+            reform,
+            fused_softmax,
+            swiglu,
         }
     }
 
     #[inline]
-    pub fn new_cache<'b>(&self, stream: &'b Stream) -> Vec<LayerCache<'b>> {
-        LayerCache::new_layers(&*self.host, |dt, shape| tensor(dt, shape, stream))
+    pub fn new_cache(&self) -> Vec<LayerCache> {
+        self.context.apply(|ctx| {
+            let stream = unsafe { self.transfer.sprout(ctx) };
+            LayerCache::new_layers(&self.host, |dt, shape| {
+                let len = shape.iter().product::<udim>() as usize * dt.size();
+                Tensor::new(dt, shape, stream.malloc::<u8>(len).sporulate())
+            })
+        })
+    }
+
+    #[inline]
+    pub fn model(&self) -> &impl Llama2 {
+        &self.host
     }
 
     pub fn decode<'ctx, Id>(
         &self,
         mut requests: Vec<Request<Id>>,
         sample: &SampleArgs,
-        compute: &Stream<'ctx>,
-        transfer: &Stream<'ctx>,
     ) -> Vec<(Id, utok)> {
-        let ctx = compute.ctx();
-        unsafe { self.cublas.sprout(ctx) }.set_stream(compute);
-        // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
-        requests.sort_unstable_by_key(Request::purely_decode);
-        // 生成词嵌入并预分配空间
-        let mut x0 = self.token_embed(&requests, compute);
-        let mut x1 = tensor(x0.data_type(), x0.shape(), transfer);
-        let mut buf =
-            LayerBuffer::alloc(&*self.host, &requests, |size| Storage::new(size, transfer));
-        // 生成位置张量
-        let nt = x0.shape()[0]; // `nt` for number of tokens
-        let pos_ = pos(&requests, nt);
-        let mut pos = tensor(DataType::U32, &[nt], transfer);
-        pos.physical_mut().copy_in_async(&pos_, transfer);
-        // 推理
-        compute.wait_for(&transfer.record());
-        {
-            // 层参数滚动加载是有状态的，必须由一个控制流独占。其他逻辑无状态，可以多流并发
-            let mut layers = self.layers.lock().unwrap();
-            for layer in 0..self.host.num_hidden_layers() {
-                let params = {
-                    layers.load(layer, &*self.host, transfer);
-                    layers.sync(layer, compute)
-                };
+        self.context.apply(|ctx| {
+            let transfer = unsafe { self.transfer.sprout(ctx) };
+            let compute = ctx.stream();
+            unsafe { self.cublas.sprout(ctx) }.set_stream(&compute);
+            // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
+            requests.sort_unstable_by_key(Request::purely_decode);
+            // 生成词嵌入并预分配空间
+            let mut x0 = self.token_embed(&requests, &compute);
+            let mut x1 = tensor(x0.data_type(), x0.shape(), &transfer);
+            let mut buf =
+                LayerBuffer::alloc(&self.host, &requests, |size| Storage::new(size, &transfer));
+            // 生成位置张量
+            let nt = x0.shape()[0]; // `nt` for number of tokens
+            let pos_ = pos(&requests, nt);
+            let mut pos = tensor(DataType::U32, &[nt], &transfer);
+            pos.physical_mut().copy_in_async(&pos_, &transfer);
+            // 推理
+            compute.wait_for(&transfer.record());
+            {
+                // 层参数滚动加载是有状态的，必须由一个控制流独占。其他逻辑无状态，可以多流并发
+                let mut layers = self.layers.borrow_mut();
+                for layer in 0..self.host.num_hidden_layers() {
+                    let params = {
+                        layers.load(layer, &self.host, &transfer);
+                        layers.sync(layer, &compute)
+                    };
 
-                let (q, k, v) = self.before_att(params, &x0, &mut x1, &mut buf.qkv, &pos, compute);
-                let o = &mut x1;
-                #[rustfmt::skip]
-                self.attention(layer, &mut requests, q, k, v, o, &mut buf.q_buf, &mut buf. att_buf, compute);
-                self.after_att(params, &mut x0, &mut x1, &mut buf.gate_up, compute);
+                    let (q, k, v) =
+                        self.before_att(params, &x0, &mut x1, &mut buf.qkv, &pos, &compute);
+                    let o = &mut x1;
+                    self.attention(
+                        layer,
+                        &mut requests,
+                        q,
+                        k,
+                        v,
+                        o,
+                        &mut buf.q_buf,
+                        &mut buf.att_buf,
+                        &compute,
+                    );
+                    self.after_att(params, &mut x0, &mut x1, &mut buf.gate_up, &compute);
+                }
             }
-        }
-        // 解码
-        if requests[0].decode() {
-            let x = self.move_decode(&requests, x0, compute);
-            let requests = requests.into_iter().map(Request::id).collect::<Vec<_>>();
-            Sample.sample(sample, requests, self.logits(x, compute))
-        } else {
-            vec![]
-        }
+            // 解码
+            if requests[0].decode() {
+                let x = self.move_decode(&requests, x0, &compute);
+                let requests = requests.into_iter().map(Request::id).collect();
+                Sample.sample(sample, requests, self.logits(x, &compute))
+            } else {
+                vec![]
+            }
+        })
     }
 
     fn token_embed<'ctx, Id>(
@@ -199,7 +269,8 @@ impl Transformer {
         let dh = d / nh;
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
-        let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
+        let ctx = compute.ctx();
+        let cublas = unsafe { self.cublas.sprout(ctx) };
 
         let q = q.as_ref().transpose(&[1, 0, 2]);
         let k = k.as_ref().transpose(&[1, 0, 2]);
@@ -229,6 +300,9 @@ impl Transformer {
 
             let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], &mut **q_buf);
             let (k_cache, v_cache) = r.cache(layer);
+            let mut k_cache = unsafe { k_cache.as_mut().map_physical(|s| s.sprout(ctx)) };
+            let mut v_cache = unsafe { v_cache.as_mut().map_physical(|s| s.sprout(ctx)) };
+
             let k_cat = k_cache.as_mut().slice(cat_slice);
             let v_cat = v_cache.as_mut().slice(cat_slice);
             let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
@@ -238,10 +312,8 @@ impl Transformer {
             self.reform.launch(&mut v_cat, &v, compute);
 
             let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
-            let k_att = k_cache.as_ref().slice(att_slice).transpose(&[0, 2, 1]);
-            let v_att = v_cache.as_ref().slice(att_slice);
-            let k_att = unsafe { k_att.map_physical(|u| &**u) };
-            let v_att = unsafe { v_att.map_physical(|u| &**u) };
+            let k_att = k_cache.slice(att_slice).transpose(&[0, 2, 1]);
+            let v_att = v_cache.slice(att_slice);
             // println!("layer {layer} q attention:\n{}", q_att);
             // println!("layer {layer} k attention:\n{}", k_att.access());
             // println!("layer {layer} v attention:\n{}", v_att.access());

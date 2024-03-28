@@ -56,14 +56,22 @@ impl Transformer {
         for layer in 0..self.0.num_hidden_layers() {
             let (q, k, v) = self.before_att(layer, &x0, &mut x1, &mut buf.qkv, &pos);
             let o = &mut x1;
-            #[rustfmt::skip]
-            self.attention(layer, &mut requests, q, k, v, o, &mut buf.q_buf, &mut buf.att_buf);
+            self.attention(
+                layer,
+                &mut requests,
+                q,
+                k,
+                v,
+                o,
+                &mut buf.q_buf,
+                &mut buf.att_buf,
+            );
             self.after_att(layer, &mut x0, &mut x1, &mut buf.gate_up);
         }
         // 解码
         if requests[0].decode() {
             let x = self.move_decode(&requests, x0);
-            let requests = requests.into_iter().map(Request::id).collect::<Vec<_>>();
+            let requests = requests.into_iter().map(Request::id).collect();
             Sample.sample(sample, requests, self.logits(x))
         } else {
             vec![]
