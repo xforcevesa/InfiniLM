@@ -1,37 +1,43 @@
 ﻿use crate::Storage;
-use cuda::Stream;
+use cuda::{ContextResource, ContextSpore, DevMem, DevMemSpore, EventSpore, Stream};
+use std::rc::Rc;
 use tensor::Tensor;
 use transformer::Llama2;
 
-pub(crate) struct ModelParameters<'ctx> {
-    pub(crate) model_norm: Tensor<Storage<'ctx>>,
-    pub(crate) lm_head: Tensor<Storage<'ctx>>,
-    pub(crate) sync_event: cuda::Event<'ctx>,
+pub(crate) struct ModelParameters {
+    model_norm: Tensor<Rc<DevMemSpore>>,
+    lm_head: Tensor<Rc<DevMemSpore>>,
+    sync_event: EventSpore,
 }
 
-impl<'ctx> ModelParameters<'ctx> {
-    pub fn new(host: &dyn Llama2, stream: &'ctx Stream) -> Self {
+impl ModelParameters {
+    pub fn new(host: &dyn Llama2, stream: &Stream) -> Self {
         macro_rules! map {
             ($param:ident) => {
                 unsafe {
                     host.$param()
                         .as_ref()
-                        .map_physical(|slice| stream.from_host(slice).into())
+                        .map_physical(|slice| Rc::new(stream.from_host(slice).sporulate()))
                 }
             };
         }
         Self {
             model_norm: map!(model_norm),
             lm_head: map!(lm_head).transpose(&[1, 0]),
-            sync_event: stream.record(),
+            sync_event: stream.record().sporulate(),
         }
     }
-}
 
-impl Drop for ModelParameters<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        self.sync_event.synchronize();
+    pub unsafe fn release<'ctx>(
+        &self,
+        stream: &Stream<'ctx>,
+    ) -> (Tensor<DevMem<'ctx>>, Tensor<DevMem<'ctx>>) {
+        let ctx = stream.ctx();
+        stream.wait_for(&self.sync_event.sprout(ctx));
+        (
+            self.model_norm.clone().map_physical(|s| s.sprout(ctx)),
+            self.lm_head.clone().map_physical(|s| s.sprout(ctx)),
+        )
     }
 }
 

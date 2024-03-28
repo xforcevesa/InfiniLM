@@ -10,7 +10,7 @@ use std::{
 };
 use transformer_cpu::{Llama2, Memory, SampleArgs};
 use transformer_nvidia::{
-    cuda::{Device, Stream},
+    cuda::{ContextResource, Device, Stream},
     LayerCache, Request, Transformer,
 };
 
@@ -30,7 +30,8 @@ pub fn task(
 
     device.context().apply(|ctx| {
         let time = Instant::now();
-        let mut host = ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _);
+        let host = ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _);
+        let mut host = host.sporulate();
         safetensors.read_exact(&mut host).unwrap();
         drop(safetensors);
         info!("read to host {:?}", time.elapsed());
@@ -42,7 +43,7 @@ pub fn task(
         let host = Memory::load_safetensors(config, host, false).unwrap();
         let max_seq_len = host.max_position_embeddings();
         let eos = host.eos_token_id();
-        let transformer = Transformer::new(&host, usize::MAX, &transfer);
+        let transformer = Transformer::new(Box::new(host), usize::MAX, &transfer);
         info!("build model host: {:?}", time.elapsed());
 
         let mut sessions = HashMap::new();

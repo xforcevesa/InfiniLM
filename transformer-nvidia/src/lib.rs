@@ -9,8 +9,8 @@ mod storage;
 extern crate log;
 
 use common::utok;
-use cublas::Cublas;
-use cuda::{AsRaw, CudaDataType::half, Stream};
+use cublas::{Cublas, CublasSpore};
+use cuda::{AsRaw, ContextResource, ContextSpore, CudaDataType::half, Stream};
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use std::sync::Mutex;
@@ -25,10 +25,10 @@ pub use transformer::{Llama2, Memory};
 pub extern crate cuda;
 
 pub struct Transformer<'ctx> {
-    host: &'ctx dyn Llama2,
-    model: ModelParameters<'ctx>,
+    host: Box<dyn Llama2>,
+    model: ModelParameters,
     layers: Mutex<LayersParameters<'ctx>>,
-    cublas: cublas::Cublas<'ctx>,
+    cublas: CublasSpore,
     rms_norm: RmsNormalization<'ctx>,
     rotary_embedding: RotaryEmbedding<'ctx>,
     reform: Reform<'ctx>,
@@ -37,15 +37,15 @@ pub struct Transformer<'ctx> {
 }
 
 impl<'ctx> Transformer<'ctx> {
-    pub fn new(host: &'ctx dyn Llama2, preload_layers: usize, stream: &'ctx Stream) -> Self {
+    pub fn new(host: Box<dyn Llama2>, preload_layers: usize, stream: &'ctx Stream) -> Self {
         let load_layers = preload_layers.min(host.num_hidden_layers());
         let ctx = stream.ctx();
         let dev = ctx.dev();
         let (block_size, _) = dev.max_block_dims();
         Self {
-            model: ModelParameters::new(host, stream),
-            layers: Mutex::new(LayersParameters::new(load_layers, host, stream)),
-            cublas: Cublas::new(ctx),
+            model: ModelParameters::new(&*host, stream),
+            layers: Mutex::new(LayersParameters::new(load_layers, &*host, stream)),
+            cublas: Cublas::new(ctx).sporulate(),
             rms_norm: RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
             rotary_embedding: RotaryEmbedding::new(block_size, ctx),
             reform: Reform::new(block_size, 32, ctx),
@@ -57,7 +57,7 @@ impl<'ctx> Transformer<'ctx> {
 
     #[inline]
     pub fn new_cache<'b>(&self, stream: &'b Stream) -> Vec<LayerCache<'b>> {
-        LayerCache::new_layers(self.host, |dt, shape| tensor(dt, shape, stream))
+        LayerCache::new_layers(&*self.host, |dt, shape| tensor(dt, shape, stream))
     }
 
     pub fn decode<Id>(
@@ -67,13 +67,15 @@ impl<'ctx> Transformer<'ctx> {
         compute: &Stream<'ctx>,
         transfer: &Stream<'ctx>,
     ) -> Vec<(Id, utok)> {
-        self.cublas.set_stream(compute);
+        let ctx = compute.ctx();
+        unsafe { self.cublas.sprout(ctx) }.set_stream(compute);
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
         // 生成词嵌入并预分配空间
         let mut x0 = self.token_embed(&requests, compute);
         let mut x1 = tensor(x0.data_type(), x0.shape(), transfer);
-        let mut buf = LayerBuffer::alloc(self.host, &requests, |size| Storage::new(size, transfer));
+        let mut buf =
+            LayerBuffer::alloc(&*self.host, &requests, |size| Storage::new(size, transfer));
         // 生成位置张量
         let nt = x0.shape()[0]; // `nt` for number of tokens
         let pos_ = pos(&requests, nt);
@@ -86,7 +88,7 @@ impl<'ctx> Transformer<'ctx> {
             let mut layers = self.layers.lock().unwrap();
             for layer in 0..self.host.num_hidden_layers() {
                 let params = {
-                    layers.load(layer, self.host, transfer);
+                    layers.load(layer, &*self.host, transfer);
                     layers.sync(layer, compute)
                 };
 
@@ -147,13 +149,14 @@ impl<'ctx> Transformer<'ctx> {
         let dkv = nkvh * dh;
         let epsilon = self.host.rms_norm_eps();
         let theta = self.host.rope_theta();
+        let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
 
         self.rms_norm
             .launch(x1, x0, &params.input_layernorm, epsilon, compute);
         // compute.synchronize();
         // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
 
-        mat_mul(&self.cublas, qkv, 0., x1, &params.w_qkv, 1.);
+        mat_mul(&cublas, qkv, 0., x1, &params.w_qkv, 1.);
         let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
         let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
         let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
@@ -192,6 +195,7 @@ impl<'ctx> Transformer<'ctx> {
         let dh = d / nh;
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
+        let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
 
         let q = q.as_ref().transpose(&[1, 0, 2]);
         let k = k.as_ref().transpose(&[1, 0, 2]);
@@ -242,12 +246,12 @@ impl<'ctx> Transformer<'ctx> {
             let shape_att1 = &[nkvh * head_group, seq_len, att_len];
 
             let mut att = Tensor::new(dt, shape_att0, &mut **att_buf);
-            mat_mul(&self.cublas, &mut att, 0., &q_att, &k_att, head_div);
+            mat_mul(&cublas, &mut att, 0., &q_att, &k_att, head_div);
             let mut att = att.reshape(shape_att1);
             self.fused_softmax.launch(&mut att, compute);
             let mut x2 = q_att;
             let att = att.reshape(shape_att0);
-            mat_mul(&self.cublas, &mut x2, 0., &att, &v_att, 1.);
+            mat_mul(&cublas, &mut x2, 0., &att, &v_att, 1.);
 
             self.reform
                 .launch(&mut o, &x2.reshape(&[nh, seq_len, dh]), compute);
@@ -265,8 +269,9 @@ impl<'ctx> Transformer<'ctx> {
     ) {
         let di = self.host.intermediate_size() as udim;
         let epsilon = self.host.rms_norm_eps();
+        let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
 
-        mat_mul(&self.cublas, x0, 1., x1, &params.self_attn_o_proj, 1.);
+        mat_mul(&cublas, x0, 1., x1, &params.self_attn_o_proj, 1.);
         // compute.synchronize();
         // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
 
@@ -275,7 +280,7 @@ impl<'ctx> Transformer<'ctx> {
         // compute.synchronize();
         // println!("layer {layer} post norm:\n{}", map_tensor(&x1));
 
-        mat_mul(&self.cublas, gate_up, 0., x1, &params.mlp_gate_up, 1.);
+        mat_mul(&cublas, gate_up, 0., x1, &params.mlp_gate_up, 1.);
         let mut gate_up = gate_up.split(1, &[di as _, di as _]);
         let up = gate_up.pop().unwrap();
         let mut gate = gate_up.pop().unwrap();
@@ -287,7 +292,7 @@ impl<'ctx> Transformer<'ctx> {
         // compute.synchronize();
         // println!("layer {layer} swiglu:\n{}", map_tensor(&gate));
 
-        mat_mul(&self.cublas, x0, 1., &gate, &params.mlp_down, 1.);
+        mat_mul(&cublas, x0, 1., &gate, &params.mlp_down, 1.);
         // compute.synchronize();
         // println!("layer {layer} down:\n{}", map_tensor(&x0));
     }
@@ -328,18 +333,19 @@ impl<'ctx> Transformer<'ctx> {
         let dt = self.host.data_type();
         let voc = self.host.vocab_size() as udim;
         let epsilon = self.host.rms_norm_eps();
+        let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
 
         let mut logits = tensor(dt, &[x.shape()[0], voc], compute);
 
-        compute.wait_for(&self.model.sync_event);
+        let (model_norm, lm_head) = unsafe { self.model.release(compute) };
         // 复制一个 x 以实现原地归一化
         let x_ = unsafe { x.as_ref().map_physical(|u| u.borrow()) };
         self.rms_norm
-            .launch(&mut x, &x_, &self.model.model_norm, epsilon, compute);
+            .launch(&mut x, &x_, &model_norm, epsilon, compute);
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&x));
 
-        mat_mul(&self.cublas, &mut logits, 0., &x, &self.model.lm_head, 1.);
+        mat_mul(&cublas, &mut logits, 0., &x, &lm_head, 1.);
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&logits));
 
