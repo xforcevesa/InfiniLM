@@ -15,7 +15,7 @@ use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbe
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use storage::Storage;
 use tensor::{slice, udim, DataType, Tensor};
-use transformer::{Sample as _, SampleArgs};
+use transformer::{pos, LayerBuffer, Sample as _, SampleArgs};
 
 pub type Request<'a, 'b, Id> = transformer::Request<'a, Id, Storage<'b>>;
 pub type LayerCache<'a> = transformer::LayerCache<Storage<'a>>;
@@ -67,55 +67,31 @@ impl<'ctx> Transformer<'ctx> {
         transfer: &Stream<'ctx>,
     ) -> Vec<(Id, utok)> {
         self.cublas.set_stream(compute);
-
-        // 归拢所有纯解码的请求到前面，减少解码 batching 的拷贝开销
+        // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
-
+        // 生成词嵌入并预分配空间
         let mut x0 = self.token_embed(&requests, compute);
         let mut x1 = tensor(x0.data_type(), x0.shape(), transfer);
-
-        // `nt` for number of tokens
-        let nt = x0.shape()[0];
-        let (max_seq_len, max_att_len) = requests.iter().fold((0, 0), |(max_seq, max_att), r| {
-            (max_seq.max(r.seq_len()), max_att.max(r.att_len()))
-        });
-
-        let d = self.host.hidden_size() as udim;
-        let nh = self.host.num_attention_heads() as udim;
-        let nkvh = self.host.num_key_value_heads() as udim;
-        let dh = d / nh;
-        let dkv = nkvh * dh;
-        let di = self.host.intermediate_size() as udim;
-        let dt = self.host.data_type();
-
-        let mut qkv = tensor(dt, &[nt, d + dkv + dkv], transfer);
-        let mut q_buf = Storage::new((nh * max_seq_len * dh) as usize * dt.size(), transfer);
-        let mut att_buf = Storage::new(
-            (nh * max_seq_len * max_att_len) as usize * dt.size(),
-            transfer,
-        );
-        let mut gate_up = tensor(dt, &[nt, di + di], transfer);
-
+        let mut buf = LayerBuffer::alloc(self.host, &requests, |size| Storage::new(size, transfer));
+        // 生成位置张量
+        let nt = x0.shape()[0]; // `nt` for number of tokens
+        let pos_ = pos(&requests, nt);
         let mut pos = tensor(DataType::U32, &[nt], transfer);
-        let mut pos_ = Vec::<u32>::with_capacity(nt as usize);
-        for request in requests.iter() {
-            pos_.extend(request.pos()..request.att_len());
-        }
         pos.physical_mut().copy_in_async(&pos_, transfer);
-
+        // 推理
         compute.wait_for(&transfer.record());
         for layer in 0..self.host.num_hidden_layers() {
             self.layers.load(layer, self.host, transfer);
             let i = self.layers.sync(layer, compute);
             let params = self.layers.get(i);
 
-            let (q, k, v) = self.before_att(params, &x0, &mut x1, &mut qkv, &pos, compute);
+            let (q, k, v) = self.before_att(params, &x0, &mut x1, &mut buf.qkv, &pos, compute);
             let o = &mut x1;
             #[rustfmt::skip]
-            self.attention(layer, &mut requests, q, k, v, o, &mut q_buf, &mut att_buf, compute);
-            self.after_att(params, &mut x0, &mut x1, &mut gate_up, compute);
+            self.attention(layer, &mut requests, q, k, v, o, &mut buf.q_buf, &mut buf. att_buf, compute);
+            self.after_att(params, &mut x0, &mut x1, &mut buf.gate_up, compute);
         }
-
+        // 解码
         if requests[0].decode() {
             let x = self.move_decode(&requests, x0, compute);
             let requests = requests.into_iter().map(Request::id).collect::<Vec<_>>();
