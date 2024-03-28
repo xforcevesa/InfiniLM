@@ -1,5 +1,6 @@
 ﻿use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevSlice, Module, Ptx, Stream,
+    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, CudaDataType,
+    DevSlice, ModuleSpore, Ptx, Stream,
 };
 use std::{
     ffi::{c_uint, c_void, CString},
@@ -7,20 +8,20 @@ use std::{
 };
 use tensor::Tensor;
 
-pub struct FusedSoftmax<'ctx> {
-    module: Module<'ctx>,
+pub struct FusedSoftmax {
+    module: ModuleSpore,
     padding: CString,
     folding: CString,
     block_size: c_uint,
     items_per_thread: c_uint,
 }
 
-impl<'ctx> FusedSoftmax<'ctx> {
+impl FusedSoftmax {
     pub fn new(
         data_type: CudaDataType,
         max_seq_len: usize,
         block_size: usize,
-        ctx: &'ctx ContextGuard<'ctx>,
+        ctx: &ContextGuard,
     ) -> Self {
         let ty_arg = data_type.name();
         let mask = "AttentionCausualMask";
@@ -60,7 +61,7 @@ extern "C" __global__ void {folding}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()),
+            module: ctx.load(&ptx.unwrap()).sporulate(),
             padding: CString::new(padding).unwrap(),
             folding: CString::new(folding).unwrap(),
             block_size: block_size as _,
@@ -69,7 +70,7 @@ extern "C" __global__ void {folding}(
     }
 }
 
-impl FusedSoftmax<'_> {
+impl FusedSoftmax {
     pub fn launch<T>(&self, att: &mut Tensor<T>, stream: &Stream)
     where
         T: DerefMut<Target = DevSlice>,
@@ -101,7 +102,8 @@ impl FusedSoftmax<'_> {
             (&att_len) as *const _ as _,
         ];
 
-        let kernel = self.module.get_kernel(name);
+        let module = unsafe { self.module.sprout(stream.ctx()) };
+        let kernel = module.get_kernel(name);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }
 }

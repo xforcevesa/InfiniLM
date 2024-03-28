@@ -24,20 +24,20 @@ pub use sample::Sample;
 pub use transformer::{Llama2, Memory};
 pub extern crate cuda;
 
-pub struct Transformer<'ctx> {
+pub struct Transformer {
     host: Box<dyn Llama2>,
     model: ModelParameters,
-    layers: Mutex<LayersParameters<'ctx>>,
+    layers: Mutex<LayersParameters>,
     cublas: CublasSpore,
-    rms_norm: RmsNormalization<'ctx>,
-    rotary_embedding: RotaryEmbedding<'ctx>,
-    reform: Reform<'ctx>,
-    fused_softmax: FusedSoftmax<'ctx>,
-    swiglu: Swiglu<'ctx>,
+    rms_norm: RmsNormalization,
+    rotary_embedding: RotaryEmbedding,
+    reform: Reform,
+    fused_softmax: FusedSoftmax,
+    swiglu: Swiglu,
 }
 
-impl<'ctx> Transformer<'ctx> {
-    pub fn new(host: Box<dyn Llama2>, preload_layers: usize, stream: &'ctx Stream) -> Self {
+impl Transformer {
+    pub fn new(host: Box<dyn Llama2>, preload_layers: usize, stream: &Stream) -> Self {
         let load_layers = preload_layers.min(host.num_hidden_layers());
         let ctx = stream.ctx();
         let dev = ctx.dev();
@@ -60,7 +60,7 @@ impl<'ctx> Transformer<'ctx> {
         LayerCache::new_layers(&*self.host, |dt, shape| tensor(dt, shape, stream))
     }
 
-    pub fn decode<Id>(
+    pub fn decode<'ctx, Id>(
         &self,
         mut requests: Vec<Request<Id>>,
         sample: &SampleArgs,
@@ -109,7 +109,7 @@ impl<'ctx> Transformer<'ctx> {
         }
     }
 
-    fn token_embed<Id>(
+    fn token_embed<'ctx, Id>(
         &self,
         requests: &[Request<Id>],
         compute: &Stream<'ctx>,
@@ -128,7 +128,7 @@ impl<'ctx> Transformer<'ctx> {
         x0
     }
 
-    fn before_att(
+    fn before_att<'ctx>(
         &self,
         params: &LayerParameter,
         x0: &Tensor<Storage>,
@@ -149,14 +149,18 @@ impl<'ctx> Transformer<'ctx> {
         let dkv = nkvh * dh;
         let epsilon = self.host.rms_norm_eps();
         let theta = self.host.rope_theta();
-        let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
+
+        let ctx = compute.ctx();
+        let cublas = unsafe { self.cublas.sprout(ctx) };
+        let input_layernorm = &params.input_layernorm(ctx);
+        let w_qkv = &params.w_qkv(ctx);
 
         self.rms_norm
-            .launch(x1, x0, &params.input_layernorm, epsilon, compute);
+            .launch(x1, x0, &input_layernorm, epsilon, compute);
         // compute.synchronize();
         // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
 
-        mat_mul(&cublas, qkv, 0., x1, &params.w_qkv, 1.);
+        mat_mul(&cublas, qkv, 0., x1, &w_qkv, 1.);
         let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
         let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
         let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
@@ -269,18 +273,24 @@ impl<'ctx> Transformer<'ctx> {
     ) {
         let di = self.host.intermediate_size() as udim;
         let epsilon = self.host.rms_norm_eps();
-        let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
 
-        mat_mul(&cublas, x0, 1., x1, &params.self_attn_o_proj, 1.);
+        let ctx = compute.ctx();
+        let cublas = unsafe { self.cublas.sprout(ctx) };
+        let w_o = &params.w_o(ctx);
+        let post_attention_layernorm = &params.post_attention_layernorm(ctx);
+        let mlp_gate_up = &params.mlp_gate_up(ctx);
+        let mlp_down = &params.mlp_down(ctx);
+
+        mat_mul(&cublas, x0, 1., x1, &w_o, 1.);
         // compute.synchronize();
         // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
 
         self.rms_norm
-            .launch(x1, x0, &params.post_attention_layernorm, epsilon, compute);
+            .launch(x1, x0, &post_attention_layernorm, epsilon, compute);
         // compute.synchronize();
         // println!("layer {layer} post norm:\n{}", map_tensor(&x1));
 
-        mat_mul(&cublas, gate_up, 0., x1, &params.mlp_gate_up, 1.);
+        mat_mul(&cublas, gate_up, 0., x1, &mlp_gate_up, 1.);
         let mut gate_up = gate_up.split(1, &[di as _, di as _]);
         let up = gate_up.pop().unwrap();
         let mut gate = gate_up.pop().unwrap();
@@ -292,12 +302,12 @@ impl<'ctx> Transformer<'ctx> {
         // compute.synchronize();
         // println!("layer {layer} swiglu:\n{}", map_tensor(&gate));
 
-        mat_mul(&cublas, x0, 1., &gate, &params.mlp_down, 1.);
+        mat_mul(&cublas, x0, 1., &gate, &mlp_down, 1.);
         // compute.synchronize();
         // println!("layer {layer} down:\n{}", map_tensor(&x0));
     }
 
-    fn move_decode<Id>(
+    fn move_decode<'ctx, Id>(
         &self,
         requests: &[Request<Id>],
         x0: Tensor<Storage<'ctx>>,
@@ -329,7 +339,11 @@ impl<'ctx> Transformer<'ctx> {
         x0.slice(&[slice![from begin, until dst + 1], slice![all]])
     }
 
-    fn logits(&self, mut x: Tensor<Storage>, compute: &Stream<'ctx>) -> Tensor<Storage<'ctx>> {
+    fn logits<'ctx>(
+        &self,
+        mut x: Tensor<Storage>,
+        compute: &Stream<'ctx>,
+    ) -> Tensor<Storage<'ctx>> {
         let dt = self.host.data_type();
         let voc = self.host.vocab_size() as udim;
         let epsilon = self.host.rms_norm_eps();

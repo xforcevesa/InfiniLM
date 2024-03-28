@@ -1,5 +1,6 @@
 use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevSlice, Module, Ptx, Stream,
+    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, CudaDataType,
+    DevSlice, ModuleSpore, Ptx, Stream,
 };
 use std::{
     ffi::{c_uint, c_void, CString},
@@ -7,20 +8,20 @@ use std::{
 };
 use tensor::{udim, Tensor};
 
-pub struct RmsNormalization<'ctx> {
-    module: Module<'ctx>,
+pub struct RmsNormalization {
+    module: ModuleSpore,
     padding: CString,
     folding: CString,
     block_size: c_uint,
     items_per_thread: c_uint,
 }
 
-impl<'ctx> RmsNormalization<'ctx> {
+impl RmsNormalization {
     pub fn new(
         data_type: CudaDataType,
         max_item_size: usize,
         block_size: usize,
-        ctx: &'ctx ContextGuard<'ctx>,
+        ctx: &ContextGuard,
     ) -> Self {
         let ty_arg = data_type.name();
         let items_per_thread = (max_item_size + block_size - 1) / block_size;
@@ -61,7 +62,7 @@ extern "C" __global__ void {folding}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()),
+            module: ctx.load(&ptx.unwrap()).sporulate(),
             padding: CString::new(padding).unwrap(),
             folding: CString::new(folding).unwrap(),
             block_size: block_size as _,
@@ -70,7 +71,7 @@ extern "C" __global__ void {folding}(
     }
 }
 
-impl RmsNormalization<'_> {
+impl RmsNormalization {
     pub fn launch<T, U, V>(
         &self,
         y: &mut Tensor<T>,
@@ -100,12 +101,13 @@ impl RmsNormalization<'_> {
             (&leading_dim) as *const _ as _,
             (&items_len) as *const _ as _,
         ];
+        let module = unsafe { self.module.sprout(stream.ctx()) };
         if items_len <= self.block_size {
-            let kernel = self.module.get_kernel(&self.padding);
+            let kernel = module.get_kernel(&self.padding);
             kernel.launch(row, items_len, params.as_ptr(), 0, Some(stream));
         } else {
             let block_size = (items_len + self.items_per_thread - 1) / self.items_per_thread;
-            let kernel = self.module.get_kernel(&self.folding);
+            let kernel = module.get_kernel(&self.folding);
             kernel.launch(row, block_size, params.as_ptr(), 0, Some(stream));
         }
     }

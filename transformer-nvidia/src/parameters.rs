@@ -1,5 +1,4 @@
-﻿use crate::Storage;
-use cuda::{ContextResource, ContextSpore, DevMem, DevMemSpore, EventSpore, Stream};
+﻿use cuda::{ContextGuard, ContextResource, ContextSpore, DevMem, DevMemSpore, EventSpore, Stream};
 use std::rc::Rc;
 use tensor::Tensor;
 use transformer::Llama2;
@@ -41,13 +40,13 @@ impl ModelParameters {
     }
 }
 
-pub(crate) struct LayersParameters<'ctx> {
-    layers: Vec<LayerParameter<'ctx>>,
+pub(crate) struct LayersParameters {
+    layers: Vec<LayerParameter>,
     current: usize,
 }
 
-impl<'ctx> LayersParameters<'ctx> {
-    pub fn new(load_layers: usize, host: &dyn Llama2, stream: &Stream<'ctx>) -> Self {
+impl LayersParameters {
+    pub fn new(load_layers: usize, host: &dyn Llama2, stream: &Stream) -> Self {
         Self {
             layers: (0..host.num_hidden_layers().min(load_layers))
                 .map(|layer| LayerParameter::new(host, layer, stream))
@@ -57,7 +56,7 @@ impl<'ctx> LayersParameters<'ctx> {
     }
 
     #[inline]
-    pub fn load(&mut self, layer: usize, host: &dyn Llama2, stream: &Stream<'ctx>) {
+    pub fn load(&mut self, layer: usize, host: &dyn Llama2, stream: &Stream) {
         let step = self.layers.len() - 1;
         let i = (self.current + step) % self.layers.len();
         let layer = (layer + step) % host.num_hidden_layers();
@@ -65,38 +64,76 @@ impl<'ctx> LayersParameters<'ctx> {
     }
 
     #[inline]
-    pub fn sync(&mut self, layer: usize, stream: &Stream<'ctx>) -> &LayerParameter<'ctx> {
+    pub fn sync(&mut self, layer: usize, stream: &Stream) -> &LayerParameter {
         let i = self.current;
         self.current = (i + 1) % self.layers.len();
 
         let params = &self.layers[i];
         assert_eq!(params.layer, layer);
-        stream.wait_for(&params.sync_event);
+        stream.wait_for(unsafe { &params.sync_event.sprout(stream.ctx()) });
 
         params
     }
 }
 
-pub(crate) struct LayerParameter<'ctx> {
-    pub input_layernorm: Tensor<Storage<'ctx>>,
-    pub w_qkv: Tensor<Storage<'ctx>>,
-    pub self_attn_o_proj: Tensor<Storage<'ctx>>,
-    pub post_attention_layernorm: Tensor<Storage<'ctx>>,
-    pub mlp_gate_up: Tensor<Storage<'ctx>>,
-    pub mlp_down: Tensor<Storage<'ctx>>,
+pub(crate) struct LayerParameter {
+    pub input_layernorm: Tensor<Rc<DevMemSpore>>,
+    pub w_qkv: Tensor<Rc<DevMemSpore>>,
+    pub self_attn_o_proj: Tensor<Rc<DevMemSpore>>,
+    pub post_attention_layernorm: Tensor<Rc<DevMemSpore>>,
+    pub mlp_gate_up: Tensor<Rc<DevMemSpore>>,
+    pub mlp_down: Tensor<Rc<DevMemSpore>>,
 
     layer: usize,
-    sync_event: cuda::Event<'ctx>,
+    sync_event: cuda::EventSpore,
 }
 
-impl<'ctx> LayerParameter<'ctx> {
-    pub fn new(host: &dyn Llama2, layer: usize, stream: &Stream<'ctx>) -> Self {
+impl LayerParameter {
+    #[inline]
+    pub fn input_layernorm<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
+        unsafe { self.input_layernorm.clone().map_physical(|s| s.sprout(ctx)) }
+    }
+
+    #[inline]
+    pub fn w_qkv<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
+        unsafe { self.w_qkv.clone().map_physical(|s| s.sprout(ctx)) }
+    }
+
+    #[inline]
+    pub fn w_o<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
+        unsafe {
+            self.self_attn_o_proj
+                .clone()
+                .map_physical(|s| s.sprout(ctx))
+        }
+    }
+
+    #[inline]
+    pub fn post_attention_layernorm<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
+        unsafe {
+            self.post_attention_layernorm
+                .clone()
+                .map_physical(|s| s.sprout(ctx))
+        }
+    }
+
+    #[inline]
+    pub fn mlp_gate_up<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
+        unsafe { self.mlp_gate_up.clone().map_physical(|s| s.sprout(ctx)) }
+    }
+
+    #[inline]
+    pub fn mlp_down<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
+        unsafe { self.mlp_down.clone().map_physical(|s| s.sprout(ctx)) }
+    }
+
+    fn new(host: &dyn Llama2, layer: usize, stream: &Stream) -> Self {
         macro_rules! map {
             ($param:ident) => {
                 unsafe {
                     host.$param(layer)
                         .as_ref()
-                        .map_physical(|slice| stream.from_host(slice).into())
+                        .map_physical(|slice| Rc::new(stream.from_host(slice).sporulate()))
                 }
             };
         }
@@ -108,19 +145,19 @@ impl<'ctx> LayerParameter<'ctx> {
             mlp_gate_up: map!(mlp_gate_up).transpose(&[1, 0]),
             mlp_down: map!(mlp_down).transpose(&[1, 0]),
             layer,
-            sync_event: stream.record(),
+            sync_event: stream.record().sporulate(),
         }
     }
 
-    pub fn load(&mut self, host: &dyn Llama2, layer: usize, stream: &Stream<'ctx>) {
+    fn load(&mut self, host: &dyn Llama2, layer: usize, stream: &Stream) {
         if self.layer == layer {
             return;
         }
 
+        let ctx = stream.ctx();
         macro_rules! update {
             ($param:ident) => {
-                self.$param
-                    .physical_mut()
+                unsafe { self.input_layernorm.physical_mut().sprout(ctx) }
                     .copy_in_async(host.$param(layer).as_slice(), stream)
             };
         }
@@ -132,13 +169,6 @@ impl<'ctx> LayerParameter<'ctx> {
         update!(mlp_down);
 
         self.layer = layer;
-        self.sync_event = stream.record();
-    }
-}
-
-impl Drop for LayerParameter<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        self.sync_event.synchronize();
+        self.sync_event = stream.record().sporulate();
     }
 }

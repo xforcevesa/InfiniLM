@@ -1,19 +1,22 @@
-﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, DevSlice, Module, Ptx, Stream};
+﻿use cuda::{
+    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, DevSlice,
+    ModuleSpore, Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
 };
 use tensor::{udim, Tensor};
 
-pub struct Reform<'ctx> {
-    module: Module<'ctx>,
+pub struct Reform {
+    module: ModuleSpore,
     f: CString,
     block_size: c_uint,
     warp_size: c_uint,
 }
 
-impl<'ctx> Reform<'ctx> {
-    pub fn new(block_size: usize, warp_size: usize, ctx: &'ctx ContextGuard<'ctx>) -> Self {
+impl Reform {
+    pub fn new(block_size: usize, warp_size: usize, ctx: &ContextGuard) -> Self {
         assert_eq!(
             block_size % warp_size,
             0,
@@ -53,7 +56,7 @@ extern "C" __global__ void {name}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()),
+            module: ctx.load(&ptx.unwrap()).sporulate(),
             f: CString::new(name).unwrap(),
             block_size: block_size as _,
             warp_size: warp_size as _,
@@ -61,7 +64,7 @@ extern "C" __global__ void {name}(
     }
 }
 
-impl Reform<'_> {
+impl Reform {
     pub fn launch<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>, stream: &Stream)
     where
         T: DerefMut<Target = DevSlice>,
@@ -107,7 +110,9 @@ impl Reform<'_> {
         let max_warp_per_block = self.block_size / self.warp_size;
         let grid_dims = (r, (c + max_warp_per_block - 1) / max_warp_per_block);
         let block_dims = ((c + grid_dims.1 - 1) / grid_dims.1, self.warp_size);
-        let kernel = self.module.get_kernel(&self.f);
+
+        let module = unsafe { self.module.sprout(stream.ctx()) };
+        let kernel = module.get_kernel(&self.f);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }
 }

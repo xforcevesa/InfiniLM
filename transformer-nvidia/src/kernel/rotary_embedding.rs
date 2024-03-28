@@ -1,18 +1,21 @@
-﻿use cuda::{bindings::CUdeviceptr, AsRaw, ContextGuard, DevSlice, Module, Ptx, Stream};
+﻿use cuda::{
+    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, DevSlice,
+    ModuleSpore, Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::Deref,
 };
 use tensor::{udim, DataType, Tensor};
 
-pub struct RotaryEmbedding<'ctx> {
-    module: Module<'ctx>,
+pub struct RotaryEmbedding {
+    module: ModuleSpore,
     f: CString,
     block_size: c_uint,
 }
 
-impl<'ctx> RotaryEmbedding<'ctx> {
-    pub fn new(block_size: usize, ctx: &'ctx ContextGuard<'ctx>) -> Self {
+impl RotaryEmbedding {
+    pub fn new(block_size: usize, ctx: &ContextGuard) -> Self {
         let name = "rotary_embedding_padding";
 
         const ROTARY_EMBEDDING: &str = include_str!("rotary_embedding.cuh");
@@ -35,14 +38,14 @@ extern "C" __global__ void {name}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()),
+            module: ctx.load(&ptx.unwrap()).sporulate(),
             f: CString::new(name).unwrap(),
             block_size: block_size as _,
         }
     }
 }
 
-impl RotaryEmbedding<'_> {
+impl RotaryEmbedding {
     pub fn launch<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
     where
         T: Deref<Target = DevSlice>,
@@ -69,7 +72,8 @@ impl RotaryEmbedding<'_> {
             (&leading_dim) as *const _ as _,
         ];
 
-        let f = self.module.get_kernel(&self.f);
-        f.launch((nh, n), dh / 2, params.as_ptr(), 0, Some(stream))
+        let module = unsafe { self.module.sprout(stream.ctx()) };
+        let kernel = module.get_kernel(&self.f);
+        kernel.launch((nh, n), dh / 2, params.as_ptr(), 0, Some(stream))
     }
 }

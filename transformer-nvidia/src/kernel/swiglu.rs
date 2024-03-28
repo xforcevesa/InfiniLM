@@ -1,5 +1,6 @@
 ﻿use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, CudaDataType, DevSlice, Module, Ptx, Stream,
+    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, CudaDataType,
+    DevSlice, ModuleSpore, Ptx, Stream,
 };
 use std::{
     ffi::{c_uint, c_void, CString},
@@ -7,14 +8,14 @@ use std::{
 };
 use tensor::{udim, Tensor};
 
-pub struct Swiglu<'ctx> {
-    module: Module<'ctx>,
+pub struct Swiglu {
+    module: ModuleSpore,
     f: CString,
     block_size: c_uint,
 }
 
-impl<'ctx> Swiglu<'ctx> {
-    pub fn new(data_type: CudaDataType, block_size: usize, ctx: &'ctx ContextGuard<'ctx>) -> Self {
+impl Swiglu {
+    pub fn new(data_type: CudaDataType, block_size: usize, ctx: &ContextGuard) -> Self {
         let ty_arg = data_type.name();
         let name = format!("swiglu_{ty_arg}");
 
@@ -38,14 +39,14 @@ extern "C" __global__ void {name}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()),
+            module: ctx.load(&ptx.unwrap()).sporulate(),
             f: CString::new(name).unwrap(),
             block_size: block_size as _,
         }
     }
 }
 
-impl Swiglu<'_> {
+impl Swiglu {
     pub fn launch<T>(&self, gate: &mut Tensor<T>, up: &Tensor<T>, stream: &Stream)
     where
         T: Deref<Target = DevSlice>,
@@ -82,7 +83,9 @@ impl Swiglu<'_> {
 
         let block_dims = gcd(self.block_size, di);
         let grid_dims = (seq_len, di / block_dims);
-        let kernel = self.module.get_kernel(&self.f);
+
+        let module = unsafe { self.module.sprout(stream.ctx()) };
+        let kernel = module.get_kernel(&self.f);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }
 }
