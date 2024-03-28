@@ -157,7 +157,10 @@ fn test() {
             top_k: usize::MAX,
             top_p: 1.,
         },
+        #[cfg(not(detected_cuda))]
         Device::Cpu,
+        #[cfg(detected_cuda)]
+        Device::NvidiaGpu(0),
     );
 
     let mut session = service.launch();

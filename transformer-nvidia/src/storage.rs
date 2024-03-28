@@ -1,7 +1,8 @@
-﻿use cuda::{DevMem, DevSlice, Stream};
+﻿use cuda::{Context, ContextSpore, DevMem, DevMemSpore, DevSlice, Stream};
 use std::{
     ops::{Deref, DerefMut},
     rc::Rc,
+    sync::Arc,
 };
 use tensor::Splitable;
 
@@ -46,5 +47,17 @@ impl<'ctx> Splitable for Storage<'ctx> {
     #[inline]
     fn split(&self) -> Self {
         Self(self.0.clone())
+    }
+}
+
+pub struct Cache {
+    pub(crate) context: Arc<Context>,
+    pub(crate) mem: DevMemSpore,
+}
+
+impl Drop for Cache {
+    #[inline]
+    fn drop(&mut self) {
+        self.context.apply(|ctx| unsafe { self.mem.kill(ctx) });
     }
 }

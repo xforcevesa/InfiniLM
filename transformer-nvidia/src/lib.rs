@@ -10,20 +10,19 @@ extern crate log;
 
 use cublas::{Cublas, CublasSpore};
 use cuda::{
-    AsRaw, Context, ContextResource, ContextSpore, CudaDataType::half, DevMemSpore, Stream,
-    StreamSpore,
+    AsRaw, Context, ContextResource, ContextSpore, CudaDataType::half, Stream, StreamSpore,
 };
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use sample::Sample;
 use std::{cell::RefCell, fs::File, io::Read, sync::Arc, time::Instant};
-use storage::Storage;
+use storage::{Cache, Storage};
 use tensor::{slice, udim, DataType, Tensor};
 use transformer::{
     pos, LayerBuffer, LayerCache, Llama2, Memory, Sample as _, SampleArgs, Transformer,
 };
 
-type Request<'a, Id> = transformer::Request<'a, Id, DevMemSpore>;
+type Request<'a, Id> = transformer::Request<'a, Id, Cache>;
 
 pub extern crate cuda;
 
@@ -42,7 +41,7 @@ pub struct NvidiaTransformer {
 }
 
 impl Transformer for NvidiaTransformer {
-    type Cache = DevMemSpore;
+    type Cache = Cache;
 
     fn model(&self) -> &dyn Llama2 {
         &self.host
@@ -53,7 +52,14 @@ impl Transformer for NvidiaTransformer {
             let stream = unsafe { self.transfer.sprout(ctx) };
             LayerCache::new_layers(&self.host, |dt, shape| {
                 let len = shape.iter().product::<udim>() as usize * dt.size();
-                Tensor::new(dt, shape, stream.malloc::<u8>(len).sporulate())
+                Tensor::new(
+                    dt,
+                    shape,
+                    Cache {
+                        context: self.context.clone(),
+                        mem: stream.malloc::<u8>(len).sporulate(),
+                    },
+                )
             })
         })
     }
@@ -302,8 +308,8 @@ impl NvidiaTransformer {
 
             let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], &mut **q_buf);
             let (k_cache, v_cache) = r.cache(layer);
-            let mut k_cache = unsafe { k_cache.as_mut().map_physical(|s| s.sprout(ctx)) };
-            let mut v_cache = unsafe { v_cache.as_mut().map_physical(|s| s.sprout(ctx)) };
+            let mut k_cache = unsafe { k_cache.as_mut().map_physical(|s| s.mem.sprout(ctx)) };
+            let mut v_cache = unsafe { v_cache.as_mut().map_physical(|s| s.mem.sprout(ctx)) };
 
             let k_cat = k_cache.as_mut().slice(cat_slice);
             let v_cat = v_cache.as_mut().slice(cat_slice);
