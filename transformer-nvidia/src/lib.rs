@@ -15,15 +15,16 @@ use cuda::{
 };
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
+use sample::Sample;
 use std::{cell::RefCell, fs::File, io::Read, sync::Arc, time::Instant};
 use storage::Storage;
 use tensor::{slice, udim, DataType, Tensor};
-use transformer::{pos, LayerBuffer, Sample as _};
+use transformer::{
+    pos, LayerBuffer, LayerCache, Llama2, Memory, Sample as _, SampleArgs, Transformer,
+};
 
-pub type Request<'a, Id> = transformer::Request<'a, Id, DevMemSpore>;
-pub type LayerCache = transformer::LayerCache<DevMemSpore>;
-pub use sample::Sample;
-pub use transformer::{Llama2, Memory, SampleArgs, Transformer};
+type Request<'a, Id> = transformer::Request<'a, Id, DevMemSpore>;
+
 pub extern crate cuda;
 
 pub struct NvidiaTransformer {

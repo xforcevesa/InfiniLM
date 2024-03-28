@@ -1,22 +1,10 @@
-﻿use crate::{session, Command};
-use common::utok;
-use std::{
-    collections::HashMap,
-    fs::File,
-    path::Path,
-    sync::{mpsc::Receiver, Arc, Mutex},
-    time::Instant,
-};
-use transformer_nvidia::{
-    cuda::Device, LayerCache, NvidiaTransformer, Request, SampleArgs, Transformer,
-};
+﻿use std::{fs::File, path::Path, sync::Arc, time::Instant};
+use transformer::Transformer;
+use transformer_nvidia::{cuda, NvidiaTransformer};
 
-pub fn task(
-    device: Device,
-    model_dir: impl AsRef<Path>,
-    sample: Arc<Mutex<SampleArgs>>,
-    receiver: Receiver<Command>,
-) {
+pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> impl Transformer {
+    cuda::init();
+    let device = cuda::Device::new(device);
     device.set_mempool_threshold(u64::MAX);
     let model_dir = model_dir.as_ref();
 
@@ -25,71 +13,10 @@ pub fn task(
     let safetensors = File::open(model_dir.join("model.safetensors")).unwrap();
     info!("open file {:?}", time.elapsed());
 
+    let time = Instant::now();
     let context = Arc::new(device.context());
     let transformer = NvidiaTransformer::new(config, safetensors, usize::MAX, context.clone());
-    let mut sessions = HashMap::new();
+    info!("build transformer ... {:?}", time.elapsed());
 
-    let max_seq_len = transformer.model().max_position_embeddings();
-    let eos = transformer.model().eos_token_id();
-    while let Ok(cmd) = receiver.recv() {
-        match cmd {
-            Command::Infer {
-                id,
-                prompt,
-                responsing,
-            } => {
-                let ctx = sessions
-                    .entry(id)
-                    .or_insert_with_key(|&id| SessionContext::new(&transformer, id));
-
-                let t0 = Instant::now();
-                let mut token = transformer.decode(
-                    vec![ctx.request(&prompt, max_seq_len)],
-                    &sample.lock().unwrap(),
-                )[0]
-                .1;
-                let t1 = Instant::now();
-                let mut len = 0;
-                while token != eos {
-                    responsing.send(token).unwrap();
-                    token = transformer.decode(
-                        vec![ctx.request(&[token], max_seq_len)],
-                        &sample.lock().unwrap(),
-                    )[0]
-                    .1;
-                    len += 1;
-                }
-                let t2 = Instant::now();
-                info!(
-                    "First token delay: {:?}, average speed = {:?}/tok",
-                    t1 - t0,
-                    (t2 - t1).div_f32(len as _)
-                );
-            }
-            Command::Drop { id } => {
-                sessions.remove(&id);
-            }
-        }
-    }
-}
-
-struct SessionContext(session::SessionContext<LayerCache>);
-
-impl SessionContext {
-    #[inline]
-    fn new(transformer: &NvidiaTransformer, id: usize) -> Self {
-        Self(session::SessionContext::new(transformer.new_cache(), id))
-    }
-
-    #[inline]
-    fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> Request<'_, usize> {
-        let pos = self.0.request(tokens, max_seq_len);
-        Request::new(
-            self.0.id,
-            &self.0.cache_map[pos..],
-            &mut self.0.cache,
-            pos as _,
-            true,
-        )
-    }
+    transformer
 }

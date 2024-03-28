@@ -10,6 +10,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
 tokenizer = { path = "../tokenizer" }
+transformer = { path = "../transformer" }
 transformer-cpu = { path = "../transformer-cpu" }
 transformer-nvidia = { path = "../transformer-nvidia", optional = true }
 half.workspace = true

@@ -3,14 +3,12 @@ mod sample;
 mod storage;
 
 use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
+use sample::Sample;
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
-use transformer::{pos, LayerBuffer, Sample as _};
+use transformer::{pos, LayerBuffer, LayerCache, Llama2, Sample as _, SampleArgs, Transformer};
 
-pub type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
-pub type LayerCache = transformer::LayerCache<Storage>;
-pub use sample::Sample;
-pub use transformer::{save, Llama2, Memory, SampleArgs, Transformer};
+type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 
 pub struct CpuTransformer(Box<dyn Llama2>);
 
@@ -301,7 +299,7 @@ fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
 #[test]
 fn test_build() {
     use std::{io::ErrorKind::NotFound, time::Instant};
-    use transformer::SafeTensorError;
+    use transformer::{Memory, SafeTensorError};
 
     let t0 = Instant::now();
     let safetensors = Memory::load_safetensors_from_dir("../../TinyLlama-1.1B-Chat-v1.0");

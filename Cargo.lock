@@ -1447,6 +1447,7 @@ dependencies = [
  "log",
  "tensor",
  "tokenizer",
+ "transformer",
  "transformer-cpu",
  "transformer-nvidia",
 ]

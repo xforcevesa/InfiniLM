@@ -2,6 +2,7 @@ mod cpu;
 #[cfg(detected_cuda)]
 mod nvidia;
 mod session;
+mod task;
 mod template;
 
 use common::utok;
@@ -14,9 +15,10 @@ use std::{
     },
     thread::{self, JoinHandle},
 };
+use task::Task;
 use template::Template;
 use tokenizer::{BPECommonNormalizer, Normalizer, Tokenizer, VocabTxt, BPE};
-use transformer_cpu::SampleArgs;
+use transformer::SampleArgs;
 
 pub use session::Session;
 
@@ -49,16 +51,24 @@ impl Service {
                 sender,
             }),
             sample: sample.clone(),
-            _manager: thread::spawn(move || match device {
-                Device::Cpu => cpu::task(model_dir, sample, receiver),
-                #[cfg(detected_cuda)]
-                Device::NvidiaGpu(n) => {
-                    use transformer_nvidia::cuda;
-                    cuda::init();
-                    nvidia::task(cuda::Device::new(n), model_dir, sample, receiver);
-                }
-                #[cfg(not(detected_cuda))]
-                _ => panic!("Unsupported device"),
+            _manager: thread::spawn(move || {
+                match device {
+                    Device::Cpu => {
+                        let mut task = Task::new(cpu::transformer(model_dir), sample);
+                        for cmd in receiver {
+                            task.invoke(cmd);
+                        }
+                    }
+                    #[cfg(detected_cuda)]
+                    Device::NvidiaGpu(n) => {
+                        let mut task = Task::new(nvidia::transformer(model_dir, n), sample);
+                        for cmd in receiver {
+                            task.invoke(cmd);
+                        }
+                    }
+                    #[cfg(not(detected_cuda))]
+                    _ => panic!("Unsupported device"),
+                };
             }),
         }
     }
