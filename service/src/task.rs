@@ -1,10 +1,12 @@
 ﻿use crate::{session, Command};
 use common::utok;
 use std::{
-    collections::HashMap,
-    sync::{mpsc::Receiver, Arc, Mutex},
+    collections::{hash_map::Entry, HashMap, HashSet},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc, Mutex,
+    },
     thread::{self, JoinHandle},
-    time::Instant,
 };
 use transformer::{LayerCache, Request, SampleArgs, Transformer};
 
@@ -13,7 +15,6 @@ where
     T: Transformer,
 {
     transformer: T,
-    sessions: HashMap<usize, SessionContext<T::Cache>>,
     sample: Arc<Mutex<SampleArgs>>,
 }
 
@@ -22,68 +23,108 @@ impl<T: Transformer> Task<T> {
     pub fn new(transformer: T, sample: Arc<Mutex<SampleArgs>>) -> Self {
         Self {
             transformer,
-            sessions: HashMap::new(),
             sample,
-        }
-    }
-
-    fn invoke(&mut self, cmd: Command) {
-        match cmd {
-            Command::Infer {
-                id,
-                prompt,
-                responsing,
-            } => {
-                let ctx = self
-                    .sessions
-                    .entry(id)
-                    .or_insert_with_key(|&id| SessionContext::new(&self.transformer, id));
-
-                let max_seq_len = self.transformer.model().max_position_embeddings();
-                let eos = self.transformer.model().eos_token_id();
-
-                let t0 = Instant::now();
-                let mut token = self.transformer.decode(
-                    vec![ctx.request(&prompt, max_seq_len)],
-                    &self.sample.lock().unwrap(),
-                )[0]
-                .1;
-                let t1 = Instant::now();
-                let mut len = 0;
-                while token != eos {
-                    responsing.send(token).unwrap();
-                    token = self.transformer.decode(
-                        vec![ctx.request(&[token], max_seq_len)],
-                        &self.sample.lock().unwrap(),
-                    )[0]
-                    .1;
-                    len += 1;
-                }
-                let t2 = Instant::now();
-                info!(
-                    "First token delay: {:?}, average speed = {:?}/tok",
-                    t1 - t0,
-                    (t2 - t1).div_f32(len as _)
-                );
-            }
-            Command::Drop { id } => {
-                self.sessions.remove(&id);
-            }
         }
     }
 }
 
 impl<T> Task<T>
 where
-    T: Transformer + Send + 'static,
+    T: Transformer + Send + Sync + 'static,
     T::Cache: Send + 'static,
 {
-    pub fn run(mut self, receiver: Receiver<Command>) -> Vec<JoinHandle<()>> {
-        vec![thread::spawn(move || {
-            for cmd in receiver {
-                self.invoke(cmd);
-            }
-        })]
+    pub fn run(self, receiver: Receiver<Command>) -> Vec<JoinHandle<()>> {
+        struct Temp<T: Transformer> {
+            ctx: SessionContext<T::Cache>,
+            prompts: Vec<utok>,
+            responsing: Sender<utok>,
+        }
+
+        enum RR<T: Transformer> {
+            Cmd(Command),
+            Ctx(SessionContext<T::Cache>),
+        }
+
+        let (rrs, rrr) = channel::<RR<T>>();
+        let (enq, deq) = channel();
+        let t0 = {
+            let rrs = rrs.clone();
+            thread::spawn(move || {
+                for cmd in receiver {
+                    rrs.send(RR::Cmd(cmd)).unwrap();
+                }
+            })
+        };
+
+        let Self {
+            transformer,
+            sample,
+        } = self;
+        let max_seq_len = transformer.model().max_position_embeddings();
+        let eos = transformer.model().eos_token_id();
+        let transformer = Arc::new(transformer);
+
+        let t1 = {
+            let transformer = transformer.clone();
+            let enq = enq.clone();
+            thread::spawn(move || {
+                let mut sessions = HashMap::new();
+                let mut removing = HashSet::new();
+                for rr in rrr {
+                    match rr {
+                        RR::Cmd(Command::Infer {
+                            id,
+                            prompt,
+                            responsing,
+                        }) => {
+                            let ctx = match sessions.entry(id) {
+                                Entry::Occupied(ctx) => ctx.remove(),
+                                Entry::Vacant(_) => SessionContext::new(&*transformer, id),
+                            };
+                            enq.send(Temp::<T> {
+                                ctx,
+                                prompts: prompt,
+                                responsing,
+                            })
+                            .unwrap();
+                        }
+                        RR::Cmd(Command::Drop { id }) => {
+                            if sessions.remove(&id).is_none() {
+                                removing.insert(id);
+                            }
+                        }
+                        RR::Ctx(ctx) => {
+                            if !removing.remove(&ctx.0.id) {
+                                sessions.insert(ctx.0.id, ctx);
+                            }
+                        }
+                    }
+                }
+            })
+        };
+        let t2 = {
+            thread::spawn(move || {
+                for mut temp in deq {
+                    let token = transformer.decode(
+                        vec![temp.ctx.request(&temp.prompts, max_seq_len)],
+                        &sample.lock().unwrap(),
+                    )[0]
+                    .1;
+                    if token != eos {
+                        temp.responsing.send(token).unwrap();
+                        enq.send(Temp {
+                            prompts: vec![token],
+                            ..temp
+                        })
+                        .unwrap();
+                    } else {
+                        rrs.send(RR::Ctx(temp.ctx)).unwrap();
+                    }
+                }
+            })
+        };
+
+        vec![t0, t1, t2]
     }
 }
 

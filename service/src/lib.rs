@@ -13,7 +13,7 @@ use std::{
         mpsc::{channel, Sender},
         Arc, Mutex,
     },
-    thread::{self, JoinHandle},
+    thread::JoinHandle,
 };
 use task::Task;
 use template::Template;

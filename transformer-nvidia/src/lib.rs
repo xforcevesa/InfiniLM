@@ -15,7 +15,12 @@ use cuda::{
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use sample::Sample;
-use std::{cell::RefCell, fs::File, io::Read, sync::Arc, time::Instant};
+use std::{
+    fs::File,
+    io::Read,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use storage::{Cache, Storage};
 use tensor::{slice, udim, DataType, Tensor};
 use transformer::{
@@ -31,7 +36,7 @@ pub struct NvidiaTransformer {
     transfer: StreamSpore,
     host: Memory,
     model: ModelParameters,
-    layers: RefCell<LayersParameters>,
+    layers: Mutex<LayersParameters>,
     cublas: CublasSpore,
     rms_norm: RmsNormalization,
     rotary_embedding: RotaryEmbedding,
@@ -90,7 +95,7 @@ impl Transformer for NvidiaTransformer {
             compute.wait_for(&transfer.record());
             {
                 // 层参数滚动加载是有状态的，必须由一个控制流独占。其他逻辑无状态，可以多流并发
-                let mut layers = self.layers.borrow_mut();
+                let mut layers = self.layers.lock().unwrap();
                 for layer in 0..self.host.num_hidden_layers() {
                     let params = {
                         layers.load(layer, &self.host, &transfer);
@@ -162,7 +167,7 @@ impl NvidiaTransformer {
 
             (
                 ModelParameters::new(&host, &stream),
-                RefCell::new(LayersParameters::new(load_layers, &host, &stream)),
+                Mutex::new(LayersParameters::new(load_layers, &host, &stream)),
                 Cublas::new(ctx).sporulate(),
                 RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
                 RotaryEmbedding::new(block_size, ctx),
