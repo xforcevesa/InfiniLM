@@ -1,10 +1,10 @@
 ﻿use crate::{session, Command};
 use common::utok;
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
     sync::{
         mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread::{self, JoinHandle},
 };
@@ -28,34 +28,42 @@ impl<T: Transformer> Task<T> {
     }
 }
 
+struct Temp<Cache> {
+    ctx: SessionContext<Cache>,
+    prompts: Vec<utok>,
+    responsing: Sender<utok>,
+}
+
+struct Batcher<Cache> {
+    queue: Mutex<VecDeque<Temp<Cache>>>,
+    condvar: Condvar,
+}
+
 impl<T> Task<T>
 where
     T: Transformer + Send + Sync + 'static,
     T::Cache: Send + 'static,
 {
-    pub fn run(self, receiver: Receiver<Command>) -> Vec<JoinHandle<()>> {
-        struct Temp<T: Transformer> {
-            ctx: SessionContext<T::Cache>,
-            prompts: Vec<utok>,
-            responsing: Sender<utok>,
-        }
-
+    pub fn run(self, commands: Receiver<Command>) -> Vec<JoinHandle<()>> {
         enum RR<T: Transformer> {
             Cmd(Command),
             Ctx(SessionContext<T::Cache>),
         }
 
-        let (rrs, rrr) = channel::<RR<T>>();
-        let (enq, deq) = channel();
+        let (sender, receiver) = channel::<RR<T>>();
         let t0 = {
-            let rrs = rrs.clone();
+            let sender = sender.clone();
             thread::spawn(move || {
-                for cmd in receiver {
-                    rrs.send(RR::Cmd(cmd)).unwrap();
+                for cmd in commands {
+                    sender.send(RR::Cmd(cmd)).unwrap();
                 }
             })
         };
 
+        let batcher = Arc::new(Batcher::<T::Cache> {
+            queue: Mutex::new(VecDeque::new()),
+            condvar: Condvar::new(),
+        });
         let Self {
             transformer,
             sample,
@@ -66,11 +74,11 @@ where
 
         let t1 = {
             let transformer = transformer.clone();
-            let enq = enq.clone();
+            let batcher = batcher.clone();
             thread::spawn(move || {
                 let mut sessions = HashMap::new();
                 let mut removing = HashSet::new();
-                for rr in rrr {
+                for rr in receiver {
                     match rr {
                         RR::Cmd(Command::Infer {
                             id,
@@ -81,12 +89,12 @@ where
                                 Entry::Occupied(ctx) => ctx.remove(),
                                 Entry::Vacant(_) => SessionContext::new(&*transformer, id),
                             };
-                            enq.send(Temp::<T> {
+                            batcher.queue.lock().unwrap().push_back(Temp {
                                 ctx,
                                 prompts: prompt,
                                 responsing,
-                            })
-                            .unwrap();
+                            });
+                            batcher.condvar.notify_one();
                         }
                         RR::Cmd(Command::Drop { id }) => {
                             if sessions.remove(&id).is_none() {
@@ -103,23 +111,40 @@ where
             })
         };
         let t2 = {
-            thread::spawn(move || {
-                for mut temp in deq {
-                    let token = transformer.decode(
-                        vec![temp.ctx.request(&temp.prompts, max_seq_len)],
-                        &sample.lock().unwrap(),
-                    )[0]
-                    .1;
-                    if token != eos {
-                        temp.responsing.send(token).unwrap();
-                        enq.send(Temp {
-                            prompts: vec![token],
-                            ..temp
-                        })
-                        .unwrap();
-                    } else {
-                        rrs.send(RR::Ctx(temp.ctx)).unwrap();
-                    }
+            thread::spawn(move || loop {
+                let mut queue = batcher
+                    .condvar
+                    .wait_while(batcher.queue.lock().unwrap(), |q| q.is_empty())
+                    .unwrap();
+                let mut temps = std::iter::from_fn(|| queue.pop_front()).collect::<Vec<_>>();
+                drop(queue);
+
+                let requests = temps
+                    .iter_mut()
+                    .map(|temp| temp.ctx.request(&temp.prompts, max_seq_len))
+                    .collect::<Vec<_>>();
+
+                let tokens = transformer
+                    .decode(requests, &sample.lock().unwrap())
+                    .into_iter()
+                    .collect::<HashMap<_, _>>();
+
+                let mut queue = batcher.queue.lock().unwrap();
+                for temp in temps {
+                    match tokens.get(&temp.ctx.0.id) {
+                        Some(&token) => {
+                            if token != eos {
+                                temp.responsing.send(token).unwrap();
+                                queue.push_back(Temp {
+                                    prompts: vec![token],
+                                    ..temp
+                                });
+                            } else {
+                                sender.send(RR::Ctx(temp.ctx)).unwrap();
+                            }
+                        }
+                        None => todo!(),
+                    };
                 }
             })
         };
