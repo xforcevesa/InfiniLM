@@ -1,21 +1,17 @@
+mod batcher;
 mod cpu;
+mod dispatch;
 #[cfg(detected_cuda)]
 mod nvidia;
 mod session;
-mod task;
 mod template;
 
-use common::utok;
 use session::SessionComponent;
 use std::{
     path::Path,
-    sync::{
-        mpsc::{channel, Sender},
-        Arc, Mutex,
-    },
+    sync::{mpsc::channel, Arc, Mutex},
     thread::JoinHandle,
 };
-use task::Task;
 use template::Template;
 use tokenizer::{BPECommonNormalizer, Normalizer, Tokenizer, VocabTxt, BPE};
 use transformer::SampleArgs;
@@ -28,7 +24,7 @@ extern crate log;
 pub struct Service {
     session_component: Arc<SessionComponent>,
     sample: Arc<Mutex<SampleArgs>>,
-    _manager: Vec<JoinHandle<()>>,
+    _workers: Vec<JoinHandle<()>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -51,11 +47,11 @@ impl Service {
                 sender,
             }),
             sample: sample.clone(),
-            _manager: match device {
-                Device::Cpu => Task::new(cpu::transformer(model_dir), sample).run(receiver),
+            _workers: match device {
+                Device::Cpu => dispatch::run(cpu::transformer(model_dir), sample, receiver),
                 #[cfg(detected_cuda)]
                 Device::NvidiaGpu(n) => {
-                    Task::new(nvidia::transformer(model_dir, n), sample).run(receiver)
+                    dispatch::run(nvidia::transformer(model_dir, n), sample, receiver)
                 }
                 #[cfg(not(detected_cuda))]
                 _ => panic!("Unsupported device"),
@@ -65,7 +61,7 @@ impl Service {
 
     #[inline]
     pub fn launch(&self) -> Session {
-        self.session_component.clone().into()
+        Session::new(self.session_component.clone())
     }
 
     #[inline]
@@ -77,17 +73,6 @@ impl Service {
     pub fn set_sample_args(&self, sample: SampleArgs) {
         *self.sample.lock().unwrap() = sample;
     }
-}
-
-enum Command {
-    Infer {
-        id: usize,
-        prompt: Vec<utok>,
-        responsing: Sender<utok>,
-    },
-    Drop {
-        id: usize,
-    },
 }
 
 fn template(model_dir: impl AsRef<Path>) -> Box<dyn Template + Send + Sync> {
