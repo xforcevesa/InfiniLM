@@ -29,7 +29,7 @@ pub extern crate cuda;
 pub struct NvidiaTransformer {
     context: Arc<Context>,
     transfer: StreamSpore,
-    host: Memory<'static>,
+    host: Memory,
     model: ModelParameters,
     layers: RefCell<LayersParameters>,
     cublas: CublasSpore,
@@ -43,6 +43,7 @@ pub struct NvidiaTransformer {
 impl Transformer for NvidiaTransformer {
     type Cache = Cache;
 
+    #[inline]
     fn model(&self) -> &dyn Llama2 {
         &self.host
     }
@@ -234,11 +235,11 @@ impl NvidiaTransformer {
         let w_qkv = &params.w_qkv(ctx);
 
         self.rms_norm
-            .launch(x1, x0, &input_layernorm, epsilon, compute);
+            .launch(x1, x0, input_layernorm, epsilon, compute);
         // compute.synchronize();
         // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
 
-        mat_mul(&cublas, qkv, 0., x1, &w_qkv, 1.);
+        mat_mul(&cublas, qkv, 0., x1, w_qkv, 1.);
         let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
         let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
         let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
@@ -361,16 +362,16 @@ impl NvidiaTransformer {
         let mlp_gate_up = &params.mlp_gate_up(ctx);
         let mlp_down = &params.mlp_down(ctx);
 
-        mat_mul(&cublas, x0, 1., x1, &w_o, 1.);
+        mat_mul(&cublas, x0, 1., x1, w_o, 1.);
         // compute.synchronize();
         // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
 
         self.rms_norm
-            .launch(x1, x0, &post_attention_layernorm, epsilon, compute);
+            .launch(x1, x0, post_attention_layernorm, epsilon, compute);
         // compute.synchronize();
         // println!("layer {layer} post norm:\n{}", map_tensor(&x1));
 
-        mat_mul(&cublas, gate_up, 0., x1, &mlp_gate_up, 1.);
+        mat_mul(&cublas, gate_up, 0., x1, mlp_gate_up, 1.);
         let mut gate_up = gate_up.split(1, &[di as _, di as _]);
         let up = gate_up.pop().unwrap();
         let mut gate = gate_up.pop().unwrap();
@@ -382,7 +383,7 @@ impl NvidiaTransformer {
         // compute.synchronize();
         // println!("layer {layer} swiglu:\n{}", map_tensor(&gate));
 
-        mat_mul(&cublas, x0, 1., &gate, &mlp_down, 1.);
+        mat_mul(&cublas, x0, 1., &gate, mlp_down, 1.);
         // compute.synchronize();
         // println!("layer {layer} down:\n{}", map_tensor(&x0));
     }

@@ -1,4 +1,4 @@
-﻿use super::{safe_tensors::SafeTensorHeaderJson, ConfigJson, HostMemory, Llama2};
+﻿use super::{safe_tensors::SafeTensorHeaderJson, ConfigJson, Llama2, Storage};
 use safetensors::{tensor::TensorInfo, Dtype};
 use serde_json::json;
 use std::{
@@ -21,7 +21,7 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
         meta: Some([("format".into(), json!("pt"))].into()),
     };
 
-    let mut tensor_info = |tensor: Tensor<HostMemory>| TensorInfo {
+    let mut tensor_info = |tensor: Tensor<Storage>| TensorInfo {
         dtype: match tensor.data_type() {
             DataType::Bool => Dtype::BOOL,
             DataType::I8 => Dtype::I8,

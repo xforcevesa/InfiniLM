@@ -2,14 +2,15 @@ mod cast;
 mod memory;
 mod safe_tensors;
 mod save;
+mod storage;
 
-use crate::HostMemory;
 use common::utok;
 use tensor::{DataType, Tensor};
 
 pub use memory::Memory;
 pub use safe_tensors::SafeTensorError;
 pub use save::save;
+pub use storage::Storage;
 
 pub trait Llama2 {
     fn bos_token_id(&self) -> utok;
@@ -53,35 +54,35 @@ pub trait Llama2 {
     }
 
     /// Shape = `vocab_size x hidden_size`.
-    fn embed_tokens(&self) -> Tensor<HostMemory>;
+    fn embed_tokens(&self) -> Tensor<Storage>;
     /// Shape = `hidden_size`.
-    fn input_layernorm(&self, layer: usize) -> Tensor<HostMemory>;
+    fn input_layernorm(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `(((num_head + num_kv_head + num_kv_head) x head_dim) x hidden_size`.
-    fn w_qkv(&self, layer: usize) -> Tensor<HostMemory>;
+    fn w_qkv(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `hidden_size x hidden_size`.
-    fn self_attn_q_proj(&self, layer: usize) -> Tensor<HostMemory>;
+    fn self_attn_q_proj(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `(num_kv_head x head_dim) x hidden_size`.
-    fn self_attn_k_proj(&self, layer: usize) -> Tensor<HostMemory>;
+    fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `(num_kv_head x head_dim) x hidden_size`.
-    fn self_attn_v_proj(&self, layer: usize) -> Tensor<HostMemory>;
+    fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `hidden_size x hidden_size`.
-    fn self_attn_o_proj(&self, layer: usize) -> Tensor<HostMemory>;
+    fn self_attn_o_proj(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `hidden_size`.
-    fn post_attention_layernorm(&self, layer: usize) -> Tensor<HostMemory>;
+    fn post_attention_layernorm(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `(intermediate_size + intermediate_size) x hidden_size`.
-    fn mlp_gate_up(&self, layer: usize) -> Tensor<HostMemory>;
+    fn mlp_gate_up(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `intermediate_size x hidden_size`.
-    fn mlp_gate(&self, layer: usize) -> Tensor<HostMemory>;
+    fn mlp_gate(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `hidden_size x intermediate_size`.
-    fn mlp_down(&self, layer: usize) -> Tensor<HostMemory>;
+    fn mlp_down(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `intermediate_size x hidden_size`.
-    fn mlp_up(&self, layer: usize) -> Tensor<HostMemory>;
+    fn mlp_up(&self, layer: usize) -> Tensor<Storage>;
     /// Shape = `hidden_size`.
-    fn model_norm(&self) -> Tensor<HostMemory>;
+    fn model_norm(&self) -> Tensor<Storage>;
     /// Shape = `vocab_size x hidden_size`.
-    fn lm_head(&self) -> Tensor<HostMemory>;
+    fn lm_head(&self) -> Tensor<Storage>;
 
-    fn tensors(&self) -> Vec<Tensor<HostMemory>> {
+    fn tensors(&self) -> Vec<Tensor<Storage>> {
         let mut tensors = Vec::with_capacity(self.num_hidden_layers() * 6 + 3);
         tensors.push(self.embed_tokens());
         tensors.push(self.embed_tokens());

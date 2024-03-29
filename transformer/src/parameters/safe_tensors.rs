@@ -1,7 +1,11 @@
-﻿use super::{memory::Layer, ConfigJson, HostMemory, Memory};
+﻿use super::{
+    memory::Layer,
+    storage::{map_anon, HostMem},
+    ConfigJson, Memory, Storage,
+};
 use memmap2::Mmap;
 use safetensors::{tensor::TensorInfo, Dtype};
-use std::{collections::HashMap, fs::File, io::Read, ops::Deref, path::Path, sync::Arc};
+use std::{collections::HashMap, fs::File, io::Read, path::Path, sync::Arc};
 use tensor::{udim, DataType, Shape, Tensor};
 
 #[derive(Debug)]
@@ -10,7 +14,7 @@ pub enum SafeTensorError {
     Serde(serde_json::Error),
 }
 
-impl<'a> Memory<'a> {
+impl Memory {
     pub fn load_safetensors_from_dir(model_dir: impl AsRef<Path>) -> Result<Self, SafeTensorError> {
         let model_dir = model_dir.as_ref();
         let config = File::open(model_dir.join("config.json")).map_err(SafeTensorError::Io)?;
@@ -21,7 +25,7 @@ impl<'a> Memory<'a> {
 
     pub fn load_safetensors(
         config: impl Read,
-        model: impl Deref<Target = [u8]> + 'a,
+        model: impl HostMem,
         allow_realloc: bool,
     ) -> Result<Self, serde_json::Error> {
         let config: ConfigJson = serde_json::from_reader(config)?;
@@ -59,7 +63,10 @@ impl<'a> Memory<'a> {
             Tensor::new(
                 data_type,
                 &info.shape.iter().map(|&d| d as udim).collect::<Shape>(),
-                HostMemory::new(mmap.clone(), offset + start, end - start),
+                Storage {
+                    data: mmap.clone(),
+                    range: offset + start..offset + end,
+                },
             )
         };
 
@@ -129,7 +136,7 @@ pub(crate) struct SafeTensorHeaderJson {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-fn concat0<'a>(tensors: &[&Tensor<HostMemory<'a>>]) -> Tensor<HostMemory<'a>> {
+fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     assert!(!tensors.is_empty());
     let data_type = tensors[0].data_type();
     let len = tensors[0].shape()[1..].iter().product::<udim>();
@@ -141,7 +148,7 @@ fn concat0<'a>(tensors: &[&Tensor<HostMemory<'a>>]) -> Tensor<HostMemory<'a>> {
     });
 
     let shape = Shape::from_slice(&[tensors.iter().map(|t| t.shape()[0]).sum(), len]);
-    let mut data = vec![0u8; shape.iter().product::<udim>() as usize * data_type.size()];
+    let mut data = map_anon(data_type, &shape);
     let mut offset = 0;
     for t in tensors {
         let len = t.bytes_size();
@@ -149,7 +156,14 @@ fn concat0<'a>(tensors: &[&Tensor<HostMemory<'a>>]) -> Tensor<HostMemory<'a>> {
         offset += len;
     }
 
-    Tensor::new(data_type, &shape, HostMemory::from_blob(data))
+    Tensor::new(
+        data_type,
+        &shape,
+        Storage {
+            range: 0..data.len(),
+            data: Arc::new(data),
+        },
+    )
 }
 
 #[test]

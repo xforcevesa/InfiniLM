@@ -302,7 +302,7 @@ fn test_build() {
     use transformer::{Memory, SafeTensorError};
 
     let t0 = Instant::now();
-    let safetensors = Memory::load_safetensors_from_dir("../../TinyLlama-1.1B-Chat-v1.0");
+    let safetensors = Memory::load_safetensors_from_dir("../../TinyLlama-1.1B-Chat-v1.0_F16");
     let t1 = Instant::now();
     println!("mmap {:?}", t1 - t0);
 

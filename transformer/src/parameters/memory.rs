@@ -1,25 +1,25 @@
-﻿use super::{ConfigJson, DataType, HostMemory, Llama2};
+﻿use super::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
 use tensor::Tensor;
 
-pub struct Memory<'a> {
+pub struct Memory {
     pub(super) config: ConfigJson,
-    pub(super) embed_tokens: Tensor<HostMemory<'a>>,
-    pub(super) layers: Vec<Layer<'a>>,
-    pub(super) model_norm: Tensor<HostMemory<'a>>,
-    pub(super) lm_head: Tensor<HostMemory<'a>>,
+    pub(super) embed_tokens: Tensor<Storage>,
+    pub(super) layers: Vec<Layer>,
+    pub(super) model_norm: Tensor<Storage>,
+    pub(super) lm_head: Tensor<Storage>,
 }
 
-pub(super) struct Layer<'a> {
-    pub input_layernorm: Tensor<HostMemory<'a>>,
-    pub w_qkv: Tensor<HostMemory<'a>>,
-    pub self_attn_o_proj: Tensor<HostMemory<'a>>,
-    pub post_attention_layernorm: Tensor<HostMemory<'a>>,
-    pub mlp_gate_up: Tensor<HostMemory<'a>>,
-    pub mlp_down: Tensor<HostMemory<'a>>,
+pub(super) struct Layer {
+    pub input_layernorm: Tensor<Storage>,
+    pub w_qkv: Tensor<Storage>,
+    pub self_attn_o_proj: Tensor<Storage>,
+    pub post_attention_layernorm: Tensor<Storage>,
+    pub mlp_gate_up: Tensor<Storage>,
+    pub mlp_down: Tensor<Storage>,
 }
 
-impl<'a> Llama2 for Memory<'a> {
+impl Llama2 for Memory {
     #[inline]
     fn bos_token_id(&self) -> utok {
         self.config.bos_token_id
@@ -81,22 +81,22 @@ impl<'a> Llama2 for Memory<'a> {
     }
 
     #[inline]
-    fn embed_tokens(&self) -> Tensor<HostMemory> {
+    fn embed_tokens(&self) -> Tensor<Storage> {
         self.embed_tokens.clone()
     }
 
     #[inline]
-    fn input_layernorm(&self, layer: usize) -> Tensor<HostMemory> {
+    fn input_layernorm(&self, layer: usize) -> Tensor<Storage> {
         self.layers[layer].input_layernorm.clone()
     }
 
     #[inline]
-    fn w_qkv(&self, layer: usize) -> Tensor<HostMemory> {
+    fn w_qkv(&self, layer: usize) -> Tensor<Storage> {
         self.layers[layer].w_qkv.clone()
     }
 
     #[inline]
-    fn self_attn_q_proj(&self, layer: usize) -> Tensor<HostMemory> {
+    fn self_attn_q_proj(&self, layer: usize) -> Tensor<Storage> {
         let d = self.config.hidden_size;
         let dt = self.config.torch_dtype.size();
         let mut physical = self.layers[layer].w_qkv.physical().clone();
@@ -105,7 +105,7 @@ impl<'a> Llama2 for Memory<'a> {
     }
 
     #[inline]
-    fn self_attn_k_proj(&self, layer: usize) -> Tensor<HostMemory> {
+    fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage> {
         let d = self.config.hidden_size;
         let dkv = self.kv_hidden_size();
         let dt = self.config.torch_dtype.size();
@@ -116,7 +116,7 @@ impl<'a> Llama2 for Memory<'a> {
     }
 
     #[inline]
-    fn self_attn_v_proj(&self, layer: usize) -> Tensor<HostMemory> {
+    fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage> {
         let d = self.config.hidden_size;
         let dkv = self.kv_hidden_size();
         let dt = self.config.torch_dtype.size();
@@ -127,22 +127,22 @@ impl<'a> Llama2 for Memory<'a> {
     }
 
     #[inline]
-    fn self_attn_o_proj(&self, layer: usize) -> Tensor<HostMemory> {
+    fn self_attn_o_proj(&self, layer: usize) -> Tensor<Storage> {
         self.layers[layer].self_attn_o_proj.clone()
     }
 
     #[inline]
-    fn post_attention_layernorm(&self, layer: usize) -> Tensor<HostMemory> {
+    fn post_attention_layernorm(&self, layer: usize) -> Tensor<Storage> {
         self.layers[layer].post_attention_layernorm.clone()
     }
 
     #[inline]
-    fn mlp_gate_up(&self, layer: usize) -> Tensor<HostMemory> {
+    fn mlp_gate_up(&self, layer: usize) -> Tensor<Storage> {
         self.layers[layer].mlp_gate_up.clone()
     }
 
     #[inline]
-    fn mlp_gate(&self, layer: usize) -> Tensor<HostMemory> {
+    fn mlp_gate(&self, layer: usize) -> Tensor<Storage> {
         let di = self.config.intermediate_size;
         let d = self.config.hidden_size;
         let dt = self.config.torch_dtype.size();
@@ -152,12 +152,12 @@ impl<'a> Llama2 for Memory<'a> {
     }
 
     #[inline]
-    fn mlp_down(&self, layer: usize) -> Tensor<HostMemory> {
+    fn mlp_down(&self, layer: usize) -> Tensor<Storage> {
         self.layers[layer].mlp_down.clone()
     }
 
     #[inline]
-    fn mlp_up(&self, layer: usize) -> Tensor<HostMemory> {
+    fn mlp_up(&self, layer: usize) -> Tensor<Storage> {
         let di = self.config.intermediate_size;
         let d = self.config.hidden_size;
         let dt = self.config.torch_dtype.size();
@@ -168,12 +168,12 @@ impl<'a> Llama2 for Memory<'a> {
     }
 
     #[inline]
-    fn model_norm(&self) -> Tensor<HostMemory> {
+    fn model_norm(&self) -> Tensor<Storage> {
         self.model_norm.clone()
     }
 
     #[inline]
-    fn lm_head(&self) -> Tensor<HostMemory> {
+    fn lm_head(&self) -> Tensor<Storage> {
         self.lm_head.clone()
     }
 }

@@ -1,9 +1,10 @@
-﻿use super::{memory::Layer, ConfigJson, HostMemory, Llama2, Memory};
+﻿use super::{memory::Layer, storage::map_anon, ConfigJson, Llama2, Memory, Storage};
 use half::{bf16, f16};
+use std::sync::Arc;
 use tensor::{DataType, Tensor};
 
-impl<'a> Memory<'a> {
-    pub fn cast(src: &'a (dyn Llama2 + 'a), new_dtype: DataType) -> Self {
+impl Memory {
+    pub fn cast(src: &(dyn Llama2), new_dtype: DataType) -> Self {
         Self {
             config: ConfigJson {
                 torch_dtype: new_dtype,
@@ -26,14 +27,14 @@ impl<'a> Memory<'a> {
     }
 }
 
-fn cast(src: Tensor<HostMemory>, new_dtype: DataType) -> Tensor<HostMemory> {
+fn cast(src: Tensor<Storage>, new_dtype: DataType) -> Tensor<Storage> {
     if src.data_type() == new_dtype {
         return src;
     }
 
     assert!(src.is_contiguous());
-    let src_data = src.as_slice();
-    let mut data = vec![0u8; src.size() * new_dtype.size()];
+    let src_data = &**src.physical();
+    let mut data = map_anon(new_dtype, src.shape());
 
     macro_rules! cast {
         ($f:expr; $src:expr, $src_ty:ty => $dst:expr, $dst_ty:ty) => {
@@ -74,6 +75,9 @@ fn cast(src: Tensor<HostMemory>, new_dtype: DataType) -> Tensor<HostMemory> {
         _ => todo!(),
     }
 
-    let pysical = HostMemory::from_blob(data);
+    let pysical = Storage {
+        range: 0..data.len(),
+        data: Arc::new(data),
+    };
     unsafe { Tensor::from_raw_parts(new_dtype, src.shape(), src.pattern(), pysical) }
 }
