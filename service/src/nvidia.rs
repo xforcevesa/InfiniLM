@@ -1,8 +1,7 @@
 ﻿use std::{fs::File, path::Path, sync::Arc, time::Instant};
-use transformer::Transformer;
 use transformer_nvidia::{cuda, NvidiaTransformer};
 
-pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> impl Transformer {
+pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> NvidiaTransformer {
     cuda::init();
     let device = cuda::Device::new(device);
     device.set_mempool_threshold(u64::MAX);

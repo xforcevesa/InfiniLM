@@ -2,18 +2,19 @@
     alloc::{alloc, Layout},
     mem::align_of,
     ops::{Deref, DerefMut},
-    rc::Rc,
+    sync::Arc,
 };
 use tensor::Splitable;
 
-pub struct Storage(Rc<Internal>);
+#[repr(transparent)]
+pub struct Storage(Arc<Internal>);
 
 impl Storage {
     #[inline]
     pub fn new(size: usize) -> Self {
         const ALIGN: usize = align_of::<usize>();
         let layout = Layout::from_size_align(size, ALIGN).unwrap();
-        Self(Rc::new(Internal {
+        Self(Arc::new(Internal {
             ptr: unsafe { alloc(layout) },
             len: size,
         }))
@@ -47,6 +48,9 @@ struct Internal {
     ptr: *mut u8,
     len: usize,
 }
+
+unsafe impl Send for Internal {}
+unsafe impl Sync for Internal {}
 
 impl Drop for Internal {
     #[inline]

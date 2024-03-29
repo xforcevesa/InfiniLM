@@ -1,11 +1,10 @@
 ﻿use cuda::{ContextGuard, ContextResource, ContextSpore, DevMem, DevMemSpore, EventSpore, Stream};
-use std::rc::Rc;
 use tensor::Tensor;
 use transformer::Llama2;
 
 pub(crate) struct ModelParameters {
-    model_norm: Tensor<Rc<DevMemSpore>>,
-    lm_head: Tensor<Rc<DevMemSpore>>,
+    model_norm: Tensor<DevMemSpore>,
+    lm_head: Tensor<DevMemSpore>,
     sync_event: EventSpore,
 }
 
@@ -16,7 +15,7 @@ impl ModelParameters {
                 unsafe {
                     host.$param()
                         .as_ref()
-                        .map_physical(|slice| Rc::new(stream.from_host(slice).sporulate()))
+                        .map_physical(|slice| stream.from_host(slice).sporulate())
                 }
             };
         }
@@ -34,8 +33,8 @@ impl ModelParameters {
         let ctx = stream.ctx();
         stream.wait_for(&self.sync_event.sprout(ctx));
         (
-            self.model_norm.clone().map_physical(|s| s.sprout(ctx)),
-            self.lm_head.clone().map_physical(|s| s.sprout(ctx)),
+            self.model_norm.as_ref().map_physical(|s| s.sprout(ctx)),
+            self.lm_head.as_ref().map_physical(|s| s.sprout(ctx)),
         )
     }
 }
@@ -77,12 +76,12 @@ impl LayersParameters {
 }
 
 pub(crate) struct LayerParameter {
-    pub input_layernorm: Tensor<Rc<DevMemSpore>>,
-    pub w_qkv: Tensor<Rc<DevMemSpore>>,
-    pub self_attn_o_proj: Tensor<Rc<DevMemSpore>>,
-    pub post_attention_layernorm: Tensor<Rc<DevMemSpore>>,
-    pub mlp_gate_up: Tensor<Rc<DevMemSpore>>,
-    pub mlp_down: Tensor<Rc<DevMemSpore>>,
+    pub input_layernorm: Tensor<DevMemSpore>,
+    pub w_qkv: Tensor<DevMemSpore>,
+    pub self_attn_o_proj: Tensor<DevMemSpore>,
+    pub post_attention_layernorm: Tensor<DevMemSpore>,
+    pub mlp_gate_up: Tensor<DevMemSpore>,
+    pub mlp_down: Tensor<DevMemSpore>,
 
     layer: usize,
     sync_event: cuda::EventSpore,
@@ -91,19 +90,23 @@ pub(crate) struct LayerParameter {
 impl LayerParameter {
     #[inline]
     pub fn input_layernorm<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
-        unsafe { self.input_layernorm.clone().map_physical(|s| s.sprout(ctx)) }
+        unsafe {
+            self.input_layernorm
+                .as_ref()
+                .map_physical(|s| s.sprout(ctx))
+        }
     }
 
     #[inline]
     pub fn w_qkv<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
-        unsafe { self.w_qkv.clone().map_physical(|s| s.sprout(ctx)) }
+        unsafe { self.w_qkv.as_ref().map_physical(|s| s.sprout(ctx)) }
     }
 
     #[inline]
     pub fn w_o<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
         unsafe {
             self.self_attn_o_proj
-                .clone()
+                .as_ref()
                 .map_physical(|s| s.sprout(ctx))
         }
     }
@@ -112,19 +115,19 @@ impl LayerParameter {
     pub fn post_attention_layernorm<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
         unsafe {
             self.post_attention_layernorm
-                .clone()
+                .as_ref()
                 .map_physical(|s| s.sprout(ctx))
         }
     }
 
     #[inline]
     pub fn mlp_gate_up<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
-        unsafe { self.mlp_gate_up.clone().map_physical(|s| s.sprout(ctx)) }
+        unsafe { self.mlp_gate_up.as_ref().map_physical(|s| s.sprout(ctx)) }
     }
 
     #[inline]
     pub fn mlp_down<'ctx>(&self, ctx: &'ctx ContextGuard) -> Tensor<DevMem<'ctx>> {
-        unsafe { self.mlp_down.clone().map_physical(|s| s.sprout(ctx)) }
+        unsafe { self.mlp_down.as_ref().map_physical(|s| s.sprout(ctx)) }
     }
 
     fn new(host: &dyn Llama2, layer: usize, stream: &Stream) -> Self {
@@ -133,7 +136,7 @@ impl LayerParameter {
                 unsafe {
                     host.$param(layer)
                         .as_ref()
-                        .map_physical(|slice| Rc::new(stream.from_host(slice).sporulate()))
+                        .map_physical(|slice| stream.from_host(slice).sporulate())
                 }
             };
         }

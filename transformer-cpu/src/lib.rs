@@ -6,23 +6,25 @@ use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
 use sample::Sample;
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
-use transformer::{pos, LayerBuffer, LayerCache, Llama2, Sample as _, SampleArgs, Transformer};
+use transformer::{
+    pos, LayerBuffer, LayerCache, Llama2, Memory, Sample as _, SampleArgs, Transformer,
+};
 
 type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 
-pub struct CpuTransformer(Box<dyn Llama2>);
+pub struct CpuTransformer(Memory);
 
 impl Transformer for CpuTransformer {
     type Cache = Storage;
 
     #[inline]
     fn model(&self) -> &dyn Llama2 {
-        &*self.0
+        &self.0
     }
 
     #[inline]
     fn new_cache(&self) -> Vec<transformer::LayerCache<Self::Cache>> {
-        LayerCache::new_layers(&*self.0, tensor)
+        LayerCache::new_layers(&self.0, tensor)
     }
 
     fn decode<Id>(
@@ -35,7 +37,7 @@ impl Transformer for CpuTransformer {
         // 生成词嵌入并预分配空间
         let mut x0 = self.token_embed(&requests);
         let mut x1 = tensor(x0.data_type(), x0.shape());
-        let mut buf = LayerBuffer::alloc(&*self.0, &requests, Storage::new);
+        let mut buf = LayerBuffer::alloc(&self.0, &requests, Storage::new);
         // 生成位置张量
         let nt = x0.shape()[0]; // `nt` for number of tokens
         let pos = pos(&requests, nt);
@@ -69,7 +71,7 @@ impl Transformer for CpuTransformer {
 
 impl CpuTransformer {
     #[inline]
-    pub fn new(model: Box<dyn Llama2 + 'static>) -> Self {
+    pub fn new(model: Memory) -> Self {
         assert!(model.data_type() == DataType::F16 || model.data_type() == DataType::F32);
         Self(model)
     }
@@ -313,7 +315,7 @@ fn test_build() {
     };
 
     let t0 = Instant::now();
-    let _transformer = CpuTransformer::new(Box::new(safetensors));
+    let _transformer = CpuTransformer::new(safetensors);
     let t1 = Instant::now();
     println!("build transformer {:?}", t1 - t0);
 }

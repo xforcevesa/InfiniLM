@@ -28,7 +28,7 @@ extern crate log;
 pub struct Service {
     session_component: Arc<SessionComponent>,
     sample: Arc<Mutex<SampleArgs>>,
-    _manager: JoinHandle<()>,
+    _manager: Vec<JoinHandle<()>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -51,25 +51,15 @@ impl Service {
                 sender,
             }),
             sample: sample.clone(),
-            _manager: thread::spawn(move || {
-                match device {
-                    Device::Cpu => {
-                        let mut task = Task::new(cpu::transformer(model_dir), sample);
-                        for cmd in receiver {
-                            task.invoke(cmd);
-                        }
-                    }
-                    #[cfg(detected_cuda)]
-                    Device::NvidiaGpu(n) => {
-                        let mut task = Task::new(nvidia::transformer(model_dir, n), sample);
-                        for cmd in receiver {
-                            task.invoke(cmd);
-                        }
-                    }
-                    #[cfg(not(detected_cuda))]
-                    _ => panic!("Unsupported device"),
-                };
-            }),
+            _manager: match device {
+                Device::Cpu => Task::new(cpu::transformer(model_dir), sample).run(receiver),
+                #[cfg(detected_cuda)]
+                Device::NvidiaGpu(n) => {
+                    Task::new(nvidia::transformer(model_dir, n), sample).run(receiver)
+                }
+                #[cfg(not(detected_cuda))]
+                _ => panic!("Unsupported device"),
+            },
         }
     }
 

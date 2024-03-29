@@ -2,7 +2,8 @@
 use common::utok;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{mpsc::Receiver, Arc, Mutex},
+    thread::{self, JoinHandle},
     time::Instant,
 };
 use transformer::{LayerCache, Request, SampleArgs, Transformer};
@@ -17,6 +18,7 @@ where
 }
 
 impl<T: Transformer> Task<T> {
+    #[inline]
     pub fn new(transformer: T, sample: Arc<Mutex<SampleArgs>>) -> Self {
         Self {
             transformer,
@@ -25,7 +27,7 @@ impl<T: Transformer> Task<T> {
         }
     }
 
-    pub fn invoke(&mut self, cmd: Command) {
+    fn invoke(&mut self, cmd: Command) {
         match cmd {
             Command::Infer {
                 id,
@@ -68,6 +70,20 @@ impl<T: Transformer> Task<T> {
                 self.sessions.remove(&id);
             }
         }
+    }
+}
+
+impl<T> Task<T>
+where
+    T: Transformer + Send + 'static,
+    T::Cache: Send + 'static,
+{
+    pub fn run(mut self, receiver: Receiver<Command>) -> Vec<JoinHandle<()>> {
+        vec![thread::spawn(move || {
+            for cmd in receiver {
+                self.invoke(cmd);
+            }
+        })]
     }
 }
 
