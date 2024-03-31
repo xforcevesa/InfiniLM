@@ -9,11 +9,11 @@ mod template;
 use session::SessionComponent;
 use std::{
     path::Path,
-    sync::{mpsc::channel, Arc, Mutex},
-    thread::JoinHandle,
+    sync::{Arc, Mutex},
 };
 use template::Template;
 use tokenizer::{BPECommonNormalizer, Normalizer, Tokenizer, VocabTxt, BPE};
+use tokio::{sync::mpsc::unbounded_channel, task::JoinSet};
 use transformer::SampleArgs;
 
 pub use session::Session;
@@ -24,7 +24,7 @@ extern crate log;
 pub struct Service {
     session_component: Arc<SessionComponent>,
     sample: Arc<Mutex<SampleArgs>>,
-    _workers: Vec<JoinHandle<()>>,
+    _workers: JoinSet<()>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -38,7 +38,7 @@ impl Service {
     pub fn load_model(path: impl AsRef<Path>, sample: SampleArgs, device: Device) -> Self {
         let model_dir = path.as_ref().to_owned();
         let sample = Arc::new(Mutex::new(sample));
-        let (sender, receiver) = channel();
+        let (sender, receiver) = unbounded_channel();
         Service {
             session_component: Arc::new(SessionComponent {
                 template: template(&model_dir),
@@ -119,11 +119,15 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
 fn test() {
     use colored::{Color, Colorize};
     use std::{io::Write, path::Path};
+    use tokio::{runtime::Builder, task::JoinSet};
 
     let model_dir = "../../TinyLlama-1.1B-Chat-v1.0_F16/";
     if !Path::new(model_dir).exists() {
         return;
     }
+
+    let runtime = Builder::new_current_thread().build().unwrap();
+    let _rt = runtime.enter();
 
     let service = Service::load_model(
         model_dir,
@@ -138,22 +142,21 @@ fn test() {
         Device::NvidiaGpu(0),
     );
 
-    let mut session = service.launch();
-    let t0 = std::thread::spawn(move || {
-        session.chat("Say \"Hi\" to me.", |s| {
-            print!("{}", s.color(Color::Yellow));
-            std::io::stdout().flush().unwrap();
-        });
-    });
+    let mut set = JoinSet::new();
+    let tasks = vec![("Say \"Hi\" to me.", Color::Yellow), ("Hi", Color::Red)];
 
-    let mut session = service.launch();
-    let t1 = std::thread::spawn(move || {
-        session.chat("Hi", |s| {
-            print!("{}", s.color(Color::Red));
-            std::io::stdout().flush().unwrap();
+    for (prompt, color) in tasks {
+        let mut session = service.launch();
+        set.spawn(async move {
+            session
+                .chat(prompt, |s| {
+                    print!("{}", s.color(color));
+                    std::io::stdout().flush().unwrap();
+                })
+                .await;
         });
-    });
+    }
 
-    t0.join().unwrap();
-    t1.join().unwrap();
+    runtime.block_on(async { while set.join_next().await.is_some() {} });
+    runtime.shutdown_background();
 }

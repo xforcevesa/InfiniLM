@@ -5,7 +5,7 @@ use std::{collections::HashMap, io::Write};
 use transformer::SampleArgs;
 
 impl InferenceArgs {
-    pub fn chat(self) {
+    pub async fn chat(self) {
         let mut chatting = Chatting::from(self);
 
         println!(
@@ -30,9 +30,11 @@ impl InferenceArgs {
             if !input.is_empty() {
                 // 以 / 开头则为用户指令
                 if input.starts_with('/') {
-                    chatting.execute_command(input);
+                    if !chatting.execute_command(input) {
+                        break;
+                    }
                 } else {
-                    chatting.infer(input);
+                    chatting.infer(input).await;
                 }
             }
         }
@@ -103,7 +105,7 @@ impl Chatting {
         );
     }
 
-    fn execute_command(&mut self, command: &str) {
+    fn execute_command(&mut self, command: &str) -> bool {
         match command.split_whitespace().collect::<Vec<_>>().as_slice() {
             ["/create"] => {
                 let old = std::mem::replace(&mut self.session, self.service.launch());
@@ -168,18 +170,21 @@ impl Chatting {
                 }
             }
             ["/help"] => print_help(),
-            ["/exit"] => std::process::exit(0),
+            ["/exit"] => return false,
             _ => println!("Unknown Command"),
         }
         print_splitter();
+        true
     }
 
-    fn infer(&mut self, text: &str) {
+    async fn infer(&mut self, text: &str) {
         print_now!("{}", "AI: ".green());
-        self.session.chat(text, |s| match s {
-            "\\n" => println!(),
-            _ => print_now!("{s}"),
-        });
+        self.session
+            .chat(text, |s| match s {
+                "\\n" => println!(),
+                _ => print_now!("{s}"),
+            })
+            .await;
         println!();
     }
 }

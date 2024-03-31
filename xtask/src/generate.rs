@@ -12,13 +12,16 @@ pub(crate) struct GenerateArgs {
 }
 
 impl InferenceArgs {
-    pub fn generate(self, prompt: &str) {
+    pub async fn generate(self, prompt: &str) {
         let service: Service = self.into();
 
         print!("{prompt}");
-        service.launch().generate(prompt, |piece| {
-            print!("{piece}");
-            std::io::stdout().flush().unwrap();
-        });
+        service
+            .launch()
+            .generate(prompt, |piece| {
+                print!("{piece}");
+                std::io::stdout().flush().unwrap();
+            })
+            .await;
     }
 }

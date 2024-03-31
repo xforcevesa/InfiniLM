@@ -3,12 +3,12 @@ use common::utok;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
-        mpsc::{channel, Sender},
         Arc,
     },
     time::Instant,
 };
 use tokenizer::{Normalizer, Tokenizer};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use transformer::{LayerCache, Request};
 
 pub struct Session {
@@ -32,22 +32,24 @@ impl Session {
     }
 
     #[inline]
-    pub fn chat(&mut self, prompt: &str, f: impl FnMut(&str)) {
+    pub async fn chat(&mut self, prompt: &str, f: impl FnMut(&str)) {
         self.send(&self.component.template.apply_chat(prompt), f)
+            .await;
     }
 
     #[inline]
-    pub fn generate(&mut self, prompt: &str, f: impl FnMut(&str)) {
+    pub async fn generate(&mut self, prompt: &str, f: impl FnMut(&str)) {
         self.send(&self.component.template.normalize(prompt), f)
+            .await;
     }
 
-    fn send(&self, prompt: &str, mut f: impl FnMut(&str)) {
+    async fn send(&self, prompt: &str, mut f: impl FnMut(&str)) {
         let _stamp = Instant::now();
 
         let prompt = self.component.normalizer.encode(prompt);
         let prompt = self.component.tokenizer.encode(&prompt);
 
-        let (responsing, receiver) = channel();
+        let (responsing, mut receiver) = unbounded_channel();
         let chat = Message::Infer(
             self.id,
             Box::new(Infer {
@@ -58,7 +60,7 @@ impl Session {
         );
 
         self.component.sender.send(chat).unwrap();
-        while let Ok(token) = receiver.recv() {
+        while let Some(token) = receiver.recv().await {
             let piece = self.component.tokenizer.decode(token);
             let piece = self.component.normalizer.decode(piece);
             f(&piece);
@@ -81,14 +83,14 @@ pub(crate) enum Message {
 pub(crate) struct Infer {
     pub _stamp: Instant,
     pub prompt: Vec<utok>,
-    pub responsing: Sender<utok>,
+    pub responsing: UnboundedSender<utok>,
 }
 
 pub(crate) struct SessionComponent {
     pub template: Box<dyn Template + Send + Sync>,
     pub normalizer: Box<dyn Normalizer + Send + Sync>,
     pub tokenizer: Box<dyn Tokenizer + Send + Sync>,
-    pub sender: Sender<Message>,
+    pub sender: UnboundedSender<Message>,
 }
 
 pub(crate) struct SessionContext<Cache> {

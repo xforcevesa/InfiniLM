@@ -2,6 +2,8 @@ mod cast;
 mod chat;
 mod generate;
 
+use std::future::Future;
+
 use ::service::{Device, Service};
 use clap::Parser;
 use transformer::SampleArgs;
@@ -13,9 +15,16 @@ fn main() {
     use Commands::*;
     match Cli::parse().command {
         Cast(cast) => cast.invode(),
-        Generate(args) => args.inference.generate(&args.prompt),
-        Chat(chat) => chat.chat(),
+        Generate(args) => block_on(args.inference.generate(&args.prompt)),
+        Chat(chat) => block_on(chat.chat()),
     }
+}
+
+#[inline]
+fn block_on(f: impl Future) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(f);
+    runtime.shutdown_background();
 }
 
 #[derive(Parser)]
