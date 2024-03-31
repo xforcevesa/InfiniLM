@@ -1,14 +1,11 @@
 mod kernel;
-mod sample;
 mod storage;
 
+use gemm::f16;
 use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
-use sample::Sample;
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
-use transformer::{
-    pos, LayerBuffer, LayerCache, Llama2, Memory, Sample as _, SampleArgs, Transformer,
-};
+use transformer::{pos, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
 
 type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 
@@ -30,8 +27,7 @@ impl Transformer for CpuTransformer {
     fn decode<Id>(
         &self,
         mut requests: Vec<transformer::Request<Id, Self::Cache>>,
-        sample: &SampleArgs,
-    ) -> Vec<(Id, common::utok)> {
+    ) -> (Vec<Id>, Tensor<Self::Cache>) {
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
         // 生成词嵌入并预分配空间
@@ -62,9 +58,36 @@ impl Transformer for CpuTransformer {
         if requests[0].decode() {
             let x = self.move_decode(&requests, x0);
             let requests = requests.into_iter().map(Request::id).collect();
-            Sample.sample(sample, requests, self.logits(x))
+            (requests, self.logits(x))
         } else {
-            vec![]
+            todo!()
+        }
+    }
+
+    fn sample<Id>(
+        &self,
+        args: &SampleArgs,
+        requests: Vec<Id>,
+        logits: Tensor<Self::Cache>,
+    ) -> Vec<(Id, common::utok)> {
+        let &[_, voc] = logits.shape() else { panic!() };
+        let dt = logits.data_type();
+
+        macro_rules! sample {
+                ($ty:ty) => {{
+                    let logits: &[$ty] = reslice(logits.as_slice());
+                    requests
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, id)| (id, args.random(&kernel::slice!(logits; voc; [i]))))
+                        .collect()
+                }};
+            }
+
+        match dt {
+            DataType::F16 => sample!(f16),
+            DataType::F32 => sample!(f32),
+            _ => unreachable!(),
         }
     }
 }

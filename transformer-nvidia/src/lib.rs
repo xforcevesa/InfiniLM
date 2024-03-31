@@ -2,19 +2,18 @@
 
 mod kernel;
 mod parameters;
-mod sample;
 mod storage;
 
 #[macro_use]
 extern crate log;
 
+use ::half::f16;
 use cublas::{Cublas, CublasSpore};
 use cuda::{
     AsRaw, Context, ContextResource, ContextSpore, CudaDataType::half, Stream, StreamSpore,
 };
 use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
-use sample::Sample;
 use std::{
     fs::File,
     io::Read,
@@ -23,9 +22,7 @@ use std::{
 };
 use storage::{Cache, Storage};
 use tensor::{slice, udim, DataType, Tensor};
-use transformer::{
-    pos, LayerBuffer, LayerCache, Llama2, Memory, Sample as _, SampleArgs, Transformer,
-};
+use transformer::{pos, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
 
 type Request<'a, Id> = transformer::Request<'a, Id, Cache>;
 
@@ -73,8 +70,7 @@ impl Transformer for NvidiaTransformer {
     fn decode<Id>(
         &self,
         mut requests: Vec<transformer::Request<Id, Self::Cache>>,
-        sample: &SampleArgs,
-    ) -> Vec<(Id, common::utok)> {
+    ) -> (Vec<Id>, Tensor<Self::Cache>) {
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
         self.context.apply(|ctx| {
@@ -123,11 +119,32 @@ impl Transformer for NvidiaTransformer {
             if requests[0].decode() {
                 let x = self.move_decode(&requests, x0, &compute);
                 let requests = requests.into_iter().map(Request::id).collect();
-                Sample.sample(sample, requests, self.logits(x, &compute))
+                // Sample.sample(sample, requests, self.logits(x, &compute))
+                (requests, self.logits(x, &compute))
             } else {
-                vec![]
+                todo!()
             }
         })
+    }
+
+    fn sample<Id>(
+        &self,
+        args: &SampleArgs,
+        requests: Vec<Id>,
+        logits: Tensor<Self::Cache>,
+    ) -> Vec<(Id, common::utok)> {
+        assert_eq!(logits.data_type(), tensor::DataType::F16);
+        let &[_, voc] = logits.shape() else { panic!() };
+
+        let mut host = vec![f16::ZERO; logits.size()];
+        let Cache { context, mem } = logits.physical();
+        context.apply(|ctx| unsafe { mem.sprout(ctx) }.copy_out(&mut host));
+
+        requests
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| (id, args.random(&host[i * voc as usize..][..voc as usize])))
+            .collect()
     }
 }
 
@@ -425,17 +442,13 @@ impl NvidiaTransformer {
         x0.slice(&[slice![from begin, until dst + 1], slice![all]])
     }
 
-    fn logits<'ctx>(
-        &self,
-        mut x: Tensor<Storage>,
-        compute: &Stream<'ctx>,
-    ) -> Tensor<Storage<'ctx>> {
+    fn logits(&self, mut x: Tensor<Storage>, compute: &Stream) -> Tensor<Cache> {
         let dt = self.host.data_type();
         let voc = self.host.vocab_size() as udim;
         let epsilon = self.host.rms_norm_eps();
         let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
 
-        let mut logits = tensor(dt, &[x.shape()[0], voc], compute);
+        let mut logits = tensor_out(dt, &[x.shape()[0], voc], self.context.clone(), compute);
 
         let (model_norm, lm_head) = unsafe { self.model.release(compute) };
         // 复制一个 x 以实现原地归一化
@@ -445,7 +458,18 @@ impl NvidiaTransformer {
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&x));
 
-        mat_mul(&cublas, &mut logits, 0., &x, &lm_head, 1.);
+        mat_mul(
+            &cublas,
+            &mut unsafe {
+                logits
+                    .as_mut()
+                    .map_physical(|c| c.mem.sprout(compute.ctx()))
+            },
+            0.,
+            &x,
+            &lm_head,
+            1.,
+        );
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&logits));
 
@@ -459,6 +483,24 @@ fn tensor<'ctx>(dt: DataType, shape: &[udim], stream: &Stream<'ctx>) -> Tensor<S
         dt,
         shape,
         Storage::new(shape.iter().product::<udim>() as usize * dt.size(), stream),
+    )
+}
+
+fn tensor_out(
+    dt: DataType,
+    shape: &[udim],
+    context: Arc<Context>,
+    stream: &Stream,
+) -> Tensor<Cache> {
+    Tensor::new(
+        dt,
+        shape,
+        Cache {
+            context,
+            mem: stream
+                .malloc::<u8>(shape.iter().product::<udim>() as usize * dt.size())
+                .sporulate(),
+        },
     )
 }
 

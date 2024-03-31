@@ -143,7 +143,11 @@ fn test() {
     );
 
     let mut set = JoinSet::new();
-    let tasks = vec![("Say \"Hi\" to me.", Color::Yellow), ("Hi", Color::Red)];
+    let tasks = vec![
+        ("Say \"Hi\" to me.", Color::Yellow),
+        ("Hi", Color::Red),
+        ("Where is the capital of France?", Color::Green),
+    ];
 
     for (prompt, color) in tasks {
         let mut session = service.launch();

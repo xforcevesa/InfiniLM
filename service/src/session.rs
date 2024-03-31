@@ -50,7 +50,7 @@ impl Session {
         let prompt = self.component.tokenizer.encode(&prompt);
 
         let (responsing, mut receiver) = unbounded_channel();
-        let chat = Message::Infer(
+        let chat = Command::Infer(
             self.id,
             Box::new(Infer {
                 _stamp,
@@ -71,11 +71,11 @@ impl Session {
 impl Drop for Session {
     #[inline]
     fn drop(&mut self) {
-        self.component.sender.send(Message::Drop(self.id)).unwrap();
+        self.component.sender.send(Command::Drop(self.id)).unwrap();
     }
 }
 
-pub(crate) enum Message {
+pub(crate) enum Command {
     Infer(usize, Box<Infer>),
     Drop(usize),
 }
@@ -90,7 +90,7 @@ pub(crate) struct SessionComponent {
     pub template: Box<dyn Template + Send + Sync>,
     pub normalizer: Box<dyn Normalizer + Send + Sync>,
     pub tokenizer: Box<dyn Tokenizer + Send + Sync>,
-    pub sender: UnboundedSender<Message>,
+    pub sender: UnboundedSender<Command>,
 }
 
 pub(crate) struct SessionContext<Cache> {

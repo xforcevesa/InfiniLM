@@ -1,15 +1,5 @@
 ﻿use common::utok;
 use std::{cmp::Ordering, collections::BinaryHeap, fmt::Debug};
-use tensor::Tensor;
-
-pub trait Sample<Storage> {
-    fn sample<Id>(
-        &self,
-        args: &SampleArgs,
-        requests: Vec<Id>,
-        logits: Tensor<Storage>,
-    ) -> Vec<(Id, utok)>;
-}
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct SampleArgs {
