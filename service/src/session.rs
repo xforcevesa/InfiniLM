@@ -141,6 +141,10 @@ impl<Cache> SessionContext<Cache> {
         if !decode {
             tokens = &tokens[..max_tokens];
         }
-        Request::new(self.id, tokens, &mut self.cache, self.progress as _, decode)
+
+        let pos = self.progress;
+        self.progress += tokens.len();
+
+        Request::new(self.id, tokens, &mut self.cache, pos as _, decode)
     }
 }
