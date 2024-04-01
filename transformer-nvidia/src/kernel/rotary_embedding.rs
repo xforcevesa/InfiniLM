@@ -4,7 +4,7 @@
 };
 use std::{
     ffi::{c_uint, c_void, CString},
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 use tensor::{udim, DataType, Tensor};
 
@@ -48,7 +48,7 @@ extern "C" __global__ void {name}(
 impl RotaryEmbedding {
     pub fn launch<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
     where
-        T: Deref<Target = DevSlice>,
+        T: DerefMut<Target = DevSlice>,
         U: Deref<Target = DevSlice>,
     {
         let &[n, nh, dh] = t.shape() else {

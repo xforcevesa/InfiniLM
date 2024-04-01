@@ -2,10 +2,10 @@ mod kernel;
 mod storage;
 
 use gemm::f16;
-use kernel::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
+use kernel::CpuKernels;
 use storage::Storage;
 use tensor::{reslice, slice, udim, DataType, Tensor};
-use transformer::{pos, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
+use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
 
 type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
 
@@ -103,10 +103,11 @@ impl CpuTransformer {
         let dt = self.0.data_type();
         let nt = requests.iter().map(Request::seq_len).sum::<udim>();
         let d = self.0.hidden_size() as udim;
-        let mut x0 = tensor(dt, &[nt, d]);
+        let kernels = CpuKernels::new(&self.0);
 
+        let mut x0 = tensor(dt, &[nt, d]);
         let tokens = requests.iter().flat_map(Request::tokens).copied();
-        gather(&mut x0, &self.0.embed_tokens(), tokens);
+        kernels.gather(&mut x0, &self.0.embed_tokens(), tokens);
         // println!("gather:\n{x0}");
 
         x0
@@ -126,15 +127,14 @@ impl CpuTransformer {
         let nkvh = self.0.num_key_value_heads() as udim;
         let dh = d / nh;
         let dkv = nkvh * dh;
-        let epsilon = self.0.rms_norm_eps();
-        let theta = self.0.rope_theta();
+        let kernels = CpuKernels::new(&self.0);
 
         let input_layernorm = self.0.input_layernorm(layer);
-        rms_norm(x1, x0, &input_layernorm, epsilon);
+        kernels.rms_norm(x1, x0, &input_layernorm);
         // println!("layer {layer} input norm:\n{x1}");
 
         let w_qkv = self.0.w_qkv(layer).transpose(&[1, 0]);
-        mat_mul(qkv, 0., x1, &w_qkv, 1.);
+        kernels.mat_mul(qkv, 0., x1, &w_qkv, 1.);
         let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
         let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
         let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
@@ -143,8 +143,8 @@ impl CpuTransformer {
         // println!("layer {layer} k:\n{k}");
         // println!("layer {layer} v:\n{v}");
 
-        rotary_embedding(&mut q, pos, theta);
-        rotary_embedding(&mut k, pos, theta);
+        kernels.rotary_embedding(&mut q, pos);
+        kernels.rotary_embedding(&mut k, pos);
         // println!("layer {layer} rot q:\n{q}");
         // println!("layer {layer} rot k:\n{k}");
 
@@ -170,6 +170,7 @@ impl CpuTransformer {
         let dh = d / nh;
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
+        let kernels = CpuKernels::new(&self.0);
 
         let q = q.as_ref().transpose(&[1, 0, 2]);
         let k = k.as_ref().transpose(&[1, 0, 2]);
@@ -220,11 +221,11 @@ impl CpuTransformer {
             let shape_att1 = &[nkvh * head_group, seq_len, att_len];
 
             let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
-            mat_mul(&mut att, 0., &q_att, &k_att, head_div);
+            kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
             let mut att = att.reshape(shape_att1);
-            softmax(&mut att);
+            kernels.softmax(&mut att);
             let mut x2 = q_att;
-            mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
+            kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
 
             x2.reshape(&[nh, seq_len, dh]).reform_to(&mut o);
             // println!("layer {layer} after attention:\n{}", o);
@@ -239,29 +240,29 @@ impl CpuTransformer {
         gate_up: &mut Tensor<Storage>,
     ) {
         let di = self.0.intermediate_size() as udim;
-        let epsilon = self.0.rms_norm_eps();
+        let kernels = CpuKernels::new(&self.0);
 
         let wo = self.0.self_attn_o_proj(layer).transpose(&[1, 0]);
-        mat_mul(x0, 1., x1, &wo, 1.);
+        kernels.mat_mul(x0, 1., x1, &wo, 1.);
         // println!("layer {layer} o_proj:\n{x0}");
 
         let post_layernorm = self.0.post_attention_layernorm(layer);
-        rms_norm(x1, x0, &post_layernorm, epsilon);
+        kernels.rms_norm(x1, x0, &post_layernorm);
         // println!("layer {layer} post norm:\n{x1}");
 
         let w_gate_up = self.0.mlp_gate_up(layer).transpose(&[1, 0]);
-        mat_mul(gate_up, 0., x1, &w_gate_up, 1.);
+        kernels.mat_mul(gate_up, 0., x1, &w_gate_up, 1.);
         let mut gate_up = gate_up.split(1, &[di as _, di as _]);
         let up = gate_up.pop().unwrap();
         let mut gate = gate_up.pop().unwrap();
         // println!("layer {layer} gate:\n{gate}");
         // println!("layer {layer} up:\n{up}");
 
-        swiglu(&mut gate, &up);
+        kernels.swiglu(&mut gate, &up);
         // println!("layer {layer} swiglu:\n{gate}");
 
         let mlp_down = self.0.mlp_down(layer).transpose(&[1, 0]);
-        mat_mul(x0, 1., &gate, &mlp_down, 1.);
+        kernels.mat_mul(x0, 1., &gate, &mlp_down, 1.);
         // println!("layer {layer} down:\n{x0}");
     }
 
@@ -294,7 +295,7 @@ impl CpuTransformer {
     fn logits(&self, mut x: Tensor<Storage>) -> Tensor<Storage> {
         let dt = self.0.data_type();
         let voc = self.0.vocab_size() as udim;
-        let epsilon = self.0.rms_norm_eps();
+        let kernels = CpuKernels::new(&self.0);
 
         let mut logits = tensor(dt, &[x.shape()[0], voc]);
         // println!("decode slice:\n{x}");
@@ -304,11 +305,11 @@ impl CpuTransformer {
             x.as_ref()
                 .map_physical(|u| std::slice::from_raw_parts(u.as_ptr(), u.len()))
         };
-        rms_norm(&mut x, &x_, &self.0.model_norm(), epsilon);
+        kernels.rms_norm(&mut x, &x_, &self.0.model_norm());
         // println!("model norm:\n{x}");
 
         let lm_head = self.0.lm_head().transpose(&[1, 0]);
-        mat_mul(&mut logits, 0., &x, &lm_head, 1.);
+        kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
         // println!("logits:\n{logits}");
 
         logits

@@ -4,7 +4,7 @@
 };
 use std::{
     ffi::{c_uint, c_void, CString},
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 use tensor::{udim, Tensor};
 
@@ -47,9 +47,10 @@ extern "C" __global__ void {name}(
 }
 
 impl Swiglu {
-    pub fn launch<T>(&self, gate: &mut Tensor<T>, up: &Tensor<T>, stream: &Stream)
+    pub fn launch<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>, stream: &Stream)
     where
-        T: Deref<Target = DevSlice>,
+        T: DerefMut<Target = DevSlice>,
+        U: Deref<Target = DevSlice>,
     {
         assert_eq!(gate.data_type(), up.data_type());
         assert_eq!(gate.shape(), up.shape());

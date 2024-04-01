@@ -5,6 +5,7 @@
 mod blas;
 mod buffer;
 mod cache;
+mod kernels;
 mod parameters;
 mod pos;
 mod request;
@@ -13,6 +14,7 @@ mod sample;
 pub use blas::Matrix;
 pub use buffer::LayerBuffer;
 pub use cache::LayerCache;
+pub use kernels::Kernels;
 pub use parameters::{save, Llama2, Memory, SafeTensorError};
 pub use pos::pos;
 pub use request::Request;

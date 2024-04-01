@@ -8,11 +8,8 @@ mod storage;
 extern crate log;
 
 use ::half::f16;
-use cublas::{Cublas, CublasSpore};
-use cuda::{
-    AsRaw, Context, ContextResource, ContextSpore, CudaDataType::half, Stream, StreamSpore,
-};
-use kernel::{gather, mat_mul, FusedSoftmax, Reform, RmsNormalization, RotaryEmbedding, Swiglu};
+use cuda::{AsRaw, Context, ContextResource, ContextSpore, Stream, StreamSpore};
+use kernel::NvidiaKernels;
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use std::{
     fs::File,
@@ -22,24 +19,19 @@ use std::{
 };
 use storage::{Cache, Storage};
 use tensor::{slice, udim, DataType, Tensor};
-use transformer::{pos, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
+use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
 
 type Request<'a, Id> = transformer::Request<'a, Id, Cache>;
 
 pub extern crate cuda;
 
 pub struct NvidiaTransformer {
-    context: Arc<Context>,
-    transfer: StreamSpore,
     host: Memory,
     model: ModelParameters,
     layers: Mutex<LayersParameters>,
-    cublas: CublasSpore,
-    rms_norm: RmsNormalization,
-    rotary_embedding: RotaryEmbedding,
-    reform: Reform,
-    fused_softmax: FusedSoftmax,
-    swiglu: Swiglu,
+    context: Arc<Context>,
+    transfer: StreamSpore,
+    kernels: NvidiaKernels,
 }
 
 impl Transformer for NvidiaTransformer {
@@ -76,7 +68,6 @@ impl Transformer for NvidiaTransformer {
         self.context.apply(|ctx| {
             let transfer = unsafe { self.transfer.sprout(ctx) };
             let compute = ctx.stream();
-            unsafe { self.cublas.sprout(ctx) }.set_stream(&compute);
             // 生成词嵌入并预分配空间
             let mut x0 = self.token_embed(&requests, &compute);
             let mut x1 = tensor(x0.data_type(), x0.shape(), &transfer);
@@ -167,46 +158,23 @@ impl NvidiaTransformer {
         let host = Memory::load_safetensors(config, host, false).unwrap();
         let load_layers = preload_layers.min(host.num_hidden_layers());
 
-        let (
-            model,
-            layers,
-            cublas,
-            rms_norm,
-            rotary_embedding,
-            reform,
-            fused_softmax,
-            swiglu,
-            transfer,
-        ) = context.apply(|ctx| {
-            let dev = ctx.dev();
-            let (block_size, _) = dev.max_block_dims();
+        let (model, layers, kernels, transfer) = context.apply(|ctx| {
             let stream = ctx.stream();
-
             (
                 ModelParameters::new(&host, &stream),
                 Mutex::new(LayersParameters::new(load_layers, &host, &stream)),
-                Cublas::new(ctx).sporulate(),
-                RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
-                RotaryEmbedding::new(block_size, ctx),
-                Reform::new(block_size, 32, ctx),
-                FusedSoftmax::new(half, host.max_position_embeddings(), block_size, ctx),
-                Swiglu::new(half, block_size, ctx),
+                NvidiaKernels::new(&host, ctx),
                 stream.sporulate(),
             )
         });
 
         Self {
-            context,
-            transfer,
             host,
             model,
             layers,
-            cublas,
-            rms_norm,
-            rotary_embedding,
-            reform,
-            fused_softmax,
-            swiglu,
+            context,
+            transfer,
+            kernels,
         }
     }
 
@@ -218,11 +186,11 @@ impl NvidiaTransformer {
         let dt = self.host.data_type();
         let nt = requests.iter().map(Request::seq_len).sum::<udim>();
         let d = self.host.hidden_size() as udim;
+        let kernels = self.kernels.on(compute);
 
         let mut x0 = tensor(dt, &[nt, d], compute);
-
         let tokens = requests.iter().flat_map(Request::tokens).copied();
-        gather(&mut x0, &self.host.embed_tokens(), tokens, compute);
+        kernels.gather(&mut x0, &self.host.embed_tokens(), tokens);
         // compute.synchronize();
         // println!("gather:\n{}", map_tensor(&x0));
 
@@ -248,20 +216,17 @@ impl NvidiaTransformer {
         let nkvh = self.host.num_key_value_heads() as udim;
         let dh = d / nh;
         let dkv = nkvh * dh;
-        let epsilon = self.host.rms_norm_eps();
-        let theta = self.host.rope_theta();
 
         let ctx = compute.ctx();
-        let cublas = unsafe { self.cublas.sprout(ctx) };
+        let kernels = self.kernels.on(compute);
         let input_layernorm = &params.input_layernorm(ctx);
         let w_qkv = &params.w_qkv(ctx);
 
-        self.rms_norm
-            .launch(x1, x0, input_layernorm, epsilon, compute);
+        kernels.rms_norm(x1, x0, input_layernorm);
         // compute.synchronize();
         // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
 
-        mat_mul(&cublas, qkv, 0., x1, w_qkv, 1.);
+        kernels.mat_mul(qkv, 0., x1, w_qkv, 1.);
         let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
         let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
         let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
@@ -271,8 +236,8 @@ impl NvidiaTransformer {
         // println!("layer {layer} k:\n{}", map_tensor(&k));
         // println!("layer {layer} v:\n{}", map_tensor(&v));
 
-        self.rotary_embedding.launch(&mut q, pos, theta, compute);
-        self.rotary_embedding.launch(&mut k, pos, theta, compute);
+        kernels.rotary_embedding(&mut q, pos);
+        kernels.rotary_embedding(&mut k, pos);
         // compute.synchronize();
         // println!("layer {layer} rot q:\n{}", map_tensor(&q));
         // println!("layer {layer} rot k:\n{}", map_tensor(&k));
@@ -300,8 +265,9 @@ impl NvidiaTransformer {
         let dh = d / nh;
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
+
         let ctx = compute.ctx();
-        let cublas = unsafe { self.cublas.sprout(ctx) };
+        let kernels = self.kernels.on(compute);
 
         let q = q.as_ref().transpose(&[1, 0, 2]);
         let k = k.as_ref().transpose(&[1, 0, 2]);
@@ -338,9 +304,9 @@ impl NvidiaTransformer {
             let v_cat = v_cache.as_mut().slice(cat_slice);
             let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
             let mut v_cat = unsafe { v_cat.map_physical(|u| &mut **u) };
-            self.reform.launch(&mut q_att, &q, compute);
-            self.reform.launch(&mut k_cat, &k, compute);
-            self.reform.launch(&mut v_cat, &v, compute);
+            kernels.reform(&mut q_att, &q);
+            kernels.reform(&mut k_cat, &k);
+            kernels.reform(&mut v_cat, &v);
 
             let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
             let k_att = k_cache.slice(att_slice).transpose(&[0, 2, 1]);
@@ -353,15 +319,14 @@ impl NvidiaTransformer {
             let shape_att1 = &[nkvh * head_group, seq_len, att_len];
 
             let mut att = Tensor::new(dt, shape_att0, &mut **att_buf);
-            mat_mul(&cublas, &mut att, 0., &q_att, &k_att, head_div);
+            kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
             let mut att = att.reshape(shape_att1);
-            self.fused_softmax.launch(&mut att, compute);
+            kernels.softmax(&mut att);
             let mut x2 = q_att;
             let att = att.reshape(shape_att0);
-            mat_mul(&cublas, &mut x2, 0., &att, &v_att, 1.);
+            kernels.mat_mul(&mut x2, 0., &att, &v_att, 1.);
 
-            self.reform
-                .launch(&mut o, &x2.reshape(&[nh, seq_len, dh]), compute);
+            kernels.reform(&mut o, &x2.reshape(&[nh, seq_len, dh]));
             // println!("layer {layer} after attention:\n{}", o);
         }
     }
@@ -375,25 +340,23 @@ impl NvidiaTransformer {
         compute: &Stream,
     ) {
         let di = self.host.intermediate_size() as udim;
-        let epsilon = self.host.rms_norm_eps();
 
         let ctx = compute.ctx();
-        let cublas = unsafe { self.cublas.sprout(ctx) };
+        let kernels = self.kernels.on(compute);
         let w_o = &params.w_o(ctx);
         let post_attention_layernorm = &params.post_attention_layernorm(ctx);
         let mlp_gate_up = &params.mlp_gate_up(ctx);
         let mlp_down = &params.mlp_down(ctx);
 
-        mat_mul(&cublas, x0, 1., x1, w_o, 1.);
+        kernels.mat_mul(x0, 1., x1, w_o, 1.);
         // compute.synchronize();
         // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
 
-        self.rms_norm
-            .launch(x1, x0, post_attention_layernorm, epsilon, compute);
+        kernels.rms_norm(x1, x0, post_attention_layernorm);
         // compute.synchronize();
         // println!("layer {layer} post norm:\n{}", map_tensor(&x1));
 
-        mat_mul(&cublas, gate_up, 0., x1, mlp_gate_up, 1.);
+        kernels.mat_mul(gate_up, 0., x1, mlp_gate_up, 1.);
         let mut gate_up = gate_up.split(1, &[di as _, di as _]);
         let up = gate_up.pop().unwrap();
         let mut gate = gate_up.pop().unwrap();
@@ -401,11 +364,11 @@ impl NvidiaTransformer {
         // println!("layer {layer} gate:\n{}", map_tensor(&gate));
         // println!("layer {layer} up:\n{}", map_tensor(&up));
 
-        self.swiglu.launch(&mut gate, &up, compute);
+        kernels.swiglu(&mut gate, &up);
         // compute.synchronize();
         // println!("layer {layer} swiglu:\n{}", map_tensor(&gate));
 
-        mat_mul(&cublas, x0, 1., &gate, mlp_down, 1.);
+        kernels.mat_mul(x0, 1., &gate, mlp_down, 1.);
         // compute.synchronize();
         // println!("layer {layer} down:\n{}", map_tensor(&x0));
     }
@@ -445,21 +408,18 @@ impl NvidiaTransformer {
     fn logits(&self, mut x: Tensor<Storage>, compute: &Stream) -> Tensor<Cache> {
         let dt = self.host.data_type();
         let voc = self.host.vocab_size() as udim;
-        let epsilon = self.host.rms_norm_eps();
-        let cublas = unsafe { self.cublas.sprout(compute.ctx()) };
-
-        let mut logits = tensor_out(dt, &[x.shape()[0], voc], self.context.clone(), compute);
 
         let (model_norm, lm_head) = unsafe { self.model.release(compute) };
+        let kernels = self.kernels.on(compute);
+
+        let mut logits = tensor_out(dt, &[x.shape()[0], voc], self.context.clone(), compute);
         // 复制一个 x 以实现原地归一化
         let x_ = unsafe { x.as_ref().map_physical(|u| u.borrow()) };
-        self.rms_norm
-            .launch(&mut x, &x_, &model_norm, epsilon, compute);
+        kernels.rms_norm(&mut x, &x_, &model_norm);
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&x));
 
-        mat_mul(
-            &cublas,
+        kernels.mat_mul(
             &mut unsafe {
                 logits
                     .as_mut()
