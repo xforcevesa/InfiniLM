@@ -204,9 +204,9 @@ impl CpuTransformer {
             let v_cat = v_cache.as_mut().slice(cat_slice);
             let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
             let mut v_cat = unsafe { v_cat.map_physical(|u| &mut **u) };
-            q.reform_to(&mut q_att);
-            k.reform_to(&mut k_cat);
-            v.reform_to(&mut v_cat);
+            kernels.reform(&mut q_att, &q);
+            kernels.reform(&mut k_cat, &k);
+            kernels.reform(&mut v_cat, &v);
 
             let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
             let k_att = k_cache.as_ref().slice(att_slice).transpose(&[0, 2, 1]);
@@ -227,7 +227,7 @@ impl CpuTransformer {
             let mut x2 = q_att;
             kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
 
-            x2.reshape(&[nh, seq_len, dh]).reform_to(&mut o);
+            kernels.reform(&mut o, &x2.reshape(&[nh, seq_len, dh]));
             // println!("layer {layer} after attention:\n{}", o);
         }
     }
