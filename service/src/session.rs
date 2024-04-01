@@ -100,6 +100,8 @@ pub(crate) struct SessionContext<Cache> {
     pub cache: Vec<LayerCache<Cache>>,
     /// 上文缓存对应的上文 token。
     pub cache_map: Vec<utok>,
+    /// 当前已经计算过上下文缓存的 token 数量。
+    pub progress: usize,
 }
 
 impl<Cache> SessionContext<Cache> {
@@ -109,34 +111,36 @@ impl<Cache> SessionContext<Cache> {
             id,
             cache,
             cache_map: Vec::new(),
+            progress: 0,
         }
     }
 
-    pub fn request(&mut self, tokens: &[utok], max_seq_len: usize) -> Request<usize, Cache> {
-        let pos: usize;
+    pub fn push(&mut self, tokens: &[utok], max_seq_len: usize) {
         if self.cache_map.len() + tokens.len() > max_seq_len {
-            pos = self.cache_map.len().min(16);
+            self.progress = self.progress.min(16);
             if tokens.len() > max_seq_len / 2 {
                 let tokens = &tokens[tokens.len() - max_seq_len / 2..];
-                self.cache_map.truncate(pos);
+                self.cache_map.truncate(self.progress);
                 self.cache_map.extend_from_slice(tokens);
             } else {
-                let tail_len = (self.cache_map.len() - pos).min(64);
+                let tail_len = (self.cache_map.len() - self.progress).min(64);
                 let tail = self.cache_map.len() - tail_len;
-                self.cache_map.copy_within(tail.., pos);
-                self.cache_map.truncate(pos + tail_len);
+                self.cache_map.copy_within(tail.., self.progress);
+                self.cache_map.truncate(self.progress + tail_len);
                 self.cache_map.extend_from_slice(tokens);
             }
         } else {
-            pos = self.cache_map.len();
             self.cache_map.extend_from_slice(tokens);
-        };
-        Request::new(
-            self.id,
-            &self.cache_map[pos..],
-            &mut self.cache,
-            pos as _,
-            true,
-        )
+        }
+    }
+
+    #[inline]
+    pub fn request(&mut self, max_tokens: usize) -> Request<usize, Cache> {
+        let mut tokens = &self.cache_map[self.progress..];
+        let decode = tokens.len() <= max_tokens;
+        if !decode {
+            tokens = &tokens[..max_tokens];
+        }
+        Request::new(self.id, tokens, &mut self.cache, self.progress as _, decode)
     }
 }

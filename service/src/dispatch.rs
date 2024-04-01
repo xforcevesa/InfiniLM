@@ -68,6 +68,7 @@ where
 
     pub fn manage(&mut self) -> UnboundedSender<Message<T::Cache>> {
         let (sender, mut receiver) = unbounded_channel();
+        let max_seq_len = self.transformer.model().max_position_embeddings();
         let transformer = self.transformer.clone();
         let batcher = self.batcher.clone();
         self.set.spawn(async move {
@@ -76,11 +77,15 @@ where
             while let Some(msg) = receiver.recv().await {
                 match msg {
                     Message::Cmd(Command::Infer(id, infer)) => {
-                        let ctx = match sessions.entry(id) {
+                        let mut ctx = match sessions.entry(id) {
                             Entry::Occupied(ctx) => ctx.remove(),
                             Entry::Vacant(_) => SessionContext::new(transformer.new_cache(), id),
                         };
-                        batcher.enq(Task { ctx, infer });
+                        ctx.push(&infer.prompt, max_seq_len);
+                        batcher.enq(Task {
+                            ctx,
+                            responsing: infer.responsing,
+                        });
                     }
                     Message::Cmd(Command::Drop(id)) => {
                         if sessions.remove(&id).is_none() {
@@ -112,7 +117,7 @@ where
 
             let requests = tasks
                 .iter_mut()
-                .map(|task| task.ctx.request(&task.infer.prompt, max_seq_len))
+                .map(|task| task.ctx.request(usize::MAX))
                 .collect::<Vec<_>>();
 
             let (requests, logits) = transformer.decode(requests);
@@ -130,14 +135,14 @@ where
                     match tokens.get(&task.ctx.id) {
                         Some(&token) => {
                             if token != eos {
-                                task.infer.responsing.send(token).unwrap();
-                                task.infer.prompt = vec![token];
+                                task.responsing.send(token).unwrap();
+                                task.ctx.push(&[token], max_seq_len);
                                 batcher.enq(task);
                             } else {
                                 sender.send(Message::Ctx(task.ctx)).unwrap();
                             }
                         }
-                        None => todo!(),
+                        None => batcher.enq(task),
                     };
                 }
             });

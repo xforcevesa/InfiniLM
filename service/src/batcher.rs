@@ -1,9 +1,11 @@
-﻿use crate::session::{Infer, SessionContext};
+﻿use crate::session::SessionContext;
+use common::utok;
 use std::sync::{Condvar, Mutex};
+use tokio::sync::mpsc::UnboundedSender;
 
 pub struct Task<Cache> {
     pub ctx: SessionContext<Cache>,
-    pub infer: Box<Infer>,
+    pub responsing: UnboundedSender<utok>,
 }
 
 pub struct Batcher<Cache> {
