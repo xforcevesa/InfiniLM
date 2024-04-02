@@ -8,7 +8,7 @@ mod storage;
 extern crate log;
 
 use ::half::f16;
-use cuda::{AsRaw, Context, ContextResource, ContextSpore, Stream, StreamSpore};
+use cuda::{AsRaw, Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use kernel::NvidiaKernels;
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use std::{
@@ -140,12 +140,8 @@ impl Transformer for NvidiaTransformer {
 }
 
 impl NvidiaTransformer {
-    pub fn new(
-        config: File,
-        mut safetensors: File,
-        preload_layers: usize,
-        context: Arc<Context>,
-    ) -> Self {
+    pub fn new(config: File, mut safetensors: File, preload_layers: usize, dev: Device) -> Self {
+        let context = Arc::new(dev.retain_primary());
         let time = Instant::now();
         let mut host = context.apply(|ctx| {
             ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _)

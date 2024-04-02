@@ -393,7 +393,7 @@ dependencies = [
 [[package]]
 name = "cublas"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-bench#2f832c964986f2b1dee17961426855e548d81aa9"
+source = "git+https://github.com/YdrMaster/cuda-bench#7504e3503abeddf9fc46248f705b09c00d2c6987"
 dependencies = [
  "bindgen",
  "cuda",
@@ -403,10 +403,11 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-bench#2f832c964986f2b1dee17961426855e548d81aa9"
+source = "git+https://github.com/YdrMaster/cuda-bench#7504e3503abeddf9fc46248f705b09c00d2c6987"
 dependencies = [
  "bindgen",
  "find_cuda_helper",
+ "static_assertions",
 ]
 
 [[package]]
@@ -1573,6 +1574,12 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "strsim"
