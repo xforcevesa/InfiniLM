@@ -4,6 +4,7 @@ mod parameters;
 
 #[macro_use]
 extern crate log;
+pub extern crate cuda;
 
 use ::half::f16;
 use common_nv::{slice, udim, utok, Cache, DataType, NvidiaKernels, Storage, Tensor};
@@ -17,10 +18,6 @@ use std::{
 };
 use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
 
-type Request<'a, Id> = transformer::Request<'a, Id, Cache>;
-
-pub extern crate cuda;
-
 pub struct NvidiaTransformer {
     host: Memory,
     model: ModelParameters,
@@ -30,6 +27,8 @@ pub struct NvidiaTransformer {
     kernels: NvidiaKernels,
 }
 
+type Request<'a, Id> = transformer::Request<'a, Id, Cache>;
+
 impl Transformer for NvidiaTransformer {
     type Cache = Cache;
 
@@ -38,7 +37,7 @@ impl Transformer for NvidiaTransformer {
         &self.host
     }
 
-    fn new_cache(&self) -> Vec<transformer::LayerCache<Self::Cache>> {
+    fn new_cache(&self) -> Vec<LayerCache<Self::Cache>> {
         self.context.apply(|ctx| {
             let stream = unsafe { self.transfer.sprout(ctx) };
             LayerCache::new_layers(&self.host, |dt, shape| {
@@ -55,10 +54,7 @@ impl Transformer for NvidiaTransformer {
         })
     }
 
-    fn decode<Id>(
-        &self,
-        mut requests: Vec<transformer::Request<Id, Self::Cache>>,
-    ) -> (Vec<Id>, Tensor<Self::Cache>) {
+    fn decode<Id>(&self, mut requests: Vec<Request<Id>>) -> (Vec<Id>, Tensor<Self::Cache>) {
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
         self.context.apply(|ctx| {
