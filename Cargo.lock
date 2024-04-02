@@ -530,6 +530,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "distributed"
+version = "0.0.0"
+dependencies = [
+ "common-nv",
+ "cuda",
+ "find_cuda_helper",
+ "half",
+ "log",
+ "tokenizer",
+ "transformer",
+]
+
+[[package]]
 name = "dyn-stack"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -7,6 +7,7 @@ members = [
     "transformer-cpu",
     "nvidia/common",
     "nvidia/transformer",
+    "nvidia/distributed",
     "service",
     "xtask",
 ]
