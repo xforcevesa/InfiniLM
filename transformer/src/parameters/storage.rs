@@ -24,7 +24,7 @@ impl Deref for Storage {
 }
 
 #[inline]
-pub fn map_anon(data_type: DataType, shape: &[udim]) -> MmapMut {
-    let size = shape.iter().product::<udim>() as usize * data_type.size();
+pub fn map_anon(dt: DataType, shape: &[udim]) -> MmapMut {
+    let size = shape.iter().product::<udim>() as usize * dt.size();
     MmapMut::map_anon(size).unwrap()
 }

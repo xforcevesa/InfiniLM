@@ -34,16 +34,8 @@ impl<Storage> LayerBuffer<Storage> {
         let dt = model.data_type();
 
         Self {
-            qkv: Tensor::new(
-                dt,
-                &[nt as _, (d + dkv + dkv) as _],
-                allocator(nt * (d + dkv + dkv) * dt.size()),
-            ),
-            gate_up: Tensor::new(
-                dt,
-                &[nt as _, (di + di) as _],
-                allocator(nt * (di + di) * dt.size()),
-            ),
+            qkv: Tensor::alloc(dt, &[nt as _, (d + dkv + dkv) as _], &mut allocator),
+            gate_up: Tensor::alloc(dt, &[nt as _, (di + di) as _], &mut allocator),
             q_buf: allocator(nh * max_seq_len * dh * dt.size()),
             att_buf: allocator(nh * max_seq_len * max_att_len * dt.size()),
         }

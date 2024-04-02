@@ -1,18 +1,16 @@
 mod kernel;
-mod storage;
 
 use gemm::f16;
 use kernel::CpuKernels;
-use storage::Storage;
-use tensor::{reslice, slice, udim, DataType, Tensor};
-use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
-
-type Request<'a, Id> = transformer::Request<'a, Id, Storage>;
+use tensor::{reslice, slice, udim, Blob, DataType, SplitableBlob, Tensor};
+use transformer::{
+    pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request, SampleArgs, Transformer,
+};
 
 pub struct CpuTransformer(Memory);
 
 impl Transformer for CpuTransformer {
-    type Cache = Storage;
+    type Cache = Blob;
 
     #[inline]
     fn model(&self) -> &dyn Llama2 {
@@ -20,20 +18,20 @@ impl Transformer for CpuTransformer {
     }
 
     #[inline]
-    fn new_cache(&self) -> Vec<transformer::LayerCache<Self::Cache>> {
-        LayerCache::new_layers(&self.0, tensor)
+    fn new_cache(&self) -> Vec<LayerCache<Self::Cache>> {
+        LayerCache::new_layers(&self.0, tensor_cache)
     }
 
     fn decode<Id>(
         &self,
-        mut requests: Vec<transformer::Request<Id, Self::Cache>>,
+        mut requests: Vec<Request<Id, Self::Cache>>,
     ) -> (Vec<Id>, Tensor<Self::Cache>) {
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
         // 生成词嵌入并预分配空间
         let mut x0 = self.token_embed(&requests);
         let mut x1 = tensor(x0.data_type(), x0.shape());
-        let mut buf = LayerBuffer::alloc(&self.0, &requests, Storage::new);
+        let mut buf = LayerBuffer::alloc(&self.0, &requests, SplitableBlob::new);
         // 生成位置张量
         let nt = x0.shape()[0]; // `nt` for number of tokens
         let pos = pos(&requests, nt);
@@ -99,7 +97,7 @@ impl CpuTransformer {
         Self(model)
     }
 
-    fn token_embed<Id>(&self, requests: &[Request<Id>]) -> Tensor<Storage> {
+    fn token_embed<Id>(&self, requests: &[Request<Id, Blob>]) -> Tensor<SplitableBlob> {
         let dt = self.0.data_type();
         let nt = requests.iter().map(Request::seq_len).sum::<udim>();
         let d = self.0.hidden_size() as udim;
@@ -116,11 +114,15 @@ impl CpuTransformer {
     fn before_att(
         &self,
         layer: usize,
-        x0: &Tensor<Storage>,
-        x1: &mut Tensor<Storage>,
-        qkv: &mut Tensor<Storage>,
+        x0: &Tensor<SplitableBlob>,
+        x1: &mut Tensor<SplitableBlob>,
+        qkv: &mut Tensor<SplitableBlob>,
         pos: &Tensor<&[u8]>,
-    ) -> (Tensor<Storage>, Tensor<Storage>, Tensor<Storage>) {
+    ) -> (
+        Tensor<SplitableBlob>,
+        Tensor<SplitableBlob>,
+        Tensor<SplitableBlob>,
+    ) {
         let nt = x0.shape()[0];
         let d = self.0.hidden_size() as udim;
         let nh = self.0.num_attention_heads() as udim;
@@ -154,13 +156,13 @@ impl CpuTransformer {
     fn attention<Id>(
         &self,
         layer: usize,
-        requests: &mut [Request<Id>],
-        q: Tensor<Storage>,
-        k: Tensor<Storage>,
-        v: Tensor<Storage>,
-        o: &mut Tensor<Storage>,
-        q_buf: &mut Storage,
-        att_buf: &mut Storage,
+        requests: &mut [Request<Id, Blob>],
+        q: Tensor<SplitableBlob>,
+        k: Tensor<SplitableBlob>,
+        v: Tensor<SplitableBlob>,
+        o: &mut Tensor<SplitableBlob>,
+        q_buf: &mut SplitableBlob,
+        att_buf: &mut SplitableBlob,
     ) {
         let dt = self.0.data_type();
         let nt = o.shape()[0];
@@ -235,9 +237,9 @@ impl CpuTransformer {
     fn after_att(
         &self,
         layer: usize,
-        x0: &mut Tensor<Storage>,
-        x1: &mut Tensor<Storage>,
-        gate_up: &mut Tensor<Storage>,
+        x0: &mut Tensor<SplitableBlob>,
+        x1: &mut Tensor<SplitableBlob>,
+        gate_up: &mut Tensor<SplitableBlob>,
     ) {
         let di = self.0.intermediate_size() as udim;
         let kernels = CpuKernels::new(&self.0);
@@ -268,9 +270,9 @@ impl CpuTransformer {
 
     fn move_decode<Id>(
         &self,
-        requests: &[Request<Id>],
-        mut x0: Tensor<Storage>,
-    ) -> Tensor<Storage> {
+        requests: &[Request<Id, Blob>],
+        mut x0: Tensor<SplitableBlob>,
+    ) -> Tensor<SplitableBlob> {
         let buf = x0.as_mut_slice();
         let len = self.0.hidden_size() * self.0.data_type().size();
 
@@ -292,12 +294,12 @@ impl CpuTransformer {
         x0.slice(&[slice![from begin, until dst + 1], slice![all]])
     }
 
-    fn logits(&self, mut x: Tensor<Storage>) -> Tensor<Storage> {
+    fn logits(&self, mut x: Tensor<SplitableBlob>) -> Tensor<Blob> {
         let dt = self.0.data_type();
         let voc = self.0.vocab_size() as udim;
         let kernels = CpuKernels::new(&self.0);
 
-        let mut logits = tensor(dt, &[x.shape()[0], voc]);
+        let mut logits = tensor_cache(dt, &[x.shape()[0], voc]);
         // println!("decode slice:\n{x}");
 
         // 复制一个 x 以实现原地归一化
@@ -317,9 +319,13 @@ impl CpuTransformer {
 }
 
 #[inline]
-fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Storage> {
-    let size = shape.iter().product::<udim>() as usize * dt.size();
-    Tensor::new(dt, shape, Storage::new(size))
+fn tensor(dt: DataType, shape: &[udim]) -> Tensor<SplitableBlob> {
+    Tensor::alloc(dt, shape, SplitableBlob::new)
+}
+
+#[inline]
+fn tensor_cache(dt: DataType, shape: &[udim]) -> Tensor<Blob> {
+    Tensor::alloc(dt, shape, Blob::new)
 }
 
 #[test]

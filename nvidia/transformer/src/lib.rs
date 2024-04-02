@@ -16,7 +16,9 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
-use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
+use transformer::{
+    pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request, SampleArgs, Transformer,
+};
 
 pub struct NvidiaTransformer {
     host: Memory,
@@ -26,8 +28,6 @@ pub struct NvidiaTransformer {
     transfer: StreamSpore,
     kernels: NvidiaKernels,
 }
-
-type Request<'a, Id> = transformer::Request<'a, Id, Cache>;
 
 impl Transformer for NvidiaTransformer {
     type Cache = Cache;
@@ -41,20 +41,15 @@ impl Transformer for NvidiaTransformer {
         self.context.apply(|ctx| {
             let stream = unsafe { self.transfer.sprout(ctx) };
             LayerCache::new_layers(&self.host, |dt, shape| {
-                let len = shape.iter().product::<udim>() as usize * dt.size();
-                Tensor::new(
-                    dt,
-                    shape,
-                    Cache {
-                        context: self.context.clone(),
-                        mem: stream.malloc::<u8>(len).sporulate(),
-                    },
-                )
+                tensor_cache(dt, shape, self.context.clone(), &stream)
             })
         })
     }
 
-    fn decode<Id>(&self, mut requests: Vec<Request<Id>>) -> (Vec<Id>, Tensor<Self::Cache>) {
+    fn decode<Id>(
+        &self,
+        mut requests: Vec<Request<Id, Self::Cache>>,
+    ) -> (Vec<Id>, Tensor<Self::Cache>) {
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
         self.context.apply(|ctx| {
@@ -168,7 +163,7 @@ impl NvidiaTransformer {
 
     fn token_embed<'ctx, Id>(
         &self,
-        requests: &[Request<Id>],
+        requests: &[Request<Id, Cache>],
         compute: &Stream<'ctx>,
     ) -> Tensor<Storage<'ctx>> {
         let dt = self.host.data_type();
@@ -236,7 +231,7 @@ impl NvidiaTransformer {
     fn attention<Id>(
         &self,
         layer: usize,
-        requests: &mut [Request<Id>],
+        requests: &mut [Request<Id, Cache>],
         q: Tensor<Storage>,
         k: Tensor<Storage>,
         v: Tensor<Storage>,
@@ -363,7 +358,7 @@ impl NvidiaTransformer {
 
     fn move_decode<'ctx, Id>(
         &self,
-        requests: &[Request<Id>],
+        requests: &[Request<Id, Cache>],
         x0: Tensor<Storage<'ctx>>,
         compute: &Stream,
     ) -> Tensor<Storage<'ctx>> {
@@ -400,7 +395,7 @@ impl NvidiaTransformer {
         let (model_norm, lm_head) = unsafe { self.model.release(compute) };
         let kernels = self.kernels.on(compute);
 
-        let mut logits = tensor_out(dt, &[x.shape()[0], voc], self.context.clone(), compute);
+        let mut logits = tensor_cache(dt, &[x.shape()[0], voc], self.context.clone(), compute);
         // 复制一个 x 以实现原地归一化
         let x_ = unsafe { x.as_ref().map_physical(|u| u.borrow()) };
         kernels.rms_norm(&mut x, &x_, &model_norm);
@@ -427,29 +422,20 @@ impl NvidiaTransformer {
 
 #[inline]
 fn tensor<'ctx>(dt: DataType, shape: &[udim], stream: &Stream<'ctx>) -> Tensor<Storage<'ctx>> {
-    Tensor::new(
-        dt,
-        shape,
-        Storage::new(shape.iter().product::<udim>() as usize * dt.size(), stream),
-    )
+    Tensor::alloc(dt, shape, |l| Storage::new(l, stream))
 }
 
-fn tensor_out(
+#[inline]
+fn tensor_cache(
     dt: DataType,
     shape: &[udim],
     context: Arc<Context>,
     stream: &Stream,
 ) -> Tensor<Cache> {
-    Tensor::new(
-        dt,
-        shape,
-        Cache {
-            context,
-            mem: stream
-                .malloc::<u8>(shape.iter().product::<udim>() as usize * dt.size())
-                .sporulate(),
-        },
-    )
+    Tensor::alloc(dt, shape, |l| Cache {
+        context,
+        mem: stream.malloc::<u8>(l).sporulate(),
+    })
 }
 
 #[allow(unused)]

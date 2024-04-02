@@ -1,3 +1,4 @@
+mod blob;
 mod broadcast;
 mod compatibility;
 mod data_type;
@@ -15,6 +16,7 @@ pub type udim = u32;
 #[allow(non_camel_case_types)]
 pub type idim = i32;
 
+pub use blob::{Blob, SplitableBlob};
 pub use compatibility::Compatibility;
 pub use data_type::DataType;
 pub use nalgebra::DVector;

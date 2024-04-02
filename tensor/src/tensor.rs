@@ -17,13 +17,23 @@ pub struct Tensor<Physical> {
 }
 
 impl<Physical> Tensor<Physical> {
+    #[inline]
     pub fn new(data_type: DataType, shape: &[udim], physical: Physical) -> Self {
-        let shape = Shape::from_iter(shape.iter().map(|&d| d as udim));
         Self {
             data_type,
-            pattern: Pattern::from_shape(&shape, 0),
-            shape,
+            pattern: Pattern::from_shape(shape, 0),
+            shape: Shape::from_slice(shape),
             physical,
+        }
+    }
+
+    #[inline]
+    pub fn alloc(data_type: DataType, shape: &[udim], f: impl FnOnce(usize) -> Physical) -> Self {
+        Self {
+            data_type,
+            pattern: Pattern::from_shape(shape, 0),
+            shape: Shape::from_slice(shape),
+            physical: f(shape.iter().product::<udim>() as usize * data_type.size()),
         }
     }
 
