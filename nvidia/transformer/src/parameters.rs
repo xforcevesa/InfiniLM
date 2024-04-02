@@ -1,6 +1,5 @@
-﻿use cuda::{ContextGuard, ContextResource, ContextSpore, DevMem, DevMemSpore, EventSpore, Stream};
-use tensor::Tensor;
-use transformer::Llama2;
+﻿use crate::{Llama2, Tensor};
+use cuda::{ContextGuard, ContextResource, ContextSpore, DevMem, DevMemSpore, EventSpore, Stream};
 
 pub(crate) struct ModelParameters {
     model_norm: Tensor<DevMemSpore>,

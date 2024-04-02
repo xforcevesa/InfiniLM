@@ -1,5 +1,5 @@
 ﻿use std::{fs::File, path::Path, time::Instant};
-use transformer_nvidia::{cuda, NvidiaTransformer};
+use transformer_nv::{cuda, NvidiaTransformer};
 
 pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> NvidiaTransformer {
     cuda::init();

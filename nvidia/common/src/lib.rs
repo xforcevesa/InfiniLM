@@ -1,12 +1,21 @@
-﻿mod fused_softmax;
+﻿#![cfg(detected_cuda)]
+
+#[macro_use]
+extern crate log;
+
+mod fused_softmax;
 mod gather;
 mod mat_mul;
 mod reform;
 mod rms_norm;
 mod rotary_embedding;
+mod storage;
 mod swiglu;
 
-use common::utok;
+pub use common::utok;
+pub use storage::{Cache, Storage};
+pub use tensor::{slice, udim, DataType, Tensor};
+
 use cublas::{Cublas, CublasSpore};
 use cuda::{ContextGuard, ContextResource, ContextSpore, CudaDataType::half, DevSlice, Stream};
 use fused_softmax::FusedSoftmax;
@@ -15,7 +24,6 @@ use rms_norm::RmsNormalization;
 use rotary_embedding::RotaryEmbedding;
 use std::ops::{Deref, DerefMut};
 use swiglu::Swiglu;
-use tensor::Tensor;
 use transformer::{Kernels, Llama2};
 
 pub struct NvidiaKernels {

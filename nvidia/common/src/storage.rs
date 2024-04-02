@@ -51,8 +51,8 @@ impl<'ctx> Splitable for Storage<'ctx> {
 }
 
 pub struct Cache {
-    pub(crate) context: Arc<Context>,
-    pub(crate) mem: DevMemSpore,
+    pub context: Arc<Context>,
+    pub mem: DevMemSpore,
 }
 
 impl Drop for Cache {

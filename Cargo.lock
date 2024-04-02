@@ -326,6 +326,20 @@ name = "common"
 version = "0.0.0"
 
 [[package]]
+name = "common-nv"
+version = "0.0.0"
+dependencies = [
+ "common",
+ "cublas",
+ "cuda",
+ "find_cuda_helper",
+ "half",
+ "log",
+ "tensor",
+ "transformer",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1518,7 +1532,7 @@ dependencies = [
  "tokio",
  "transformer",
  "transformer-cpu",
- "transformer-nvidia",
+ "transformer-nv",
 ]
 
 [[package]]
@@ -1782,16 +1796,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "transformer-nvidia"
+name = "transformer-nv"
 version = "0.0.0"
 dependencies = [
- "common",
- "cublas",
+ "common-nv",
  "cuda",
  "find_cuda_helper",
  "half",
  "log",
- "tensor",
  "tokenizer",
  "transformer",
 ]

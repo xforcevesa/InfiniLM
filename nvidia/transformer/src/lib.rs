@@ -1,15 +1,13 @@
 #![cfg(detected_cuda)]
 
-mod kernel;
 mod parameters;
-mod storage;
 
 #[macro_use]
 extern crate log;
 
 use ::half::f16;
+use common_nv::{slice, udim, utok, Cache, DataType, NvidiaKernels, Storage, Tensor};
 use cuda::{AsRaw, Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
-use kernel::NvidiaKernels;
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use std::{
     fs::File,
@@ -17,8 +15,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
-use storage::{Cache, Storage};
-use tensor::{slice, udim, DataType, Tensor};
 use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, SampleArgs, Transformer};
 
 type Request<'a, Id> = transformer::Request<'a, Id, Cache>;
@@ -123,8 +119,8 @@ impl Transformer for NvidiaTransformer {
         args: &SampleArgs,
         requests: Vec<Id>,
         logits: Tensor<Self::Cache>,
-    ) -> Vec<(Id, common::utok)> {
-        assert_eq!(logits.data_type(), tensor::DataType::F16);
+    ) -> Vec<(Id, utok)> {
+        assert_eq!(logits.data_type(), DataType::F16);
         let &[_, voc] = logits.shape() else { panic!() };
 
         let mut host = vec![f16::ZERO; logits.size()];

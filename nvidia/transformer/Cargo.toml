@@ -1,5 +1,5 @@
 [package]
-name = "transformer-nvidia"
+name = "transformer-nv"
 version = "0.0.0"
 edition = "2021"
 authors = ["YdrMaster <ydrml@hotmail.com>"]
@@ -7,16 +7,14 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-common = { path = "../common" }
-tensor = { path = "../tensor" }
-transformer = { path = "../transformer" }
-cuda = { git = "https://github.com/YdrMaster/cuda-bench" }
-cublas = { git = "https://github.com/YdrMaster/cuda-bench" }
+transformer = { path = "../../transformer" }
+common-nv = { path = "../common" }
+cuda.workspace = true
 log.workspace = true
 half.workspace = true
 
 [dev-dependencies]
-tokenizer = { path = "../tokenizer" }
+tokenizer = { path = "../../tokenizer" }
 
 [build-dependencies]
 find_cuda_helper.workspace = true

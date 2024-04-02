@@ -12,7 +12,7 @@ tensor = { path = "../tensor" }
 tokenizer = { path = "../tokenizer" }
 transformer = { path = "../transformer" }
 transformer-cpu = { path = "../transformer-cpu" }
-transformer-nvidia = { path = "../transformer-nvidia", optional = true }
+transformer-nv = { path = "../nvidia/transformer", optional = true }
 half.workspace = true
 log.workspace = true
 tokio.workspace = true
@@ -24,4 +24,4 @@ find_cuda_helper.workspace = true
 colored = "2.1"
 
 [features]
-nvidia = ["transformer-nvidia"]
+nvidia = ["transformer-nv"]
