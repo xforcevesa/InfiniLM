@@ -18,7 +18,7 @@ log.workspace = true
 tokio.workspace = true
 
 [build-dependencies]
-find_cuda_helper.workspace = true
+search-cuda-tools.workspace = true
 
 [dev-dependencies]
 colored = "2.1"

@@ -44,9 +44,7 @@ extern "C" __global__ void {name}(
             block_size: block_size as _,
         }
     }
-}
 
-impl Swiglu {
     pub fn launch<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>, stream: &Stream)
     where
         T: DerefMut<Target = DevSlice>,
@@ -88,5 +86,10 @@ impl Swiglu {
         let module = unsafe { self.module.sprout(stream.ctx()) };
         let kernel = module.get_kernel(&self.f);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
+    }
+
+    #[inline]
+    pub fn kill(&mut self, ctx: &ContextGuard) {
+        unsafe { self.module.kill(ctx) };
     }
 }

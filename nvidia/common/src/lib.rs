@@ -52,6 +52,14 @@ impl NvidiaKernels {
             swiglu: Swiglu::new(half, block_size, ctx),
         }
     }
+
+    pub fn kill(&mut self, ctx: &ContextGuard) {
+        self.rms_norm.kill(ctx);
+        self.rotary_embedding.kill(ctx);
+        self.reform.kill(ctx);
+        self.softmax.kill(ctx);
+        self.swiglu.kill(ctx);
+    }
 }
 
 pub struct KernelRuntime<'a> {

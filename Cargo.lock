@@ -332,9 +332,9 @@ dependencies = [
  "common",
  "cublas",
  "cuda",
- "find_cuda_helper",
  "half",
  "log",
+ "search-cuda-tools",
  "tensor",
  "transformer",
 ]
@@ -407,20 +407,20 @@ dependencies = [
 [[package]]
 name = "cublas"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-bench#7504e3503abeddf9fc46248f705b09c00d2c6987"
+source = "git+https://github.com/YdrMaster/cuda-bench#c5cf61197a17c9934c651c221ec81d71ddcbfaad"
 dependencies = [
  "bindgen",
  "cuda",
- "find_cuda_helper",
+ "search-cuda-tools",
 ]
 
 [[package]]
 name = "cuda"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-bench#7504e3503abeddf9fc46248f705b09c00d2c6987"
+source = "git+https://github.com/YdrMaster/cuda-bench#c5cf61197a17c9934c651c221ec81d71ddcbfaad"
 dependencies = [
  "bindgen",
- "find_cuda_helper",
+ "search-cuda-tools",
  "static_assertions",
 ]
 
@@ -535,9 +535,9 @@ version = "0.0.0"
 dependencies = [
  "common-nv",
  "cuda",
- "find_cuda_helper",
  "half",
  "log",
+ "search-cuda-tools",
  "tokenizer",
  "transformer",
 ]
@@ -1495,6 +1495,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "search-cuda-tools"
+version = "0.1.0"
+source = "git+https://github.com/YdrMaster/cuda-bench#c5cf61197a17c9934c651c221ec81d71ddcbfaad"
+dependencies = [
+ "find_cuda_helper",
+]
+
+[[package]]
 name = "seq-macro"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1537,9 +1545,9 @@ version = "0.0.0"
 dependencies = [
  "colored",
  "common",
- "find_cuda_helper",
  "half",
  "log",
+ "search-cuda-tools",
  "tensor",
  "tokenizer",
  "tokio",
@@ -1814,9 +1822,9 @@ version = "0.0.0"
 dependencies = [
  "common-nv",
  "cuda",
- "find_cuda_helper",
  "half",
  "log",
+ "search-cuda-tools",
  "tokenizer",
  "transformer",
 ]

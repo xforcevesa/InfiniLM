@@ -1,1 +1,1 @@
-#![cfg(detected_cuda)]
+#![cfg(detected_nccl)]

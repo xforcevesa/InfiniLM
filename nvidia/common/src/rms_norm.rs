@@ -69,9 +69,7 @@ extern "C" __global__ void {folding}(
             items_per_thread: items_per_thread as _,
         }
     }
-}
 
-impl RmsNormalization {
     pub fn launch<T, U, V>(
         &self,
         y: &mut Tensor<T>,
@@ -111,6 +109,11 @@ impl RmsNormalization {
             kernel.launch(row, block_size, params.as_ptr(), 0, Some(stream));
         }
     }
+
+    #[inline]
+    pub fn kill(&mut self, ctx: &ContextGuard) {
+        unsafe { self.module.kill(ctx) };
+    }
 }
 
 #[test]
@@ -122,6 +125,6 @@ fn test_kernel() {
         return;
     };
     dev.context().apply(|ctx| {
-        RmsNormalization::new(CudaDataType::half, 2048, 1024, ctx);
+        RmsNormalization::new(CudaDataType::half, 2048, 1024, ctx).kill(ctx);
     });
 }

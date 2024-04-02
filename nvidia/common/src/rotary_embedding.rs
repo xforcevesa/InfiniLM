@@ -43,9 +43,7 @@ extern "C" __global__ void {name}(
             block_size: block_size as _,
         }
     }
-}
 
-impl RotaryEmbedding {
     pub fn launch<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
     where
         T: DerefMut<Target = DevSlice>,
@@ -75,5 +73,10 @@ impl RotaryEmbedding {
         let module = unsafe { self.module.sprout(stream.ctx()) };
         let kernel = module.get_kernel(&self.f);
         kernel.launch((nh, n), dh / 2, params.as_ptr(), 0, Some(stream))
+    }
+
+    #[inline]
+    pub fn kill(&mut self, ctx: &ContextGuard) {
+        unsafe { self.module.kill(ctx) };
     }
 }

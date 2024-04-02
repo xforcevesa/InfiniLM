@@ -68,9 +68,7 @@ extern "C" __global__ void {folding}(
             items_per_thread: items_per_thread as _,
         }
     }
-}
 
-impl FusedSoftmax {
     pub fn launch<T>(&self, att: &mut Tensor<T>, stream: &Stream)
     where
         T: DerefMut<Target = DevSlice>,
@@ -105,5 +103,10 @@ impl FusedSoftmax {
         let module = unsafe { self.module.sprout(stream.ctx()) };
         let kernel = module.get_kernel(name);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
+    }
+
+    #[inline]
+    pub fn kill(&mut self, ctx: &ContextGuard) {
+        unsafe { self.module.kill(ctx) };
     }
 }
