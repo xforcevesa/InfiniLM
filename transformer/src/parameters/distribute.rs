@@ -3,16 +3,11 @@ use std::sync::Arc;
 use tensor::{slice, udim, Blob, DataType, Tensor};
 
 pub struct DistributedLayer {
-    scheme: Arc<Scheme>,
+    scheme: Arc<DistributeScheme>,
     blob: Blob,
 }
 
 impl DistributedLayer {
-    #[inline]
-    pub fn scheme(&self) -> &Scheme {
-        &self.scheme
-    }
-
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
         &self.blob
@@ -84,7 +79,7 @@ impl DistributedLayer {
 
 pub struct Distributer<'a> {
     model: &'a dyn Llama2,
-    scheme: Arc<Scheme>,
+    scheme: Arc<DistributeScheme>,
 }
 
 impl<'a> Distributer<'a> {
@@ -92,8 +87,13 @@ impl<'a> Distributer<'a> {
     pub fn new(model: &'a dyn Llama2, n: usize, align: usize) -> Self {
         Self {
             model,
-            scheme: Scheme::new(model, n, align),
+            scheme: DistributeScheme::new(model, n, align),
         }
+    }
+
+    #[inline]
+    pub fn scheme(&self) -> &DistributeScheme {
+        &self.scheme
     }
 
     pub fn distribute(&self, layer: usize, i: usize) -> DistributedLayer {
@@ -211,7 +211,7 @@ impl<'a> Distributer<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Scheme {
+pub struct DistributeScheme {
     /// data type
     pub dt: DataType,
     /// num heads
@@ -233,7 +233,7 @@ pub struct Scheme {
     pub total_size: usize,
 }
 
-impl Scheme {
+impl DistributeScheme {
     #[inline]
     fn new(model: &dyn Llama2, n: usize, align: usize) -> Arc<Self> {
         assert_eq!(model.num_key_value_heads() % n, 0);

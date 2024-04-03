@@ -9,7 +9,6 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 transformer = { path = "../../transformer" }
 common-nv = { path = "../common" }
-cuda.workspace = true
 log.workspace = true
 half.workspace = true
 

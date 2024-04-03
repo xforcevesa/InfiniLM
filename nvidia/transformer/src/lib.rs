@@ -4,7 +4,8 @@ mod parameters;
 
 #[macro_use]
 extern crate log;
-pub extern crate cuda;
+
+pub use common_nv::cuda;
 
 use ::half::f16;
 use common_nv::{slice, udim, utok, Cache, DataType, NvidiaKernels, Storage, Tensor};

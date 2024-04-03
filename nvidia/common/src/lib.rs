@@ -2,6 +2,7 @@
 
 #[macro_use]
 extern crate log;
+pub extern crate cuda;
 
 mod fused_softmax;
 mod gather;

@@ -15,7 +15,9 @@ pub use blas::Matrix;
 pub use buffer::LayerBuffer;
 pub use cache::LayerCache;
 pub use kernels::Kernels;
-pub use parameters::{save, DistributedLayer, Distributer, Llama2, Memory, SafeTensorError};
+pub use parameters::{
+    save, DistributeScheme, DistributedLayer, Distributer, Llama2, Memory, SafeTensorError,
+};
 pub use pos::pos;
 pub use request::Request;
 pub use sample::{BetweenF32, SampleArgs};

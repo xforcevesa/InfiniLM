@@ -1,5 +1,7 @@
 ﻿use crate::{Llama2, Tensor};
-use cuda::{ContextGuard, ContextResource, ContextSpore, DevMem, DevMemSpore, EventSpore, Stream};
+use common_nv::cuda::{
+    ContextGuard, ContextResource, ContextSpore, DevMem, DevMemSpore, EventSpore, Stream,
+};
 
 pub(crate) struct ModelParameters {
     model_norm: Tensor<DevMemSpore>,
@@ -83,7 +85,7 @@ pub(crate) struct LayerParameter {
     pub mlp_down: Tensor<DevMemSpore>,
 
     layer: usize,
-    sync_event: cuda::EventSpore,
+    sync_event: EventSpore,
 }
 
 impl LayerParameter {
