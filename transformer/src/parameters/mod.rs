@@ -6,7 +6,9 @@ mod storage;
 
 use common::utok;
 use tensor::{DataType, Tensor};
+mod distribute;
 
+pub use distribute::{DistributedLayer, Distributer};
 pub use memory::Memory;
 pub use safe_tensors::SafeTensorError;
 pub use save::save;
