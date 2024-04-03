@@ -138,6 +138,7 @@ where
                                 task.ctx.push(&[token], max_seq_len);
                                 batcher.enq(task);
                             } else {
+                                task.ctx.push(&[eos], max_seq_len);
                                 sender.send(Message::Ctx(task.ctx)).unwrap();
                             }
                         }
