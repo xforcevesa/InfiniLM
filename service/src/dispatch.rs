@@ -1,6 +1,6 @@
 ﻿use crate::{
     batcher::{Batcher, Task},
-    session::{Command, SessionContext},
+    session::{Command, Respond::Token, SessionContext},
 };
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
@@ -134,8 +134,7 @@ where
                 for mut task in tasks {
                     match tokens.get(&task.ctx.id) {
                         Some(&token) => {
-                            if token != eos {
-                                task.responsing.send(token).unwrap();
+                            if token != eos && task.responsing.send(Token(token)).is_ok() {
                                 task.ctx.push(&[token], max_seq_len);
                                 batcher.enq(task);
                             } else {

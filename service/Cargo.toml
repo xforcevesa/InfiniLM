@@ -15,7 +15,7 @@ transformer-cpu = { path = "../transformer-cpu" }
 transformer-nv = { path = "../nvidia/transformer", optional = true }
 half.workspace = true
 log.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["time"] }
 
 [build-dependencies]
 search-cuda-tools.workspace = true

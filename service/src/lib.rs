@@ -118,15 +118,16 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
 #[test]
 fn test() {
     use colored::{Color, Colorize};
-    use std::{io::Write, path::Path};
-    use tokio::{runtime::Builder, task::JoinSet};
+    use std::{io::Write, iter::zip, path::Path, time::Duration};
+    use tokio::{runtime::Builder, task::JoinSet, time::sleep};
 
     let model_dir = "../../TinyLlama-1.1B-Chat-v1.0_F16/";
     if !Path::new(model_dir).exists() {
+        println!("model not exist");
         return;
     }
 
-    let runtime = Builder::new_current_thread().build().unwrap();
+    let runtime = Builder::new_current_thread().enable_time().build().unwrap();
     let _rt = runtime.enter();
 
     let service = Service::load_model(
@@ -149,8 +150,15 @@ fn test() {
         ("Where is the capital of France?", Color::Green),
     ];
 
-    for (prompt, color) in tasks {
-        let mut session = service.launch();
+    let sessions = tasks.iter().map(|_| service.launch()).collect::<Vec<_>>();
+
+    let handle = sessions.last().unwrap().handle();
+    set.spawn(async move {
+        sleep(Duration::from_secs(3)).await;
+        handle.abort();
+    });
+
+    for ((prompt, color), mut session) in zip(tasks, sessions) {
         set.spawn(async move {
             session
                 .chat(prompt, |s| {

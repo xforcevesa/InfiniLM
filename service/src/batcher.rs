@@ -1,11 +1,10 @@
-﻿use crate::session::SessionContext;
-use common::utok;
+﻿use crate::session::{Respond, SessionContext};
 use std::sync::{Condvar, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub struct Task<Cache> {
     pub ctx: SessionContext<Cache>,
-    pub responsing: UnboundedSender<utok>,
+    pub responsing: UnboundedSender<Respond>,
 }
 
 pub struct Batcher<Cache> {

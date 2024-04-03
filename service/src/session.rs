@@ -3,17 +3,18 @@ use common::utok;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
-        Arc,
+        Arc, Mutex,
     },
     time::Instant,
 };
 use tokenizer::{Normalizer, Tokenizer};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, WeakUnboundedSender};
 use transformer::{LayerCache, Request};
 
 pub struct Session {
     id: usize,
     component: Arc<SessionComponent>,
+    abort_handle: Arc<Mutex<Option<WeakUnboundedSender<Respond>>>>,
 }
 
 impl Session {
@@ -23,12 +24,21 @@ impl Session {
         Self {
             id: ID_ROOT.fetch_add(1, Relaxed),
             component,
+            abort_handle: Default::default(),
         }
     }
 
     #[inline]
     pub const fn id(&self) -> usize {
         self.id
+    }
+
+    #[inline]
+    pub fn handle(&self) -> SessionHandle {
+        SessionHandle {
+            id: self.id,
+            abort_handle: self.abort_handle.clone(),
+        }
     }
 
     #[inline]
@@ -50,6 +60,11 @@ impl Session {
         let prompt = self.component.tokenizer.encode(&prompt);
 
         let (responsing, mut receiver) = unbounded_channel();
+        self.abort_handle
+            .lock()
+            .unwrap()
+            .replace(responsing.downgrade());
+
         let chat = Command::Infer(
             self.id,
             Box::new(Infer {
@@ -60,7 +75,7 @@ impl Session {
         );
 
         self.component.sender.send(chat).unwrap();
-        while let Some(token) = receiver.recv().await {
+        while let Some(Respond::Token(token)) = receiver.recv().await {
             let piece = self.component.tokenizer.decode(token);
             let piece = self.component.normalizer.decode(piece);
             f(&piece);
@@ -75,15 +90,45 @@ impl Drop for Session {
     }
 }
 
+pub struct SessionHandle {
+    id: usize,
+    abort_handle: Arc<Mutex<Option<WeakUnboundedSender<Respond>>>>,
+}
+
+impl SessionHandle {
+    #[inline]
+    pub const fn id(&self) -> usize {
+        self.id
+    }
+
+    #[inline]
+    pub fn abort(&self) {
+        if let Some(sender) = self
+            .abort_handle
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(WeakUnboundedSender::upgrade)
+        {
+            let _ = sender.send(Respond::Abort);
+        }
+    }
+}
+
 pub(crate) enum Command {
     Infer(usize, Box<Infer>),
     Drop(usize),
 }
 
+pub(crate) enum Respond {
+    Token(utok),
+    Abort,
+}
+
 pub(crate) struct Infer {
     pub _stamp: Instant,
     pub prompt: Vec<utok>,
-    pub responsing: UnboundedSender<utok>,
+    pub responsing: UnboundedSender<Respond>,
 }
 
 pub(crate) struct SessionComponent {
