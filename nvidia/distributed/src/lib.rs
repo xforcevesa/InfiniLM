@@ -17,6 +17,7 @@ fn test_load() {
         .iter()
         .map(Device::retain_primary)
         .collect::<Vec<_>>();
+    let align = devices.iter().map(Device::alignment).max().unwrap();
 
     let time = Instant::now();
     let safetensors = Memory::load_safetensors_from_dir("../../../TinyLlama-1.1B-Chat-v1.0");
@@ -31,7 +32,7 @@ fn test_load() {
     let nlayers = model.num_hidden_layers();
     let mut matrix = Vec::with_capacity(contexts.len() * nlayers);
 
-    let distributer = Distributer::new(&model, contexts.len(), 512);
+    let distributer = Distributer::new(&model, contexts.len(), align);
     let time = Instant::now();
     for (i, context) in contexts.iter().enumerate() {
         context.apply(|ctx| {
