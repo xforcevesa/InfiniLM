@@ -9,6 +9,16 @@ pub struct DistributedLayer {
 
 impl DistributedLayer {
     #[inline]
+    pub fn scheme(&self) -> &Scheme {
+        &self.scheme
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.blob
+    }
+
+    #[inline]
     pub fn input_layernorm(&self) -> Tensor<&[u8]> {
         Tensor::new(
             self.scheme.dt,
@@ -200,7 +210,7 @@ impl<'a> Distributer<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Scheme {
     /// data type
     pub dt: DataType,
