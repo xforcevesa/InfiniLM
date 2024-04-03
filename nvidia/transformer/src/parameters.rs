@@ -161,7 +161,7 @@ impl LayerParameter {
         let ctx = stream.ctx();
         macro_rules! update {
             ($param:ident) => {
-                unsafe { self.input_layernorm.physical_mut().sprout(ctx) }
+                unsafe { self.$param.physical_mut().sprout(ctx) }
                     .copy_in_async(host.$param(layer).as_slice(), stream)
             };
         }
@@ -172,7 +172,8 @@ impl LayerParameter {
         update!(mlp_gate_up);
         update!(mlp_down);
 
-        self.layer = layer;
+        unsafe { self.sync_event.kill(stream.ctx()) };
         self.sync_event = stream.record().sporulate();
+        self.layer = layer;
     }
 }
