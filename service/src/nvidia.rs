@@ -1,7 +1,7 @@
 ﻿use std::{fs::File, path::Path, time::Instant};
-use transformer_nv::{cuda, NvidiaTransformer};
+use transformer_nv::{cuda, Transformer};
 
-pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> NvidiaTransformer {
+pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> Transformer {
     cuda::init();
 
     let time = Instant::now();
@@ -13,7 +13,7 @@ pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> NvidiaTransforme
     let time = Instant::now();
     let dev = cuda::Device::new(device);
     dev.set_mempool_threshold(u64::MAX);
-    let transformer = NvidiaTransformer::new(config, safetensors, usize::MAX, dev);
+    let transformer = Transformer::new(config, safetensors, usize::MAX, dev);
     info!("build transformer ... {:?}", time.elapsed());
 
     transformer

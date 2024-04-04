@@ -17,11 +17,9 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
-use transformer::{
-    pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request, SampleArgs, Transformer,
-};
+use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request, SampleArgs};
 
-pub struct NvidiaTransformer {
+pub struct Transformer {
     host: Memory,
     model: ModelParameters,
     layers: Mutex<LayersParameters>,
@@ -30,7 +28,7 @@ pub struct NvidiaTransformer {
     kernels: NvidiaKernels,
 }
 
-impl Transformer for NvidiaTransformer {
+impl transformer::Transformer for Transformer {
     type Cache = Cache;
 
     #[inline]
@@ -127,7 +125,7 @@ impl Transformer for NvidiaTransformer {
     }
 }
 
-impl NvidiaTransformer {
+impl Transformer {
     pub fn new(config: File, mut safetensors: File, preload_layers: usize, dev: Device) -> Self {
         let context = Arc::new(dev.retain_primary());
         let time = Instant::now();
