@@ -1,11 +1,12 @@
 mod cast;
 mod chat;
 mod generate;
-
-use std::future::Future;
+mod service;
 
 use ::service::{Device, Service};
 use clap::Parser;
+use service::ServiceArgs;
+use std::future::Future;
 use transformer::SampleArgs;
 
 #[macro_use]
@@ -17,6 +18,7 @@ fn main() {
         Cast(cast) => cast.invode(),
         Generate(args) => block_on(args.inference.generate(&args.prompt)),
         Chat(chat) => block_on(chat.chat()),
+        Service(service) => block_on(service.serve()),
     }
 }
 
@@ -45,8 +47,10 @@ enum Commands {
     Cast(cast::CastArgs),
     /// Generate following text
     Generate(generate::GenerateArgs),
-    /// Start service
+    /// Chat locally
     Chat(InferenceArgs),
+    /// Start the service
+    Service(ServiceArgs),
 }
 
 #[derive(Args, Default)]

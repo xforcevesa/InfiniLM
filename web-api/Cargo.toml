@@ -1,13 +1,13 @@
 [package]
-name = "web-handler"
+name = "web-api"
 version = "0.0.1"
 edition = "2021"
 authors = ["Zezhong Pan <panzezhong@qiyuanlab.com>"]
 
 [dependencies]
-actix-web = "*"
-futures = "*"
-tokio = "*"
-serde = { version = "*", features = ["derive"] }
 transformer = { path = "../transformer" }
 service = { path = "../service" }
+serde = { workspace = true, features = ["derive"] }
+tokio.workspace = true
+futures = "0.3"
+actix-web = "4.5"

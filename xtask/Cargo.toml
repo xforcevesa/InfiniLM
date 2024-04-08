@@ -11,6 +11,7 @@ common = { path = "../common" }
 tensor = { path = "../tensor" }
 transformer = { path = "../transformer" }
 service = { path = "../service" }
+web-api = { path = "../web-api" }
 log.workspace = true
 tokio.workspace = true
 simple_logger = "4.3"

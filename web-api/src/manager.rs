@@ -65,7 +65,7 @@ impl ServiceManager {
     }
 
     /// Return the taken-away session, should be called every time a request is done
-    pub fn reset_session(&self, id: &str, session: Session) -> () {
+    pub fn reset_session(&self, id: &str, session: Session) {
         self.sessions
             .lock()
             .unwrap()
