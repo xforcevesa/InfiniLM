@@ -293,9 +293,10 @@ impl Transformer {
             let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
             let k_att = k_cache.slice(att_slice).transpose(&[0, 2, 1]);
             let v_att = v_cache.slice(att_slice);
-            // println!("layer {layer} q attention:\n{}", q_att);
-            // println!("layer {layer} k attention:\n{}", k_att.access());
-            // println!("layer {layer} v attention:\n{}", v_att.access());
+            // compute.synchronize();
+            // println!("layer {layer} q attention:\n{}", map_tensor(&q_att));
+            // println!("layer {layer} k attention:\n{}", map_tensor(&k_att));
+            // println!("layer {layer} v attention:\n{}", map_tensor(&v_att));
 
             let shape_att0 = &[nkvh, head_group * seq_len, att_len];
             let shape_att1 = &[nkvh * head_group, seq_len, att_len];
@@ -309,7 +310,8 @@ impl Transformer {
             kernels.mat_mul(&mut x2, 0., &att, &v_att, 1.);
 
             kernels.reform(&mut o, &x2.reshape(&[nh, seq_len, dh]));
-            // println!("layer {layer} after attention:\n{}", o);
+            // compute.synchronize();
+            // println!("layer {layer} after attention:\n{}", map_tensor(&o));
         }
     }
 
@@ -435,15 +437,4 @@ fn tensor_cache(
         context,
         mem: stream.malloc::<u8>(l).sporulate(),
     })
-}
-
-#[allow(unused)]
-fn map_tensor(tensor: &Tensor<Storage>) -> Tensor<Vec<u8>> {
-    unsafe {
-        tensor.as_ref().map_physical(|dev| {
-            let mut buf = vec![0; dev.len()];
-            dev.copy_out(&mut buf);
-            buf
-        })
-    }
 }

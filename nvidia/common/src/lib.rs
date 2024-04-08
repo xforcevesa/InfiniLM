@@ -158,3 +158,17 @@ impl Kernels for KernelRuntime<'_> {
         self.kernels.swiglu.launch(gate, up, self.stream);
     }
 }
+
+#[allow(unused)]
+pub fn map_tensor<T>(tensor: &Tensor<T>) -> Tensor<Vec<u8>>
+where
+    T: Deref<Target = DevSlice>,
+{
+    unsafe {
+        tensor.as_ref().map_physical(|dev| {
+            let mut buf = vec![0; dev.len()];
+            dev.copy_out(&mut buf);
+            buf
+        })
+    }
+}
