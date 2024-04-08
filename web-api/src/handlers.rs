@@ -43,9 +43,11 @@ async fn session_async_infer(
     request: web::Json<schemas::InferRequest>,
     mut sender: mpsc::Sender<String>,
 ) {
-    session.chat(&request.inputs, |s| {
-        sender
-            .try_send(s.to_string())
-            .expect("Failed to write data into output channel.")
-    }).await
+    session
+        .chat(&request.inputs, |s| {
+            sender
+                .try_send(s.to_string())
+                .expect("Failed to write data into output channel.")
+        })
+        .await
 }

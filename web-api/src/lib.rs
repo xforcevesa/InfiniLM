@@ -35,7 +35,7 @@ pub async fn start_infer_service() -> std::io::Result<()> {
     let ip = "127.0.0.1";
     let port = 5001;
     let device = Device::NvidiaGpu(7);
-    
+
     let app_state = create_app(model_path, device);
 
     println!("Starting service at {}:{}", ip, port);

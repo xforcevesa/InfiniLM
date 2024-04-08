@@ -15,9 +15,7 @@ impl Response {
     }
 
     pub fn error(e: schemas::Error) -> HttpResponse {
-        let err = schemas::ErrorResponse {
-            error: e.msg(),
-        };
+        let err = schemas::ErrorResponse { error: e.msg() };
         HttpResponse::Ok()
             .content_type("application/json")
             .json(err)

@@ -16,7 +16,7 @@ pub struct ServiceManager {
 }
 impl ServiceManager {
     pub fn from(infer_service: Arc<Service>) -> Self {
-        ServiceManager{
+        ServiceManager {
             sessions: Default::default(),
             infer_service: infer_service.clone(),
         }
