@@ -1,6 +1,6 @@
 use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, CudaDataType,
-    DevSlice, ModuleSpore, Ptx, Stream,
+    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, CudaDataType, DevByte,
+    ModuleSpore, Ptx, Stream,
 };
 use std::{
     ffi::{c_uint, c_void, CString},
@@ -78,17 +78,17 @@ extern "C" __global__ void {folding}(
         epsilon: f32,
         stream: &Stream,
     ) where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
-        V: Deref<Target = DevSlice>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
+        V: Deref<Target = [DevByte]>,
     {
         debug_assert_eq!(x.shape(), y.shape());
         let &[row, col] = x.shape() else { panic!() };
         debug_assert_eq!(&[col], w.shape());
 
-        let y_ptr = (unsafe { y.physical().as_raw() } as isize + y.bytes_offset()) as CUdeviceptr;
-        let x_ptr = (unsafe { x.physical().as_raw() } as isize + x.bytes_offset()) as CUdeviceptr;
-        let w_ptr = (unsafe { w.physical().as_raw() } as isize + w.bytes_offset()) as CUdeviceptr;
+        let y_ptr = (y.physical().as_ptr() as isize + y.bytes_offset()) as CUdeviceptr;
+        let x_ptr = (x.physical().as_ptr() as isize + x.bytes_offset()) as CUdeviceptr;
+        let w_ptr = (w.physical().as_ptr() as isize + w.bytes_offset()) as CUdeviceptr;
         let leading_dim = x.strides()[0] as udim;
         let items_len = col as udim;
         let params: [*const c_void; 6] = [

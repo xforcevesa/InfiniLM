@@ -18,7 +18,9 @@ pub use storage::{Cache, Storage};
 pub use tensor::{slice, udim, DataType, Tensor};
 
 use cublas::{Cublas, CublasSpore};
-use cuda::{ContextGuard, ContextResource, ContextSpore, CudaDataType::half, DevSlice, Stream};
+use cuda::{
+    memcpy_d2h, ContextGuard, ContextResource, ContextSpore, CudaDataType::half, DevByte, Stream,
+};
 use fused_softmax::FusedSoftmax;
 use reform::Reform;
 use rms_norm::RmsNormalization;
@@ -80,12 +82,12 @@ impl NvidiaKernels {
 }
 
 impl Kernels for KernelRuntime<'_> {
-    type Storage = DevSlice;
+    type Storage = [DevByte];
 
     #[inline]
     fn gather<T, U, I>(&self, x: &mut Tensor<T>, table: &Tensor<U>, tokens: I)
     where
-        T: DerefMut<Target = DevSlice>,
+        T: DerefMut<Target = Self::Storage>,
         U: Deref<Target = [u8]>,
         I: IntoIterator<Item = utok>,
     {
@@ -95,9 +97,9 @@ impl Kernels for KernelRuntime<'_> {
     #[inline]
     fn rms_norm<T, U, V>(&self, y: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>)
     where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
-        V: Deref<Target = DevSlice>,
+        T: DerefMut<Target = Self::Storage>,
+        U: Deref<Target = Self::Storage>,
+        V: Deref<Target = Self::Storage>,
     {
         self.kernels
             .rms_norm
@@ -113,9 +115,9 @@ impl Kernels for KernelRuntime<'_> {
         b: &Tensor<V>,
         alpha: f32,
     ) where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
-        V: Deref<Target = DevSlice>,
+        T: DerefMut<Target = Self::Storage>,
+        U: Deref<Target = Self::Storage>,
+        V: Deref<Target = Self::Storage>,
     {
         let cublas = unsafe { self.kernels.cublas.sprout(self.stream.ctx()) };
         mat_mul::mat_mul(&cublas, c, beta, a, b, alpha)
@@ -124,8 +126,8 @@ impl Kernels for KernelRuntime<'_> {
     #[inline]
     fn rotary_embedding<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>)
     where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
+        T: DerefMut<Target = Self::Storage>,
+        U: Deref<Target = Self::Storage>,
     {
         self.kernels
             .rotary_embedding
@@ -135,8 +137,8 @@ impl Kernels for KernelRuntime<'_> {
     #[inline]
     fn reform<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>)
     where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
+        T: DerefMut<Target = Self::Storage>,
+        U: Deref<Target = Self::Storage>,
     {
         self.kernels.reform.launch(dst, src, self.stream);
     }
@@ -144,7 +146,7 @@ impl Kernels for KernelRuntime<'_> {
     #[inline]
     fn softmax<T>(&self, att: &mut Tensor<T>)
     where
-        T: DerefMut<Target = DevSlice>,
+        T: DerefMut<Target = Self::Storage>,
     {
         self.kernels.softmax.launch(att, self.stream);
     }
@@ -152,8 +154,8 @@ impl Kernels for KernelRuntime<'_> {
     #[inline]
     fn swiglu<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>)
     where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
+        T: DerefMut<Target = Self::Storage>,
+        U: Deref<Target = Self::Storage>,
     {
         self.kernels.swiglu.launch(gate, up, self.stream);
     }
@@ -162,12 +164,12 @@ impl Kernels for KernelRuntime<'_> {
 #[allow(unused)]
 pub fn map_tensor<T>(tensor: &Tensor<T>) -> Tensor<Vec<u8>>
 where
-    T: Deref<Target = DevSlice>,
+    T: Deref<Target = [DevByte]>,
 {
     unsafe {
         tensor.as_ref().map_physical(|dev| {
             let mut buf = vec![0; dev.len()];
-            dev.copy_out(&mut buf);
+            memcpy_d2h(&mut buf, dev);
             buf
         })
     }

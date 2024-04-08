@@ -8,7 +8,10 @@ extern crate log;
 pub use common_nv::cuda;
 
 use ::half::f16;
-use common_nv::{slice, udim, utok, Cache, DataType, NvidiaKernels, Storage, Tensor};
+use common_nv::{
+    cuda::{bindings::CUdeviceptr, memcpy_d2h},
+    slice, udim, utok, Cache, DataType, NvidiaKernels, Storage, Tensor,
+};
 use cuda::{AsRaw, Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use std::{
@@ -63,7 +66,7 @@ impl transformer::Transformer for Transformer {
             let nt = x0.shape()[0]; // `nt` for number of tokens
             let pos_ = pos(&requests, nt);
             let mut pos = tensor(DataType::U32, &[nt], &transfer);
-            pos.physical_mut().copy_in_async(&pos_, &transfer);
+            transfer.memcpy_h2d(pos.physical_mut(), &pos_);
             // 推理
             compute.wait_for(&transfer.record());
             {
@@ -115,7 +118,7 @@ impl transformer::Transformer for Transformer {
 
         let mut host = vec![f16::ZERO; logits.size()];
         let Cache { context, mem } = logits.physical();
-        context.apply(|ctx| unsafe { mem.sprout(ctx) }.copy_out(&mut host));
+        context.apply(|ctx| memcpy_d2h(&mut host, unsafe { &mem.sprout(ctx) }));
 
         requests
             .into_iter()
@@ -363,7 +366,7 @@ impl Transformer {
         x0: Tensor<Storage<'ctx>>,
         compute: &Stream,
     ) -> Tensor<Storage<'ctx>> {
-        let buf = unsafe { x0.physical().as_raw() };
+        let buf = x0.physical().as_ptr() as CUdeviceptr;
         let len = self.host.hidden_size() * self.host.data_type().size();
 
         let (head, others) = requests.split_first().unwrap();

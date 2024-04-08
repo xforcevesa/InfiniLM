@@ -161,8 +161,10 @@ impl LayerParameter {
         let ctx = stream.ctx();
         macro_rules! update {
             ($param:ident) => {
-                unsafe { self.$param.physical_mut().sprout(ctx) }
-                    .copy_in_async(host.$param(layer).as_slice(), stream)
+                stream.memcpy_h2d(
+                    unsafe { &mut self.$param.physical_mut().sprout(ctx) },
+                    host.$param(layer).as_slice(),
+                )
             };
         }
         update!(input_layernorm);

@@ -8,8 +8,8 @@ extern crate log;
 pub use common_nv::cuda;
 
 use common_nv::{
-    cuda::{AsRaw, ContextResource, ContextSpore, Device},
-    utok, Tensor,
+    cuda::{AsRaw, ContextResource, ContextSpore, CudaDataType, Device},
+    utok, DataType, Tensor,
 };
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
@@ -89,5 +89,15 @@ impl Drop for Transformer {
     fn drop(&mut self) {
         let contexts = self.comms.context_iter().collect::<Vec<_>>();
         unsafe { self.matrix.kill(&contexts) }
+    }
+}
+
+fn convert(dt: DataType) -> CudaDataType {
+    match dt {
+        DataType::F16 => CudaDataType::half,
+        DataType::BF16 => CudaDataType::nv_bfloat16,
+        DataType::F32 => CudaDataType::float,
+        DataType::F64 => CudaDataType::double,
+        _ => unreachable!(),
     }
 }

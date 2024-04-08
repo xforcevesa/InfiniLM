@@ -1,5 +1,5 @@
 ﻿use common_nv::{
-    cuda::{Context, ContextGuard, ContextResource, ContextSpore, DevMem, DevMemSpore},
+    cuda::{Context, ContextGuard, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore},
     udim, Tensor,
 };
 use std::time::Instant;
@@ -71,17 +71,17 @@ impl ParameterMatrix {
 
 impl Layer<'_> {
     #[inline]
-    pub fn input_layernorm(&self) -> Tensor<DevMem> {
+    pub fn input_layernorm(&self) -> Tensor<&[DevByte]> {
         let d = self.scheme.nh * self.scheme.dh;
         Tensor::new(
             self.scheme.dt,
             &[d],
-            self.mem.slice(self.scheme.input_layernorm..),
+            &self.mem[self.scheme.input_layernorm..],
         )
     }
 
     #[inline]
-    pub fn w_qkv(&self) -> Tensor<DevMem> {
+    pub fn w_qkv(&self) -> Tensor<&[DevByte]> {
         let nh = self.scheme.nh;
         let nkvh = self.scheme.nkvh;
         let dh = self.scheme.dh;
@@ -90,52 +90,48 @@ impl Layer<'_> {
         Tensor::new(
             self.scheme.dt,
             &[(nh + nkvh + nkvh) / n * dh, d],
-            self.mem.slice(self.scheme.w_qkv..),
+            &self.mem[self.scheme.w_qkv..],
         )
     }
 
     #[inline]
-    pub fn w_o(&self) -> Tensor<DevMem> {
+    pub fn w_o(&self) -> Tensor<&[DevByte]> {
         let d = self.scheme.nh * self.scheme.dh;
         let n = self.scheme.n as udim;
-        Tensor::new(
-            self.scheme.dt,
-            &[d / n, d],
-            self.mem.slice(self.scheme.w_o..),
-        )
+        Tensor::new(self.scheme.dt, &[d / n, d], &self.mem[self.scheme.w_o..])
     }
 
     #[inline]
-    pub fn post_att_layernorm(&self) -> Tensor<DevMem> {
+    pub fn post_att_layernorm(&self) -> Tensor<&[DevByte]> {
         let d = self.scheme.nh * self.scheme.dh;
         Tensor::new(
             self.scheme.dt,
             &[d],
-            self.mem.slice(self.scheme.post_att_layernorm..),
+            &self.mem[self.scheme.post_att_layernorm..],
         )
     }
 
     #[inline]
-    pub fn mlp_gate_up(&self) -> Tensor<DevMem> {
+    pub fn mlp_gate_up(&self) -> Tensor<&[DevByte]> {
         let di = self.scheme.di;
         let d = self.scheme.nh * self.scheme.dh;
         let n = self.scheme.n as udim;
         Tensor::new(
             self.scheme.dt,
             &[(di + di) / n, d],
-            self.mem.slice(self.scheme.mlp_gate_up..),
+            &self.mem[self.scheme.mlp_gate_up..],
         )
     }
 
     #[inline]
-    pub fn mlp_down(&self) -> Tensor<DevMem> {
+    pub fn mlp_down(&self) -> Tensor<&[DevByte]> {
         let di = self.scheme.di;
         let d = self.scheme.nh * self.scheme.dh;
         let n = self.scheme.n as udim;
         Tensor::new(
             self.scheme.dt,
             &[d, di / n],
-            self.mem.slice(self.scheme.mlp_down..),
+            &self.mem[self.scheme.mlp_down..],
         )
     }
 }

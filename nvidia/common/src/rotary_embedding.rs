@@ -1,6 +1,6 @@
 ﻿use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, DevSlice,
-    ModuleSpore, Ptx, Stream,
+    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, DevByte, ModuleSpore, Ptx,
+    Stream,
 };
 use std::{
     ffi::{c_uint, c_void, CString},
@@ -46,8 +46,8 @@ extern "C" __global__ void {name}(
 
     pub fn launch<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
     where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
     {
         let &[n, nh, dh] = t.shape() else {
             panic!("Invalid shape");
@@ -59,9 +59,8 @@ extern "C" __global__ void {name}(
         assert_eq!(pos.shape(), &[n]);
         assert!(dh < self.block_size);
 
-        let t_ptr = (unsafe { t.physical().as_raw() } as isize + t.bytes_offset()) as CUdeviceptr;
-        let pos_ptr =
-            (unsafe { pos.physical().as_raw() } as isize + pos.bytes_offset()) as CUdeviceptr;
+        let t_ptr = (t.physical().as_ptr() as isize + t.bytes_offset()) as CUdeviceptr;
+        let pos_ptr = (pos.physical().as_ptr() as isize + pos.bytes_offset()) as CUdeviceptr;
         let leading_dim = t.strides()[0] as udim / 2;
         let params: [*const c_void; 4] = [
             (&t_ptr) as *const _ as _,

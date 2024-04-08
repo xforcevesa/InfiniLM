@@ -1,6 +1,6 @@
 ﻿use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, DevSlice,
-    ModuleSpore, Ptx, Stream,
+    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, DevByte, ModuleSpore, Ptx,
+    Stream,
 };
 use std::{
     ffi::{c_uint, c_void, CString},
@@ -65,8 +65,8 @@ extern "C" __global__ void {name}(
 
     pub fn launch<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>, stream: &Stream)
     where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
     {
         assert_eq!(dst.data_type(), src.data_type());
         assert_eq!(dst.shape(), src.shape());
@@ -86,12 +86,10 @@ extern "C" __global__ void {name}(
         let bytes_per_thread = contiguous_bytes / self.warp_size;
         assert!(bytes_per_thread <= 32 && bytes_per_thread.is_power_of_two());
 
-        let dst_ptr =
-            (unsafe { dst.physical().as_raw() } as isize + dst.bytes_offset()) as CUdeviceptr;
+        let dst_ptr = (dst.physical().as_ptr() as isize + dst.bytes_offset()) as CUdeviceptr;
         let rsa = rsa as udim / b;
         let csa = csa as udim / b;
-        let src_ptr =
-            (unsafe { src.physical().as_raw() } as isize + src.bytes_offset()) as CUdeviceptr;
+        let src_ptr = (src.physical().as_ptr() as isize + src.bytes_offset()) as CUdeviceptr;
         let rsb = rsb as udim / b;
         let csb = csb as udim / b;
         let params: [*const c_void; 8] = [

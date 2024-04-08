@@ -1,5 +1,5 @@
 ﻿use cublas::{bindings::cublasOperation_t, cublas, Cublas};
-use cuda::{AsRaw, DevSlice};
+use cuda::{AsRaw, DevByte};
 use half::f16;
 use std::{
     mem::swap,
@@ -17,9 +17,9 @@ pub fn mat_mul<T, U, V>(
     b: &Tensor<V>,
     alpha: f32,
 ) where
-    T: DerefMut<Target = DevSlice>,
-    U: Deref<Target = DevSlice>,
-    V: Deref<Target = DevSlice>,
+    T: DerefMut<Target = [DevByte]>,
+    U: Deref<Target = [DevByte]>,
+    V: Deref<Target = [DevByte]>,
 {
     let dt = c.data_type();
     assert_eq!(dt, DataType::F16);
@@ -27,8 +27,8 @@ pub fn mat_mul<T, U, V>(
     assert_eq!(b.data_type(), dt);
 
     #[inline]
-    fn base(tensor: &impl Deref<Target = DevSlice>) -> *mut c_void {
-        unsafe { tensor.as_raw() as _ }
+    fn base(tensor: &impl Deref<Target = [DevByte]>) -> *mut c_void {
+        tensor.as_ptr() as _
     }
 
     let mut c = Matrix::new(c, base);

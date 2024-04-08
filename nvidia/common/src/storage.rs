@@ -1,4 +1,4 @@
-﻿use cuda::{Context, ContextSpore, DevMem, DevMemSpore, DevSlice, Stream};
+﻿use cuda::{Context, ContextSpore, DevByte, DevMem, DevMemSpore, Stream};
 use std::{
     ops::{Deref, DerefMut},
     rc::Rc,
@@ -28,7 +28,7 @@ impl<'ctx> From<DevMem<'ctx>> for Storage<'ctx> {
 }
 
 impl<'ctx> Deref for Storage<'ctx> {
-    type Target = DevSlice;
+    type Target = [DevByte];
 
     #[inline]
     fn deref(&self) -> &Self::Target {

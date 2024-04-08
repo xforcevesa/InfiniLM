@@ -1,11 +1,11 @@
 ﻿use common::utok;
-use cuda::{bindings::CUdeviceptr, AsRaw, DevSlice, Stream};
+use cuda::{bindings::CUdeviceptr, AsRaw, DevByte, Stream};
 use std::ops::{Deref, DerefMut};
 use tensor::Tensor;
 
 pub fn gather<T, U, I>(x: &mut Tensor<T>, table: &Tensor<U>, tokens: I, stream: &Stream)
 where
-    T: DerefMut<Target = DevSlice>,
+    T: DerefMut<Target = [DevByte]>,
     U: Deref<Target = [u8]>,
     I: IntoIterator<Item = utok>,
 {
@@ -18,7 +18,7 @@ where
     debug_assert!(table.is_contiguous());
     let d = d as usize * x.data_type().size();
 
-    let x = unsafe { x.physical().as_raw() };
+    let x = x.physical().as_ptr() as CUdeviceptr;
     let table = table.as_slice();
     let stream = unsafe { stream.as_raw() };
     for (i, t) in tokens.into_iter().enumerate() {

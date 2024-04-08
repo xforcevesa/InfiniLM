@@ -1,6 +1,6 @@
 ﻿use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, CudaDataType,
-    DevSlice, ModuleSpore, Ptx, Stream,
+    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, CudaDataType, DevByte,
+    ModuleSpore, Ptx, Stream,
 };
 use std::{
     ffi::{c_uint, c_void, CString},
@@ -47,8 +47,8 @@ extern "C" __global__ void {name}(
 
     pub fn launch<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>, stream: &Stream)
     where
-        T: DerefMut<Target = DevSlice>,
-        U: Deref<Target = DevSlice>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
     {
         assert_eq!(gate.data_type(), up.data_type());
         assert_eq!(gate.shape(), up.shape());
@@ -59,10 +59,8 @@ extern "C" __global__ void {name}(
         assert_eq!(gate.strides()[1], 1);
         assert_eq!(up.strides()[1], 1);
 
-        let gate_ptr =
-            (unsafe { gate.physical().as_raw() } as isize + gate.bytes_offset()) as CUdeviceptr;
-        let up_ptr =
-            (unsafe { up.physical().as_raw() } as isize + up.bytes_offset()) as CUdeviceptr;
+        let gate_ptr = (gate.physical().as_ptr() as isize + gate.bytes_offset()) as CUdeviceptr;
+        let up_ptr = (up.physical().as_ptr() as isize + up.bytes_offset()) as CUdeviceptr;
         let params: [*const c_void; 4] = [
             (&gate_ptr) as *const _ as _,
             (&gate.strides()[0]) as *const _ as _,

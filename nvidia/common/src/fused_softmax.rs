@@ -1,6 +1,6 @@
 ﻿use cuda::{
-    bindings::CUdeviceptr, AsRaw, ContextGuard, ContextResource, ContextSpore, CudaDataType,
-    DevSlice, ModuleSpore, Ptx, Stream,
+    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, CudaDataType, DevByte,
+    ModuleSpore, Ptx, Stream,
 };
 use std::{
     ffi::{c_uint, c_void, CString},
@@ -69,7 +69,7 @@ extern "C" __global__ void {folding}(
 
     pub fn launch<T>(&self, att: &mut Tensor<T>, stream: &Stream)
     where
-        T: DerefMut<Target = DevSlice>,
+        T: DerefMut<Target = [DevByte]>,
     {
         assert!(att.is_contiguous());
         let &[nh, seq_len, att_len] = att.shape() else {
@@ -99,7 +99,7 @@ extern "C" __global__ void {folding}(
         };
         // println!("block dims = {block_dims}");
 
-        let ptr = (unsafe { att.physical().as_raw() } as isize + att.bytes_offset()) as CUdeviceptr;
+        let ptr = (att.physical().as_ptr() as isize + att.bytes_offset()) as CUdeviceptr;
         let params: [*const c_void; 5] = [
             (&ptr) as *const _ as _,
             (&stride_x) as *const _ as _,
