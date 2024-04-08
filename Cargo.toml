@@ -9,6 +9,7 @@ members = [
     "nvidia/transformer",
     "nvidia/distributed",
     "service",
+    "web-api",
     "xtask",
 ]
 resolver = "2"
