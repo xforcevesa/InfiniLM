@@ -7,11 +7,11 @@ use futures::stream::{Stream, StreamExt};
 use service::Session;
 
 #[post("/infer")]
-async fn infer(
+pub async fn infer(
     app_state: web::Data<AppState>,
     request: web::Json<schemas::InferRequest>,
 ) -> HttpResponse {
-    println!("Request from {}: infer", request.session_id);
+    info!("Request from {}: infer", request.session_id);
 
     match app_state.service_manager.get_session(&request) {
         Ok(session) => {

@@ -20,4 +20,11 @@ impl Response {
             .content_type("application/json")
             .json(err)
     }
+
+    pub fn success(s: schemas::Success) -> HttpResponse {
+        let success = schemas::SuccessResponse { result: s.msg() };
+        HttpResponse::Ok()
+            .content_type("application/json")
+            .json(success)
+    }
 }

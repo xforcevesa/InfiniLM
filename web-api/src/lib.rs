@@ -8,6 +8,9 @@ mod response;
 mod schemas;
 use manager::ServiceManager;
 
+#[macro_use]
+extern crate log;
+
 /// All global variables and services shared among all endpoints in this App
 pub struct AppState {
     /// Manager of this App, which provides all kinds of services such as infer, session management, etc
@@ -26,6 +29,7 @@ pub async fn start_infer_service(
         App::new()
             .app_data(app_state.clone())
             .service(handlers::infer)
+            .service(handlers::cancel)
     })
     .bind(addrs)?
     .run()

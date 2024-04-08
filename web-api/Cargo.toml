@@ -11,3 +11,4 @@ serde = { workspace = true, features = ["derive"] }
 tokio.workspace = true
 futures = "0.3"
 actix-web = "4.5"
+log.workspace = true

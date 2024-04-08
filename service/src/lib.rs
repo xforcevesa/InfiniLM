@@ -17,6 +17,7 @@ use tokio::{sync::mpsc::unbounded_channel, task::JoinSet};
 use transformer::SampleArgs;
 
 pub use session::Session;
+pub use session::SessionHandle;
 
 #[macro_use]
 extern crate log;
