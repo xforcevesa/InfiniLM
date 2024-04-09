@@ -24,23 +24,73 @@ pub enum DataType {
 
 impl DataType {
     #[inline]
+    pub const fn new<T: Ty>() -> Self {
+        T::DATA_TYPE
+    }
+
+    #[inline]
     pub const fn size(&self) -> usize {
         match self {
-            Self::Bool => 1,
-            Self::I8 => 1,
-            Self::I16 => 2,
-            Self::I32 => 4,
-            Self::I64 => 8,
-            Self::U8 => 1,
-            Self::U16 => 2,
-            Self::U32 => 4,
-            Self::U64 => 8,
-            Self::F16 => 2,
-            Self::BF16 => 2,
-            Self::F32 => 4,
-            Self::F64 => 8,
+            Self::Bool => <bool as Ty>::SIZE,
+            Self::I8 => <i8 as Ty>::SIZE,
+            Self::I16 => <i16 as Ty>::SIZE,
+            Self::I32 => <i32 as Ty>::SIZE,
+            Self::I64 => <i64 as Ty>::SIZE,
+            Self::U8 => <u8 as Ty>::SIZE,
+            Self::U16 => <u16 as Ty>::SIZE,
+            Self::U32 => <u32 as Ty>::SIZE,
+            Self::U64 => <u64 as Ty>::SIZE,
+            Self::F16 => <half::f16 as Ty>::SIZE,
+            Self::BF16 => <half::bf16 as Ty>::SIZE,
+            Self::F32 => <f32 as Ty>::SIZE,
+            Self::F64 => <f64 as Ty>::SIZE,
         }
     }
+}
+
+pub trait Ty: Sized {
+    const SIZE: usize = std::mem::size_of::<Self>();
+    const DATA_TYPE: DataType;
+}
+
+impl Ty for bool {
+    const DATA_TYPE: DataType = DataType::Bool;
+}
+impl Ty for i8 {
+    const DATA_TYPE: DataType = DataType::I8;
+}
+impl Ty for i16 {
+    const DATA_TYPE: DataType = DataType::I16;
+}
+impl Ty for i32 {
+    const DATA_TYPE: DataType = DataType::I32;
+}
+impl Ty for i64 {
+    const DATA_TYPE: DataType = DataType::I64;
+}
+impl Ty for u8 {
+    const DATA_TYPE: DataType = DataType::U8;
+}
+impl Ty for u16 {
+    const DATA_TYPE: DataType = DataType::U16;
+}
+impl Ty for u32 {
+    const DATA_TYPE: DataType = DataType::U32;
+}
+impl Ty for u64 {
+    const DATA_TYPE: DataType = DataType::U64;
+}
+impl Ty for half::f16 {
+    const DATA_TYPE: DataType = DataType::F16;
+}
+impl Ty for half::bf16 {
+    const DATA_TYPE: DataType = DataType::BF16;
+}
+impl Ty for f32 {
+    const DATA_TYPE: DataType = DataType::F32;
+}
+impl Ty for f64 {
+    const DATA_TYPE: DataType = DataType::F64;
 }
 
 impl Serialize for DataType {

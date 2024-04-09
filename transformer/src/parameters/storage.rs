@@ -1,9 +1,7 @@
-﻿use memmap2::MmapMut;
-use std::{
+﻿use std::{
     ops::{Deref, Range},
     sync::Arc,
 };
-use tensor::{udim, DataType};
 
 pub trait HostMem: Deref<Target = [u8]> + 'static + Send + Sync {}
 impl<T> HostMem for T where T: Deref<Target = [u8]> + 'static + Send + Sync {}
@@ -14,6 +12,16 @@ pub struct Storage {
     pub(crate) range: Range<usize>,
 }
 
+impl Storage {
+    #[inline]
+    pub fn new(data: impl HostMem) -> Self {
+        Self {
+            range: 0..data.len(),
+            data: Arc::new(data),
+        }
+    }
+}
+
 impl Deref for Storage {
     type Target = [u8];
 
@@ -21,10 +29,4 @@ impl Deref for Storage {
     fn deref(&self) -> &Self::Target {
         &self.data[self.range.clone()]
     }
-}
-
-#[inline]
-pub fn map_anon(dt: DataType, shape: &[udim]) -> MmapMut {
-    let size = shape.iter().product::<udim>() as usize * dt.size();
-    MmapMut::map_anon(size).unwrap()
 }

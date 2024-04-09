@@ -19,7 +19,7 @@ pub use tensor::{slice, udim, DataType, LocalSplitable, Tensor};
 
 use cublas::{Cublas, CublasSpore};
 use cuda::{
-    memcpy_d2h, ContextGuard, ContextResource, ContextSpore, CudaDataType::half, DevByte, Stream,
+    memcpy_d2h, ContextGuard, ContextResource, ContextSpore, CudaDataType::f16, DevByte, Stream,
 };
 use fused_softmax::FusedSoftmax;
 use reform::Reform;
@@ -46,13 +46,13 @@ impl NvidiaKernels {
         let (block_size, _) = dev.max_block_dims();
         Self {
             epsilon: host.rms_norm_eps(),
-            rms_norm: RmsNormalization::new(half, host.hidden_size(), block_size, ctx),
+            rms_norm: RmsNormalization::new(f16, host.hidden_size(), block_size, ctx),
             cublas: Cublas::new(ctx).sporulate(),
             theta: host.rope_theta(),
             rotary_embedding: RotaryEmbedding::new(block_size, ctx),
             reform: Reform::new(block_size, 32, ctx),
-            softmax: FusedSoftmax::new(half, host.max_position_embeddings(), block_size, ctx),
-            swiglu: Swiglu::new(half, block_size, ctx),
+            softmax: FusedSoftmax::new(f16, host.max_position_embeddings(), block_size, ctx),
+            swiglu: Swiglu::new(f16, block_size, ctx),
         }
     }
 

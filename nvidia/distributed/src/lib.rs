@@ -124,10 +124,10 @@ impl Drop for Transformer {
 
 fn convert(dt: DataType) -> CudaDataType {
     match dt {
-        DataType::F16 => CudaDataType::half,
-        DataType::BF16 => CudaDataType::nv_bfloat16,
-        DataType::F32 => CudaDataType::float,
-        DataType::F64 => CudaDataType::double,
+        DataType::F16 => CudaDataType::f16,
+        DataType::BF16 => CudaDataType::bf16,
+        DataType::F32 => CudaDataType::f32,
+        DataType::F64 => CudaDataType::f64,
         _ => unreachable!(),
     }
 }

@@ -149,13 +149,13 @@ fn test_kernel() {
         );
 
         {
-            let mut kernel = FusedSoftmax::new(CudaDataType::half, 2048, 1024, ctx);
+            let mut kernel = FusedSoftmax::new(CudaDataType::f16, 2048, 1024, ctx);
             kernel.launch(&mut att0, &stream);
             stream.synchronize();
             kernel.kill(ctx);
         }
         {
-            let mut kernel = FusedSoftmax::new(CudaDataType::half, 2048, 512, ctx);
+            let mut kernel = FusedSoftmax::new(CudaDataType::f16, 2048, 512, ctx);
             kernel.launch(&mut att1, &stream);
             stream.synchronize();
             kernel.kill(ctx);

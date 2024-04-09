@@ -1,8 +1,5 @@
-﻿use super::{
-    memory::Layer,
-    storage::{map_anon, HostMem},
-    ConfigJson, Memory, Storage,
-};
+﻿use super::{memory::Layer, storage::HostMem, ConfigJson, Memory, Storage};
+use common::Blob;
 use memmap2::Mmap;
 use safetensors::{tensor::TensorInfo, Dtype};
 use std::{collections::HashMap, fs::File, io::Read, path::Path, sync::Arc};
@@ -138,32 +135,22 @@ pub(crate) struct SafeTensorHeaderJson {
 
 fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     assert!(!tensors.is_empty());
+    assert!(tensors
+        .windows(2)
+        .all(|t| t[0].data_type() == t[1].data_type() && t[0].shape()[1..] == t[1].shape()[1..]));
+
     let data_type = tensors[0].data_type();
-    let len = tensors[0].shape()[1..].iter().product::<udim>();
+    let mut shape = Shape::from_slice(tensors[0].shape());
+    shape[0] = tensors.iter().map(|t| t.shape()[0]).sum();
 
-    assert!({
-        tensors[1..]
-            .iter()
-            .all(|t| t.data_type() == data_type && t.shape()[1..].iter().product::<udim>() == len)
-    });
-
-    let shape = Shape::from_slice(&[tensors.iter().map(|t| t.shape()[0]).sum(), len]);
-    let mut data = map_anon(data_type, &shape);
+    let mut ans = Tensor::alloc(data_type, &shape, Blob::new);
     let mut offset = 0;
     for t in tensors {
         let len = t.bytes_size();
-        unsafe { t.reform_to_raw(&mut data[offset..][..len]) };
+        unsafe { t.reform_to_raw(&mut ans.physical_mut()[offset..][..len]) };
         offset += len;
     }
-
-    Tensor::new(
-        data_type,
-        &shape,
-        Storage {
-            range: 0..data.len(),
-            data: Arc::new(data),
-        },
-    )
+    unsafe { ans.map_physical(Storage::new) }
 }
 
 #[test]

@@ -125,6 +125,6 @@ fn test_kernel() {
         return;
     };
     dev.context().apply(|ctx| {
-        RmsNormalization::new(CudaDataType::half, 2048, 1024, ctx).kill(ctx);
+        RmsNormalization::new(CudaDataType::f16, 2048, 1024, ctx).kill(ctx);
     });
 }
