@@ -1,54 +1,6 @@
-﻿use cuda::{Context, ContextSpore, DevByte, DevMem, DevMemSpore, Stream};
-use std::{
-    ops::{Deref, DerefMut},
-    rc::Rc,
-    sync::Arc,
-};
-use tensor::Splitable;
-
-pub struct Storage<'ctx>(Rc<DevMem<'ctx>>);
-
-impl<'ctx> Storage<'ctx> {
-    #[inline]
-    pub fn new(size: usize, stream: &Stream<'ctx>) -> Self {
-        Self(Rc::new(stream.malloc::<u8>(size)))
-    }
-
-    #[inline]
-    pub unsafe fn borrow(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<'ctx> From<DevMem<'ctx>> for Storage<'ctx> {
-    #[inline]
-    fn from(mem: DevMem<'ctx>) -> Self {
-        Self(Rc::new(mem))
-    }
-}
-
-impl<'ctx> Deref for Storage<'ctx> {
-    type Target = [DevByte];
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<'ctx> DerefMut for Storage<'ctx> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.0.get_mut() }
-    }
-}
-
-impl<'ctx> Splitable for Storage<'ctx> {
-    #[inline]
-    fn split(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
+﻿use cuda::{Context, ContextSpore, DevMem, DevMemSpore, Stream};
+use std::sync::Arc;
+use tensor::{udim, DataType, LocalSplitable, Tensor};
 
 pub struct Cache {
     pub context: Arc<Context>,
@@ -60,4 +12,13 @@ impl Drop for Cache {
     fn drop(&mut self) {
         self.context.apply(|ctx| unsafe { self.mem.kill(ctx) });
     }
+}
+
+#[inline]
+pub fn tensor<'ctx>(
+    dt: DataType,
+    shape: &[udim],
+    stream: &Stream<'ctx>,
+) -> Tensor<LocalSplitable<DevMem<'ctx>>> {
+    Tensor::alloc(dt, shape, |l| stream.malloc::<u8>(l).into())
 }

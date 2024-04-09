@@ -14,8 +14,8 @@ mod storage;
 mod swiglu;
 
 pub use common::utok;
-pub use storage::{Cache, Storage};
-pub use tensor::{slice, udim, DataType, Tensor};
+pub use storage::{tensor, Cache};
+pub use tensor::{slice, udim, DataType, LocalSplitable, Tensor};
 
 use cublas::{Cublas, CublasSpore};
 use cuda::{

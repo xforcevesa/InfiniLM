@@ -1,4 +1,11 @@
-﻿use crate::{idim, pattern::Pattern, udim, Affine, Shape, Tensor};
+﻿use std::{
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    slice::from_raw_parts_mut,
+    sync::Arc,
+};
+
+use crate::{idim, pattern::Pattern, udim, Affine, Shape, Tensor};
 
 pub trait Splitable {
     fn split(&self) -> Self;
@@ -8,6 +15,80 @@ impl<T: Clone> Splitable for T {
     #[inline]
     fn split(&self) -> Self {
         self.clone()
+    }
+}
+
+#[repr(transparent)]
+pub struct LocalSplitable<T>(Rc<T>);
+
+impl<T> From<T> for LocalSplitable<T> {
+    #[inline]
+    fn from(t: T) -> Self {
+        Self(Rc::new(t))
+    }
+}
+
+impl<T> Splitable for LocalSplitable<T> {
+    #[inline]
+    fn split(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: Deref> Deref for LocalSplitable<T> {
+    type Target = T::Target;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
+impl<T, U> DerefMut for LocalSplitable<T>
+where
+    T: DerefMut<Target = [U]>,
+{
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let data = self.0.as_ptr().cast_mut();
+        let len = self.0.len();
+        unsafe { from_raw_parts_mut(data, len) }
+    }
+}
+
+#[repr(transparent)]
+pub struct SendSplitable<T>(Arc<T>);
+
+impl<T> From<T> for SendSplitable<T> {
+    #[inline]
+    fn from(t: T) -> Self {
+        Self(Arc::new(t))
+    }
+}
+
+impl<T> Splitable for SendSplitable<T> {
+    #[inline]
+    fn split(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: Deref> Deref for SendSplitable<T> {
+    type Target = T::Target;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
+impl<T, U> DerefMut for SendSplitable<T>
+where
+    T: DerefMut<Target = [U]>,
+{
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let data = self.0.as_ptr().cast_mut();
+        let len = self.0.len();
+        unsafe { from_raw_parts_mut(data, len) }
     }
 }
 

@@ -1,6 +1,7 @@
 ﻿use crate::Llama2;
+use common::Blob;
 use std::sync::Arc;
-use tensor::{slice, udim, Blob, DataType, Tensor};
+use tensor::{slice, udim, DataType, Tensor};
 
 pub struct DistributedLayer {
     scheme: Arc<DistributeScheme>,

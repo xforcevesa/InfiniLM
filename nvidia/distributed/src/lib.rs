@@ -1,5 +1,7 @@
 #![cfg(detected_nccl)]
+#![allow(unused)]
 
+mod gather;
 mod parameters;
 
 #[macro_use]
@@ -8,8 +10,8 @@ extern crate log;
 pub use common_nv::cuda;
 
 use common_nv::{
-    cuda::{AsRaw, ContextResource, ContextSpore, CudaDataType, Device},
-    utok, DataType, Tensor,
+    cuda::{AsRaw, ContextResource, ContextSpore, CudaDataType, DevMem, Device, StreamSpore},
+    tensor, udim, utok, DataType, LocalSplitable, Tensor,
 };
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
@@ -41,7 +43,7 @@ impl transformer::Transformer for Transformer {
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
 
-        let contexts = self.comms.context_iter().collect::<Vec<_>>();
+        let contexts = self.comms.contexts().collect::<Vec<_>>();
         let streams = contexts
             .iter()
             .map(|ctx| ctx.apply(|c| c.stream().sporulate()))
@@ -82,12 +84,40 @@ impl Transformer {
             host,
         }
     }
+
+    fn token_embed<'ctx, Id>(
+        &self,
+        requests: &[Request<Id, ()>],
+        streams: &[StreamSpore],
+    ) -> Vec<Tensor<LocalSplitable<DevMem<'ctx>>>> {
+        let dt = self.host.data_type();
+        let nt = requests.iter().map(Request::seq_len).sum::<udim>();
+        let d = self.host.hidden_size() as udim;
+
+        let mut x0 = self
+            .comms
+            .contexts()
+            .zip(streams)
+            .map(|(context, stream)| context.apply(|ctx| tensor(dt, &[nt, d], todo!())))
+            .collect::<Vec<_>>();
+
+        let tokens = requests.iter().flat_map(Request::tokens).copied();
+        gather::gather(
+            &mut x0,
+            &self.host.embed_tokens(),
+            tokens,
+            &self.comms,
+            streams,
+        );
+
+        x0
+    }
 }
 
 impl Drop for Transformer {
     #[inline]
     fn drop(&mut self) {
-        let contexts = self.comms.context_iter().collect::<Vec<_>>();
+        let contexts = self.comms.contexts().collect::<Vec<_>>();
         unsafe { self.matrix.kill(&contexts) }
     }
 }

@@ -9,8 +9,8 @@ pub use common_nv::cuda;
 
 use ::half::f16;
 use common_nv::{
-    cuda::{bindings::CUdeviceptr, memcpy_d2h},
-    slice, udim, utok, Cache, DataType, NvidiaKernels, Storage, Tensor,
+    cuda::{bindings::CUdeviceptr, memcpy_d2h, DevMem},
+    slice, tensor, udim, utok, Cache, DataType, LocalSplitable, NvidiaKernels, Tensor,
 };
 use cuda::{AsRaw, Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
@@ -30,6 +30,8 @@ pub struct Transformer {
     transfer: StreamSpore,
     kernels: NvidiaKernels,
 }
+
+type Local<'ctx> = LocalSplitable<DevMem<'ctx>>;
 
 impl transformer::Transformer for Transformer {
     type Cache = Cache;
@@ -60,8 +62,9 @@ impl transformer::Transformer for Transformer {
             // 生成词嵌入并预分配空间
             let mut x0 = self.token_embed(&requests, &compute);
             let mut x1 = tensor(x0.data_type(), x0.shape(), &transfer);
-            let mut buf =
-                LayerBuffer::alloc(&self.host, &requests, |size| Storage::new(size, &transfer));
+            let mut buf = LayerBuffer::alloc(&self.host, &requests, |len| {
+                transfer.malloc::<u8>(len).into()
+            });
             // 生成位置张量
             let nt = x0.shape()[0]; // `nt` for number of tokens
             let pos_ = pos(&requests, nt);
@@ -167,7 +170,7 @@ impl Transformer {
         &self,
         requests: &[Request<Id, Cache>],
         compute: &Stream<'ctx>,
-    ) -> Tensor<Storage<'ctx>> {
+    ) -> Tensor<Local<'ctx>> {
         let dt = self.host.data_type();
         let nt = requests.iter().map(Request::seq_len).sum::<udim>();
         let d = self.host.hidden_size() as udim;
@@ -185,15 +188,15 @@ impl Transformer {
     fn before_att<'ctx>(
         &self,
         params: &LayerParameter,
-        x0: &Tensor<Storage>,
-        x1: &mut Tensor<Storage>,
-        qkv: &mut Tensor<Storage<'ctx>>,
-        pos: &Tensor<Storage>,
+        x0: &Tensor<Local>,
+        x1: &mut Tensor<Local>,
+        qkv: &mut Tensor<Local<'ctx>>,
+        pos: &Tensor<Local>,
         compute: &Stream,
     ) -> (
-        Tensor<Storage<'ctx>>,
-        Tensor<Storage<'ctx>>,
-        Tensor<Storage<'ctx>>,
+        Tensor<Local<'ctx>>,
+        Tensor<Local<'ctx>>,
+        Tensor<Local<'ctx>>,
     ) {
         let nt = x0.shape()[0];
         let d = self.host.hidden_size() as udim;
@@ -234,12 +237,12 @@ impl Transformer {
         &self,
         layer: usize,
         requests: &mut [Request<Id, Cache>],
-        q: Tensor<Storage>,
-        k: Tensor<Storage>,
-        v: Tensor<Storage>,
-        o: &mut Tensor<Storage>,
-        q_buf: &mut Storage,
-        att_buf: &mut Storage,
+        q: Tensor<Local>,
+        k: Tensor<Local>,
+        v: Tensor<Local>,
+        o: &mut Tensor<Local>,
+        q_buf: &mut Local,
+        att_buf: &mut Local,
         compute: &Stream,
     ) {
         let dt = self.host.data_type();
@@ -321,9 +324,9 @@ impl Transformer {
     fn after_att(
         &self,
         params: &LayerParameter,
-        x0: &mut Tensor<Storage>,
-        x1: &mut Tensor<Storage>,
-        gate_up: &mut Tensor<Storage>,
+        x0: &mut Tensor<Local>,
+        x1: &mut Tensor<Local>,
+        gate_up: &mut Tensor<Local>,
         compute: &Stream,
     ) {
         let di = self.host.intermediate_size() as udim;
@@ -363,9 +366,9 @@ impl Transformer {
     fn move_decode<'ctx, Id>(
         &self,
         requests: &[Request<Id, Cache>],
-        x0: Tensor<Storage<'ctx>>,
+        x0: Tensor<Local<'ctx>>,
         compute: &Stream,
-    ) -> Tensor<Storage<'ctx>> {
+    ) -> Tensor<Local<'ctx>> {
         let buf = x0.physical().as_ptr() as CUdeviceptr;
         let len = self.host.hidden_size() * self.host.data_type().size();
 
@@ -392,7 +395,7 @@ impl Transformer {
         x0.slice(&[slice![from begin, until dst + 1], slice![all]])
     }
 
-    fn logits(&self, mut x: Tensor<Storage>, compute: &Stream) -> Tensor<Cache> {
+    fn logits(&self, mut x: Tensor<Local>, compute: &Stream) -> Tensor<Cache> {
         let dt = self.host.data_type();
         let voc = self.host.vocab_size() as udim;
 
@@ -401,7 +404,10 @@ impl Transformer {
 
         let mut logits = tensor_cache(dt, &[x.shape()[0], voc], self.context.clone(), compute);
         // 复制一个 x 以实现原地归一化
-        let x_ = unsafe { x.as_ref().map_physical(|u| u.borrow()) };
+        let x_ = unsafe {
+            x.as_ref()
+                .map_physical(|u| std::slice::from_raw_parts(u.as_ptr(), u.len()))
+        };
         kernels.rms_norm(&mut x, &x_, &model_norm);
         // compute.synchronize();
         // println!("model norm:\n{}", map_tensor(&x));
@@ -422,11 +428,6 @@ impl Transformer {
 
         logits
     }
-}
-
-#[inline]
-fn tensor<'ctx>(dt: DataType, shape: &[udim], stream: &Stream<'ctx>) -> Tensor<Storage<'ctx>> {
-    Tensor::alloc(dt, shape, |l| Storage::new(l, stream))
 }
 
 #[inline]

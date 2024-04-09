@@ -1,13 +1,16 @@
 mod kernel;
 
+use common::Blob;
 use gemm::f16;
 use kernel::CpuKernels;
-use tensor::{reslice, slice, udim, Blob, DataType, SplitableBlob, Tensor};
+use tensor::{reslice, slice, udim, DataType, LocalSplitable, Tensor};
 use transformer::{
     pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request, SampleArgs, Transformer,
 };
 
 pub struct CpuTransformer(Memory);
+
+type Local = LocalSplitable<Blob>;
 
 impl Transformer for CpuTransformer {
     type Cache = Blob;
@@ -31,7 +34,9 @@ impl Transformer for CpuTransformer {
         // 生成词嵌入并预分配空间
         let mut x0 = self.token_embed(&requests);
         let mut x1 = tensor(x0.data_type(), x0.shape());
-        let mut buf = LayerBuffer::alloc(&self.0, &requests, SplitableBlob::new);
+        let mut buf = LayerBuffer::alloc(&self.0, &requests, |len| {
+            LocalSplitable::from(Blob::new(len))
+        });
         // 生成位置张量
         let nt = x0.shape()[0]; // `nt` for number of tokens
         let pos = pos(&requests, nt);
@@ -97,7 +102,7 @@ impl CpuTransformer {
         Self(model)
     }
 
-    fn token_embed<Id>(&self, requests: &[Request<Id, Blob>]) -> Tensor<SplitableBlob> {
+    fn token_embed<Id>(&self, requests: &[Request<Id, Blob>]) -> Tensor<Local> {
         let dt = self.0.data_type();
         let nt = requests.iter().map(Request::seq_len).sum::<udim>();
         let d = self.0.hidden_size() as udim;
@@ -114,15 +119,11 @@ impl CpuTransformer {
     fn before_att(
         &self,
         layer: usize,
-        x0: &Tensor<SplitableBlob>,
-        x1: &mut Tensor<SplitableBlob>,
-        qkv: &mut Tensor<SplitableBlob>,
+        x0: &Tensor<Local>,
+        x1: &mut Tensor<Local>,
+        qkv: &mut Tensor<Local>,
         pos: &Tensor<&[u8]>,
-    ) -> (
-        Tensor<SplitableBlob>,
-        Tensor<SplitableBlob>,
-        Tensor<SplitableBlob>,
-    ) {
+    ) -> (Tensor<Local>, Tensor<Local>, Tensor<Local>) {
         let nt = x0.shape()[0];
         let d = self.0.hidden_size() as udim;
         let nh = self.0.num_attention_heads() as udim;
@@ -157,12 +158,12 @@ impl CpuTransformer {
         &self,
         layer: usize,
         requests: &mut [Request<Id, Blob>],
-        q: Tensor<SplitableBlob>,
-        k: Tensor<SplitableBlob>,
-        v: Tensor<SplitableBlob>,
-        o: &mut Tensor<SplitableBlob>,
-        q_buf: &mut SplitableBlob,
-        att_buf: &mut SplitableBlob,
+        q: Tensor<Local>,
+        k: Tensor<Local>,
+        v: Tensor<Local>,
+        o: &mut Tensor<Local>,
+        q_buf: &mut Local,
+        att_buf: &mut Local,
     ) {
         let dt = self.0.data_type();
         let nt = o.shape()[0];
@@ -237,9 +238,9 @@ impl CpuTransformer {
     fn after_att(
         &self,
         layer: usize,
-        x0: &mut Tensor<SplitableBlob>,
-        x1: &mut Tensor<SplitableBlob>,
-        gate_up: &mut Tensor<SplitableBlob>,
+        x0: &mut Tensor<Local>,
+        x1: &mut Tensor<Local>,
+        gate_up: &mut Tensor<Local>,
     ) {
         let di = self.0.intermediate_size() as udim;
         let kernels = CpuKernels::new(&self.0);
@@ -271,8 +272,8 @@ impl CpuTransformer {
     fn move_decode<Id>(
         &self,
         requests: &[Request<Id, Blob>],
-        mut x0: Tensor<SplitableBlob>,
-    ) -> Tensor<SplitableBlob> {
+        mut x0: Tensor<Local>,
+    ) -> Tensor<Local> {
         let buf = x0.as_mut_slice();
         let len = self.0.hidden_size() * self.0.data_type().size();
 
@@ -294,7 +295,7 @@ impl CpuTransformer {
         x0.slice(&[slice![from begin, until dst + 1], slice![all]])
     }
 
-    fn logits(&self, mut x: Tensor<SplitableBlob>) -> Tensor<Blob> {
+    fn logits(&self, mut x: Tensor<Local>) -> Tensor<Blob> {
         let dt = self.0.data_type();
         let voc = self.0.vocab_size() as udim;
         let kernels = CpuKernels::new(&self.0);
@@ -319,8 +320,8 @@ impl CpuTransformer {
 }
 
 #[inline]
-fn tensor(dt: DataType, shape: &[udim]) -> Tensor<SplitableBlob> {
-    Tensor::alloc(dt, shape, SplitableBlob::new)
+fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Local> {
+    Tensor::alloc(dt, shape, |len| Blob::new(len).into())
 }
 
 #[inline]
