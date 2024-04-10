@@ -8,12 +8,13 @@ extern crate log;
 pub use common_nv::cuda;
 
 use common_nv::{
-    cuda::{AsRaw, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore},
+    cuda::{AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore},
     udim, utok, Tensor,
 };
+use core::panic;
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
-use std::{path::Path, time::Instant};
+use std::{iter::zip, path::Path, sync::Arc, time::Instant};
 use transformer::{LayerCache, Llama2, Memory, Request};
 
 pub struct Transformer {
@@ -23,15 +24,32 @@ pub struct Transformer {
 }
 
 impl transformer::Transformer for Transformer {
-    type Cache = ();
+    type Cache = Cache;
 
     #[inline]
     fn model(&self) -> &dyn Llama2 {
         &self.host
     }
 
+    #[inline]
     fn new_cache(&self) -> Vec<LayerCache<Self::Cache>> {
-        todo!()
+        LayerCache::new_layers(&self.host, |dt, shape| {
+            let &[nkvh, max_seq_len, d] = shape else {
+                panic!()
+            };
+            let contexts = Arc::new(self.comms.contexts().collect::<Vec<_>>());
+            Tensor::alloc(
+                dt,
+                &[nkvh / self.comms.len() as udim, max_seq_len, d],
+                |len| Cache {
+                    mem: contexts
+                        .iter()
+                        .map(|context| context.apply(|ctx| ctx.malloc::<u8>(len).sporulate()))
+                        .collect(),
+                    contexts,
+                },
+            )
+        })
     }
 
     fn decode<Id>(
@@ -56,20 +74,6 @@ impl transformer::Transformer for Transformer {
             .copied()
             .map(|t| t as usize)
             .enumerate();
-
-        fn malloc_all(
-            comms: &CommunicatorGroup,
-            streams: &[StreamSpore],
-            len: usize,
-        ) -> Vec<DevMemSpore> {
-            comms
-                .contexts()
-                .zip(streams)
-                .map(|(context, stream)| {
-                    context.apply(|ctx| unsafe { stream.sprout(ctx) }.malloc::<u8>(len).sporulate())
-                })
-                .collect()
-        }
 
         let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&self.comms, &streams, len));
         let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&self.comms, &streams, len));
@@ -143,6 +147,30 @@ impl Drop for Transformer {
     }
 }
 
+pub struct Cache {
+    pub contexts: Arc<Vec<Context>>,
+    pub mem: Vec<DevMemSpore>,
+}
+
+impl Drop for Cache {
+    #[inline]
+    fn drop(&mut self) {
+        for (context, mem) in zip(&*self.contexts, &mut self.mem) {
+            context.apply(|ctx| unsafe { mem.kill(ctx) });
+        }
+    }
+}
+
+fn malloc_all(comms: &CommunicatorGroup, streams: &[StreamSpore], len: usize) -> Vec<DevMemSpore> {
+    comms
+        .contexts()
+        .zip(streams)
+        .map(|(context, stream)| {
+            context.apply(|ctx| unsafe { stream.sprout(ctx) }.malloc::<u8>(len).sporulate())
+        })
+        .collect()
+}
+
 #[test]
 fn test() {
     use common_nv::cuda::{self, Device};
@@ -166,5 +194,6 @@ fn test() {
     );
     info!("load {:?}", time.elapsed());
 
-    transformer.decode(vec![Request::new(0, &[1, 2, 3], &mut [], 0, true)]);
+    let mut cache = transformer.new_cache();
+    transformer.decode(vec![Request::new(0, &[1, 2, 3], &mut cache, 0, true)]);
 }
