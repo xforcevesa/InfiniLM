@@ -9,7 +9,7 @@ pub use common_nv::cuda;
 
 use common_nv::{
     cuda::{AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore},
-    udim, utok, NvidiaKernels, NvidiaKernelsPtx, Tensor,
+    slice, udim, utok, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use core::panic;
 use nccl::CommunicatorGroup;
@@ -70,29 +70,31 @@ impl transformer::Transformer for Transformer {
             .collect::<Vec<_>>();
         let n = contexts.len();
 
-        let mut iter = requests
-            .iter()
-            .flat_map(Request::tokens)
-            .copied()
-            .map(|t| t as usize)
-            .enumerate();
-
-        let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
-        let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
-        let mut buf = LayerBuffer::alloc(&self.host, &requests, |len| {
-            malloc_all(&contexts, &streams, len / n)
-        });
         // token embedding
-        {
+        let mut x0 = {
+            // 填充 num tokens 到 n 的整数倍，以使用 AllGather 同步诸卡
+            let distributed = (nt as usize + n - 1) / n;
+            let nt_padding = (distributed / n * n) as udim;
+            let mut x0 = Tensor::alloc(dt, &[nt_padding, d], |len| {
+                malloc_all(&contexts, &streams, len)
+            });
+
             let d = d as usize * dt.size();
-            let distributed = nt as usize / streams.len();
             let table = self.host.embed_tokens();
             let table = table.as_slice();
+
+            let mut iter = requests
+                .iter()
+                .flat_map(Request::tokens)
+                .copied()
+                .map(|t| t as usize)
+                .enumerate();
 
             for (i, comm) in self.comms.call().iter().enumerate() {
                 contexts[i].apply(|ctx| {
                     let stream = unsafe { streams[i].sprout(ctx) };
                     let mut dst = unsafe { x0.physical_mut()[i].sprout(ctx) };
+                    // 为每个卡拷贝部分 token
                     for _ in 0..distributed {
                         let Some((i, t)) = iter.next() else { break };
                         stream.memcpy_h2d(&mut dst[d * i..][..d], &table[d * t..][..d]);
@@ -100,7 +102,33 @@ impl transformer::Transformer for Transformer {
                     comm.all_gather(&mut dst, None, &stream);
                 });
             }
-        }
+            // 截取有效部分
+            x0.slice(&[slice![take nt], slice![all]])
+        };
+        let mut x1 = Tensor::alloc(x0.data_type(), x0.shape(), |len| {
+            malloc_all(&contexts, &streams, len)
+        });
+        let LayerBuffer {
+            qkv,
+            gate_up,
+            q_buf,
+            att_buf,
+        } = LayerBuffer::alloc(&self.host, &requests, |len| {
+            malloc_all(&contexts, &streams, len / n)
+        });
+        let mut buf = LayerBuffer {
+            qkv: {
+                let &[a, b] = qkv.shape() else { panic!() };
+                Tensor::new(dt, &[a, b / n as udim], qkv.take_physical())
+            },
+            gate_up: {
+                let &[a, b] = gate_up.shape() else { panic!() };
+                Tensor::new(dt, &[a, b / n as udim], gate_up.take_physical())
+            },
+            q_buf,
+            att_buf,
+        };
+
         for layer in 0..self.host.num_hidden_layers() {
             for (i, context) in contexts.iter().enumerate() {
                 context.apply(|ctx| {
@@ -112,7 +140,7 @@ impl transformer::Transformer for Transformer {
                     let layer = self.matrix.get(layer, i, ctx);
                     let kernels = self.kernels[i].on(&stream);
                     kernels.rms_norm(&mut x1, &x0, &layer.input_layernorm());
-                    kernels.mat_mul(&mut qkv, 0., &x1, &layer.w_qkv().transpose(&[1, 0]), 1.);
+                    kernels.mat_mul(&mut qkv, 0., &x1, &layer.w_qkv(), 1.);
                 });
             }
         }

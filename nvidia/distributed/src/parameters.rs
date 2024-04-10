@@ -94,6 +94,7 @@ impl Layer<'_> {
             &[(nh + nkvh + nkvh) / n * dh, d],
             &self.mem[self.scheme.w_qkv..],
         )
+        .transpose(&[1, 0])
     }
 
     #[inline]

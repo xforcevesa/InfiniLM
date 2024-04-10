@@ -143,6 +143,11 @@ impl<Physical> Tensor<Physical> {
         }
     }
 
+    #[inline]
+    pub fn take_physical(self) -> Physical {
+        self.physical
+    }
+
     /// # Safety
     ///
     /// The caller must ensure that the new `physical` matches data_type, shape and pattern of `self`.
