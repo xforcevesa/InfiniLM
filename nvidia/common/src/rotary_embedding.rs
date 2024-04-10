@@ -1,21 +1,26 @@
-﻿use cuda::{
-    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, DevByte, ModuleSpore, Ptx,
-    Stream,
-};
+﻿use crate::PtxWapper;
+use cuda::{bindings::CUdeviceptr, ContextSpore, DevByte, ModuleSpore, Ptx, Stream};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
 };
 use tensor::{udim, DataType, Tensor};
 
-pub struct RotaryEmbedding {
-    module: ModuleSpore,
+pub struct Rope {
+    ptx: Ptx,
     f: CString,
     block_size: c_uint,
 }
 
-impl RotaryEmbedding {
-    pub fn new(block_size: usize, ctx: &ContextGuard) -> Self {
+impl PtxWapper for Rope {
+    #[inline]
+    fn ptx(&self) -> &Ptx {
+        &self.ptx
+    }
+}
+
+impl Rope {
+    pub fn new(block_size: usize) -> Self {
         let name = "rotary_embedding_padding";
 
         const ROTARY_EMBEDDING: &str = include_str!("rotary_embedding.cuh");
@@ -38,14 +43,20 @@ extern "C" __global__ void {name}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()).sporulate(),
+            ptx: ptx.unwrap(),
             f: CString::new(name).unwrap(),
             block_size: block_size as _,
         }
     }
 
-    pub fn launch<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
-    where
+    pub fn launch<T, U>(
+        &self,
+        module: &ModuleSpore,
+        t: &mut Tensor<T>,
+        pos: &Tensor<U>,
+        theta: f32,
+        stream: &Stream,
+    ) where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
@@ -69,13 +80,8 @@ extern "C" __global__ void {name}(
             (&leading_dim) as *const _ as _,
         ];
 
-        let module = unsafe { self.module.sprout(stream.ctx()) };
+        let module = unsafe { module.sprout(stream.ctx()) };
         let kernel = module.get_kernel(&self.f);
         kernel.launch((nh, n), dh / 2, params.as_ptr(), 0, Some(stream))
-    }
-
-    #[inline]
-    pub fn kill(&mut self, ctx: &ContextGuard) {
-        unsafe { self.module.kill(ctx) };
     }
 }

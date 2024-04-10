@@ -1,7 +1,5 @@
-﻿use cuda::{
-    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, CudaDataType, DevByte,
-    ModuleSpore, Ptx, Stream,
-};
+﻿use crate::PtxWapper;
+use cuda::{bindings::CUdeviceptr, ContextSpore, CudaDataType, DevByte, ModuleSpore, Ptx, Stream};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -9,13 +7,20 @@ use std::{
 use tensor::{udim, Tensor};
 
 pub struct Swiglu {
-    module: ModuleSpore,
+    ptx: Ptx,
     f: CString,
     block_size: c_uint,
 }
 
+impl PtxWapper for Swiglu {
+    #[inline]
+    fn ptx(&self) -> &Ptx {
+        &self.ptx
+    }
+}
+
 impl Swiglu {
-    pub fn new(data_type: CudaDataType, block_size: usize, ctx: &ContextGuard) -> Self {
+    pub fn new(data_type: CudaDataType, block_size: usize) -> Self {
         let ty_arg = data_type.name();
         let name = format!("swiglu_{ty_arg}");
 
@@ -39,14 +44,19 @@ extern "C" __global__ void {name}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()).sporulate(),
+            ptx: ptx.unwrap(),
             f: CString::new(name).unwrap(),
             block_size: block_size as _,
         }
     }
 
-    pub fn launch<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>, stream: &Stream)
-    where
+    pub fn launch<T, U>(
+        &self,
+        module: &ModuleSpore,
+        gate: &mut Tensor<T>,
+        up: &Tensor<U>,
+        stream: &Stream,
+    ) where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
@@ -81,13 +91,8 @@ extern "C" __global__ void {name}(
         let block_dims = gcd(self.block_size, di);
         let grid_dims = (seq_len, di / block_dims);
 
-        let module = unsafe { self.module.sprout(stream.ctx()) };
+        let module = unsafe { module.sprout(stream.ctx()) };
         let kernel = module.get_kernel(&self.f);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
-    }
-
-    #[inline]
-    pub fn kill(&mut self, ctx: &ContextGuard) {
-        unsafe { self.module.kill(ctx) };
     }
 }

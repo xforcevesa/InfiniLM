@@ -1,7 +1,5 @@
-﻿use cuda::{
-    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, CudaDataType, DevByte,
-    ModuleSpore, Ptx, Stream,
-};
+﻿use crate::PtxWapper;
+use cuda::{bindings::CUdeviceptr, ContextSpore, CudaDataType, DevByte, ModuleSpore, Ptx, Stream};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::DerefMut,
@@ -9,19 +7,21 @@ use std::{
 use tensor::Tensor;
 
 pub struct FusedSoftmax {
-    module: ModuleSpore,
+    ptx: Ptx,
     padding: CString,
     folding: CString,
     block_size: c_uint,
 }
 
+impl PtxWapper for FusedSoftmax {
+    #[inline]
+    fn ptx(&self) -> &Ptx {
+        &self.ptx
+    }
+}
+
 impl FusedSoftmax {
-    pub fn new(
-        data_type: CudaDataType,
-        max_seq_len: usize,
-        block_size: usize,
-        ctx: &ContextGuard,
-    ) -> Self {
+    pub fn new(data_type: CudaDataType, max_seq_len: usize, block_size: usize) -> Self {
         let ty_arg = data_type.name();
         let mask = "AttentionCausualMask";
         let max_items_per_thread = (max_seq_len + block_size - 1) / block_size;
@@ -60,14 +60,14 @@ extern "C" __global__ void {folding}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()).sporulate(),
+            ptx: ptx.unwrap(),
             padding: CString::new(padding).unwrap(),
             folding: CString::new(folding).unwrap(),
             block_size: block_size as _,
         }
     }
 
-    pub fn launch<T>(&self, att: &mut Tensor<T>, stream: &Stream)
+    pub fn launch<T>(&self, module: &ModuleSpore, att: &mut Tensor<T>, stream: &Stream)
     where
         T: DerefMut<Target = [DevByte]>,
     {
@@ -108,20 +108,15 @@ extern "C" __global__ void {folding}(
             (&att_len) as *const _ as _,
         ];
 
-        let module = unsafe { self.module.sprout(stream.ctx()) };
+        let module = unsafe { module.sprout(stream.ctx()) };
         let kernel = module.get_kernel(name);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
-    }
-
-    #[inline]
-    pub fn kill(&mut self, ctx: &ContextGuard) {
-        unsafe { self.module.kill(ctx) };
     }
 }
 
 #[test]
 fn test_kernel() {
-    use cuda::CudaDataType;
+    use cuda::{ContextResource, CudaDataType};
     use half::f16;
 
     cuda::init();
@@ -149,16 +144,18 @@ fn test_kernel() {
         );
 
         {
-            let mut kernel = FusedSoftmax::new(CudaDataType::f16, 2048, 1024, ctx);
-            kernel.launch(&mut att0, &stream);
+            let kernel = FusedSoftmax::new(CudaDataType::f16, 2048, 1024);
+            let mut module = ctx.load(&kernel.ptx).sporulate();
+            kernel.launch(&module, &mut att0, &stream);
             stream.synchronize();
-            kernel.kill(ctx);
+            unsafe { module.kill(ctx) };
         }
         {
-            let mut kernel = FusedSoftmax::new(CudaDataType::f16, 2048, 512, ctx);
-            kernel.launch(&mut att1, &stream);
+            let kernel = FusedSoftmax::new(CudaDataType::f16, 2048, 512);
+            let mut module = ctx.load(&kernel.ptx).sporulate();
+            kernel.launch(&module, &mut att1, &stream);
             stream.synchronize();
-            kernel.kill(ctx);
+            unsafe { module.kill(ctx) };
         }
 
         let att0 = crate::map_tensor(&att0);

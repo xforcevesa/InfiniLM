@@ -10,7 +10,7 @@ pub use common_nv::cuda;
 use ::half::f16;
 use common_nv::{
     cuda::{bindings::CUdeviceptr, memcpy_d2h, DevMem, DevMemSpore},
-    slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, Tensor,
+    slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use cuda::{AsRaw, Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
@@ -147,10 +147,11 @@ impl Transformer {
 
         let (model, layers, kernels, transfer) = context.apply(|ctx| {
             let stream = ctx.stream();
+            let block_size = ctx.dev().max_block_dims().0;
             (
                 ModelParameters::new(&host, &stream),
                 Mutex::new(LayersParameters::new(load_layers, &host, &stream)),
-                NvidiaKernels::new(&host, ctx),
+                NvidiaKernelsPtx::new(&host, block_size).load(ctx),
                 stream.sporulate(),
             )
         });

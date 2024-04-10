@@ -1,7 +1,5 @@
-﻿use cuda::{
-    bindings::CUdeviceptr, ContextGuard, ContextResource, ContextSpore, DevByte, ModuleSpore, Ptx,
-    Stream,
-};
+﻿use crate::PtxWapper;
+use cuda::{bindings::CUdeviceptr, ContextSpore, DevByte, ModuleSpore, Ptx, Stream};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -9,14 +7,21 @@ use std::{
 use tensor::{udim, Tensor};
 
 pub struct Reform {
-    module: ModuleSpore,
+    ptx: Ptx,
     f: CString,
     block_size: c_uint,
     warp_size: c_uint,
 }
 
+impl PtxWapper for Reform {
+    #[inline]
+    fn ptx(&self) -> &Ptx {
+        &self.ptx
+    }
+}
+
 impl Reform {
-    pub fn new(block_size: usize, warp_size: usize, ctx: &ContextGuard) -> Self {
+    pub fn new(block_size: usize, warp_size: usize) -> Self {
         assert_eq!(
             block_size % warp_size,
             0,
@@ -56,15 +61,20 @@ extern "C" __global__ void {name}(
             warn!("{log}");
         }
         Self {
-            module: ctx.load(&ptx.unwrap()).sporulate(),
+            ptx: ptx.unwrap(),
             f: CString::new(name).unwrap(),
             block_size: block_size as _,
             warp_size: warp_size as _,
         }
     }
 
-    pub fn launch<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>, stream: &Stream)
-    where
+    pub fn launch<T, U>(
+        &self,
+        module: &ModuleSpore,
+        dst: &mut Tensor<T>,
+        src: &Tensor<U>,
+        stream: &Stream,
+    ) where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
@@ -107,13 +117,8 @@ extern "C" __global__ void {name}(
         let grid_dims = (r, (c + max_warp_per_block - 1) / max_warp_per_block);
         let block_dims = ((c + grid_dims.1 - 1) / grid_dims.1, self.warp_size);
 
-        let module = unsafe { self.module.sprout(stream.ctx()) };
+        let module = unsafe { module.sprout(stream.ctx()) };
         let kernel = module.get_kernel(&self.f);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
-    }
-
-    #[inline]
-    pub fn kill(&mut self, ctx: &ContextGuard) {
-        unsafe { self.module.kill(ctx) };
     }
 }

@@ -9,7 +9,7 @@ pub use common_nv::cuda;
 
 use common_nv::{
     cuda::{AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore},
-    udim, utok, Tensor,
+    udim, utok, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use core::panic;
 use nccl::CommunicatorGroup;
@@ -20,6 +20,7 @@ use transformer::{LayerCache, Llama2, Memory, Request};
 pub struct Transformer {
     host: Memory,
     comms: CommunicatorGroup,
+    kernels: Vec<NvidiaKernels>,
     matrix: ParameterMatrix,
 }
 
@@ -105,7 +106,17 @@ impl transformer::Transformer for Transformer {
                 x1.physical_mut()[i].kill(ctx);
             });
         }
-        todo!()
+        (
+            requests.into_iter().map(Request::id).collect(),
+            Tensor::new(
+                common_nv::DataType::U8,
+                &[],
+                Cache {
+                    contexts: Arc::new(vec![]),
+                    mem: vec![],
+                },
+            ),
+        )
     }
 
     fn sample<Id>(
@@ -124,16 +135,21 @@ impl Transformer {
         let host = Memory::load_safetensors_from_dir(model_dir).unwrap();
         info!("load host: {:?}", time.elapsed());
 
+        let block_size = dev.iter().map(|dev| dev.max_block_dims().0).min().unwrap();
+        let contexts = dev.iter().map(Device::retain_primary).collect::<Vec<_>>();
+        let kernels = NvidiaKernelsPtx::new(&host, block_size);
+
         Self {
             comms: CommunicatorGroup::new(
                 &dev.iter()
                     .map(|dev| unsafe { dev.as_raw() })
                     .collect::<Vec<_>>(),
             ),
-            matrix: ParameterMatrix::load(
-                &host,
-                &dev.iter().map(Device::retain_primary).collect::<Vec<_>>(),
-            ),
+            kernels: contexts
+                .iter()
+                .map(|context| context.apply(|ctx| kernels.load(ctx)))
+                .collect(),
+            matrix: ParameterMatrix::load(&host, &contexts),
             host,
         }
     }
@@ -143,7 +159,12 @@ impl Drop for Transformer {
     #[inline]
     fn drop(&mut self) {
         let contexts = self.comms.contexts().collect::<Vec<_>>();
-        unsafe { self.matrix.kill(&contexts) }
+        unsafe {
+            self.matrix.kill(&contexts);
+            for (context, kernels) in zip(contexts, &mut self.kernels) {
+                context.apply(|ctx| kernels.kill(ctx));
+            }
+        }
     }
 }
 
