@@ -122,7 +122,6 @@ pub struct KernelRuntime<'a> {
 impl NvidiaKernels {
     #[inline]
     pub fn on<'a>(&'a self, stream: &'a Stream) -> KernelRuntime<'a> {
-        unsafe { self.cublas.sprout(stream.ctx()) }.set_stream(stream);
         KernelRuntime {
             kernels: self,
             stream,
@@ -168,6 +167,7 @@ impl Kernels for KernelRuntime<'_> {
         V: Deref<Target = Self::Storage>,
     {
         let cublas = unsafe { self.kernels.cublas.sprout(self.stream.ctx()) };
+        cublas.set_stream(self.stream);
         mat_mul::mat_mul(&cublas, c, beta, a, b, alpha)
     }
 

@@ -15,7 +15,7 @@ use core::panic;
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
 use std::{iter::zip, path::Path, sync::Arc, time::Instant};
-use transformer::{LayerCache, Llama2, Memory, Request};
+use transformer::{Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request};
 
 pub struct Transformer {
     host: Memory,
@@ -34,11 +34,11 @@ impl transformer::Transformer for Transformer {
 
     #[inline]
     fn new_cache(&self) -> Vec<LayerCache<Self::Cache>> {
+        let contexts = Arc::new(self.comms.contexts().collect::<Vec<_>>());
         LayerCache::new_layers(&self.host, |dt, shape| {
             let &[nkvh, max_seq_len, d] = shape else {
                 panic!()
             };
-            let contexts = Arc::new(self.comms.contexts().collect::<Vec<_>>());
             Tensor::alloc(
                 dt,
                 &[nkvh / self.comms.len() as udim, max_seq_len, d],
@@ -47,7 +47,7 @@ impl transformer::Transformer for Transformer {
                         .iter()
                         .map(|context| context.apply(|ctx| ctx.malloc::<u8>(len).sporulate()))
                         .collect(),
-                    contexts,
+                    contexts: contexts.clone(),
                 },
             )
         })
@@ -63,11 +63,12 @@ impl transformer::Transformer for Transformer {
         let dt = self.host.data_type();
         let nt = requests.iter().map(Request::seq_len).sum::<udim>();
         let d = self.host.hidden_size() as udim;
-        let mut streams = self
-            .comms
-            .contexts()
+        let contexts = self.comms.contexts().collect::<Vec<_>>();
+        let mut streams = contexts
+            .iter()
             .map(|ctx| ctx.apply(|c| c.stream().sporulate()))
             .collect::<Vec<_>>();
+        let n = contexts.len();
 
         let mut iter = requests
             .iter()
@@ -76,8 +77,11 @@ impl transformer::Transformer for Transformer {
             .map(|t| t as usize)
             .enumerate();
 
-        let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&self.comms, &streams, len));
-        let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&self.comms, &streams, len));
+        let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
+        let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
+        let mut buf = LayerBuffer::alloc(&self.host, &requests, |len| {
+            malloc_all(&contexts, &streams, len / n)
+        });
         // token embedding
         {
             let d = d as usize * dt.size();
@@ -86,7 +90,7 @@ impl transformer::Transformer for Transformer {
             let table = table.as_slice();
 
             for (i, comm) in self.comms.call().iter().enumerate() {
-                comm.device().retain_primary().apply(|ctx| {
+                contexts[i].apply(|ctx| {
                     let stream = unsafe { streams[i].sprout(ctx) };
                     let mut dst = unsafe { x0.physical_mut()[i].sprout(ctx) };
                     for _ in 0..distributed {
@@ -97,13 +101,32 @@ impl transformer::Transformer for Transformer {
                 });
             }
         }
+        for layer in 0..self.host.num_hidden_layers() {
+            for (i, context) in contexts.iter().enumerate() {
+                context.apply(|ctx| {
+                    let stream = unsafe { streams[i].sprout(ctx) };
+                    let x0 = unsafe { x0.as_mut().map_physical(|u| u[i].sprout(ctx)) };
+                    let mut x1 = unsafe { x1.as_mut().map_physical(|u| u[i].sprout(ctx)) };
+                    let mut qkv = unsafe { buf.qkv.as_mut().map_physical(|u| u[i].sprout(ctx)) };
+
+                    let layer = self.matrix.get(layer, i, ctx);
+                    let kernels = self.kernels[i].on(&stream);
+                    kernels.rms_norm(&mut x1, &x0, &layer.input_layernorm());
+                    kernels.mat_mul(&mut qkv, 0., &x1, &layer.w_qkv().transpose(&[1, 0]), 1.);
+                });
+            }
+        }
 
         // kill
-        for (i, context) in self.comms.contexts().enumerate() {
+        for (i, context) in contexts.iter().enumerate() {
             context.apply(|ctx| unsafe {
                 streams[i].kill(ctx);
                 x0.physical_mut()[i].kill(ctx);
                 x1.physical_mut()[i].kill(ctx);
+                buf.qkv.physical_mut()[i].kill(ctx);
+                buf.gate_up.physical_mut()[i].kill(ctx);
+                buf.q_buf[i].kill(ctx);
+                buf.att_buf[i].kill(ctx);
             });
         }
         (
@@ -182,9 +205,9 @@ impl Drop for Cache {
     }
 }
 
-fn malloc_all(comms: &CommunicatorGroup, streams: &[StreamSpore], len: usize) -> Vec<DevMemSpore> {
-    comms
-        .contexts()
+fn malloc_all(contexts: &[Context], streams: &[StreamSpore], len: usize) -> Vec<DevMemSpore> {
+    contexts
+        .iter()
         .zip(streams)
         .map(|(context, stream)| {
             context.apply(|ctx| unsafe { stream.sprout(ctx) }.malloc::<u8>(len).sporulate())
@@ -215,6 +238,11 @@ fn test() {
     );
     info!("load {:?}", time.elapsed());
 
+    let time = Instant::now();
     let mut cache = transformer.new_cache();
+    info!("new cache: {:?}", time.elapsed());
+
+    let time = Instant::now();
     transformer.decode(vec![Request::new(0, &[1, 2, 3], &mut cache, 0, true)]);
+    info!("decode: {:?}", time.elapsed());
 }
