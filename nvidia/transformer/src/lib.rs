@@ -31,8 +31,6 @@ pub struct Transformer {
     kernels: NvidiaKernels,
 }
 
-type Local<'ctx> = LocalSplitable<DevMem<'ctx>>;
-
 impl transformer::Transformer for Transformer {
     type Cache = Cache;
 
@@ -63,9 +61,8 @@ impl transformer::Transformer for Transformer {
             let mut x0 = self.token_embed(&requests, &compute);
             let mut x1 =
                 Tensor::alloc(x0.data_type(), x0.shape(), |len| transfer.malloc::<u8>(len));
-            let mut buf = LayerBuffer::alloc(&self.host, &requests, |len| {
-                transfer.malloc::<u8>(len).into()
-            });
+            let mut buf =
+                LayerBuffer::alloc(&self.host, &requests, |len| transfer.malloc::<u8>(len));
             // 生成位置张量
             let nt = x0.shape()[0]; // `nt` for number of tokens
             let pos_ = pos(&requests, nt);
@@ -131,6 +128,8 @@ impl transformer::Transformer for Transformer {
     }
 }
 
+type Splitable<'ctx> = LocalSplitable<DevMem<'ctx>>;
+
 impl Transformer {
     pub fn new(config: File, mut safetensors: File, preload_layers: usize, dev: Device) -> Self {
         let context = Arc::new(dev.retain_primary());
@@ -190,13 +189,13 @@ impl Transformer {
         params: &LayerParameter,
         x0: &Tensor<DevMem>,
         x1: &mut Tensor<DevMem>,
-        qkv: &mut Tensor<Local<'ctx>>,
+        qkv: &mut Tensor<Splitable<'ctx>>,
         pos: &Tensor<DevMem>,
         compute: &Stream,
     ) -> (
-        Tensor<Local<'ctx>>,
-        Tensor<Local<'ctx>>,
-        Tensor<Local<'ctx>>,
+        Tensor<Splitable<'ctx>>,
+        Tensor<Splitable<'ctx>>,
+        Tensor<Splitable<'ctx>>,
     ) {
         let nt = x0.shape()[0];
         let d = self.host.hidden_size() as udim;
@@ -237,12 +236,12 @@ impl Transformer {
         &self,
         layer: usize,
         requests: &mut [Request<Id, Cache>],
-        q: Tensor<Local>,
-        k: Tensor<Local>,
-        v: Tensor<Local>,
+        q: Tensor<Splitable>,
+        k: Tensor<Splitable>,
+        v: Tensor<Splitable>,
         o: &mut Tensor<DevMem>,
-        q_buf: &mut Local,
-        att_buf: &mut Local,
+        q_buf: &mut DevMem,
+        att_buf: &mut DevMem,
         compute: &Stream,
     ) {
         let dt = self.host.data_type();
@@ -326,7 +325,7 @@ impl Transformer {
         params: &LayerParameter,
         x0: &mut Tensor<DevMem>,
         x1: &mut Tensor<DevMem>,
-        gate_up: &mut Tensor<Local>,
+        gate_up: &mut Tensor<Splitable>,
         compute: &Stream,
     ) {
         let di = self.host.intermediate_size() as udim;
