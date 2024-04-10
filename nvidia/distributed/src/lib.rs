@@ -1,6 +1,5 @@
 #![cfg(detected_nccl)]
 
-mod gather;
 mod parameters;
 
 #[macro_use]
@@ -14,7 +13,7 @@ use common_nv::{
 };
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
-use std::{iter::zip, path::Path, time::Instant};
+use std::{path::Path, time::Instant};
 use transformer::{LayerCache, Llama2, Memory, Request};
 
 pub struct Transformer {
@@ -42,29 +41,64 @@ impl transformer::Transformer for Transformer {
         // 归拢所有纯解码的请求到前面，减少批量解码的拷贝开销
         requests.sort_unstable_by_key(Request::purely_decode);
 
-        let contexts = self.comms.contexts().collect::<Vec<_>>();
-        let streams = contexts
-            .iter()
+        let dt = self.host.data_type();
+        let nt = requests.iter().map(Request::seq_len).sum::<udim>();
+        let d = self.host.hidden_size() as udim;
+        let mut streams = self
+            .comms
+            .contexts()
             .map(|ctx| ctx.apply(|c| c.stream().sporulate()))
             .collect::<Vec<_>>();
 
-        let x0 = self.token_embed(&requests, &streams);
-        let x1 = zip(zip(&contexts, &streams), &x0)
-            .map(|((context, stream), x)| {
-                context.apply(|ctx| {
-                    let stream = unsafe { stream.sprout(ctx) };
-                    Tensor::alloc(x.data_type(), x.shape(), |len| {
-                        stream.malloc::<u8>(len).sporulate()
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut iter = requests
+            .iter()
+            .flat_map(Request::tokens)
+            .copied()
+            .map(|t| t as usize)
+            .enumerate();
 
-        for ((context, mut stream), (mut x0, mut x1)) in zip(zip(contexts, streams), zip(x0, x1)) {
+        fn malloc_all(
+            comms: &CommunicatorGroup,
+            streams: &[StreamSpore],
+            len: usize,
+        ) -> Vec<DevMemSpore> {
+            comms
+                .contexts()
+                .zip(streams)
+                .map(|(context, stream)| {
+                    context.apply(|ctx| unsafe { stream.sprout(ctx) }.malloc::<u8>(len).sporulate())
+                })
+                .collect()
+        }
+
+        let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&self.comms, &streams, len));
+        let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&self.comms, &streams, len));
+        // token embedding
+        {
+            let d = d as usize * dt.size();
+            let distributed = nt as usize / streams.len();
+            let table = self.host.embed_tokens();
+            let table = table.as_slice();
+
+            for (i, comm) in self.comms.call().iter().enumerate() {
+                comm.device().retain_primary().apply(|ctx| {
+                    let stream = unsafe { streams[i].sprout(ctx) };
+                    let mut dst = unsafe { x0.physical_mut()[i].sprout(ctx) };
+                    for _ in 0..distributed {
+                        let Some((i, t)) = iter.next() else { break };
+                        stream.memcpy_h2d(&mut dst[d * i..][..d], &table[d * t..][..d]);
+                    }
+                    comm.all_gather(&mut dst, None, &stream);
+                });
+            }
+        }
+
+        // kill
+        for (i, context) in self.comms.contexts().enumerate() {
             context.apply(|ctx| unsafe {
-                stream.kill(ctx);
-                x0.physical_mut().kill(ctx);
-                x1.physical_mut().kill(ctx);
+                streams[i].kill(ctx);
+                x0.physical_mut()[i].kill(ctx);
+                x1.physical_mut()[i].kill(ctx);
             });
         }
         todo!()
@@ -98,40 +132,6 @@ impl Transformer {
             ),
             host,
         }
-    }
-
-    fn token_embed<Id>(
-        &self,
-        requests: &[Request<Id, ()>],
-        streams: &[StreamSpore],
-    ) -> Vec<Tensor<DevMemSpore>> {
-        let dt = self.host.data_type();
-        let nt = requests.iter().map(Request::seq_len).sum::<udim>();
-        let d = self.host.hidden_size() as udim;
-
-        let mut x0 = self
-            .comms
-            .contexts()
-            .zip(streams)
-            .map(|(context, stream)| {
-                context.apply(|ctx| {
-                    Tensor::alloc(dt, &[nt, d], |len| {
-                        unsafe { stream.sprout(ctx) }.malloc::<u8>(len).sporulate()
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let tokens = requests.iter().flat_map(Request::tokens).copied();
-        gather::gather(
-            &mut x0,
-            &self.host.embed_tokens(),
-            tokens,
-            &self.comms,
-            streams,
-        );
-
-        x0
     }
 }
 

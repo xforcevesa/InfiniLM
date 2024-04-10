@@ -7,14 +7,18 @@ pub(crate) struct Pattern(pub DVector<idim>);
 
 impl Pattern {
     pub fn from_shape(shape: &[udim], offset: idim) -> Self {
-        let n = shape.len();
-        let mut strides = vec![0; n + 1];
-        strides[n - 1] = 1;
-        strides[n] = offset;
-        for i in (1..n).rev() {
-            strides[i - 1] = strides[i] * shape[i] as idim;
+        match shape.len() {
+            0 => Self(DVector::from_vec(vec![offset])),
+            n => {
+                let mut strides = vec![0; n + 1];
+                strides[n - 1] = 1;
+                strides[n] = offset;
+                for i in (1..n).rev() {
+                    strides[i - 1] = strides[i] * shape[i] as idim;
+                }
+                Self(DVector::from_vec(strides))
+            }
         }
-        Self(DVector::from_vec(strides))
     }
 
     #[inline]
