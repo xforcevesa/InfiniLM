@@ -1,18 +1,17 @@
 ﻿use common_nv::{
-    cuda::{ContextSpore, DevByte, StreamSpore},
+    cuda::{ContextSpore, DevMemSpore, StreamSpore},
     utok, Tensor,
 };
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 
-pub fn gather<T, U, I>(
-    x: &mut [Tensor<T>],
-    table: &Tensor<U>,
+pub fn gather<T, I>(
+    x: &mut [Tensor<DevMemSpore>],
+    table: &Tensor<T>,
     tokens: I,
     comms: &nccl::CommunicatorGroup,
     streams: &[StreamSpore],
 ) where
-    T: DerefMut<Target = [DevByte]>,
-    U: Deref<Target = [u8]>,
+    T: Deref<Target = [u8]>,
     I: IntoIterator<Item = utok>,
 {
     assert!(!x.is_empty());
@@ -41,12 +40,12 @@ pub fn gather<T, U, I>(
     for (i, comm) in comms.call().iter().enumerate() {
         comm.device().retain_primary().apply(|ctx| {
             let stream = unsafe { streams[i].sprout(ctx) };
-            let dst = &mut **x[i].physical_mut();
+            let mut dst = unsafe { x[i].physical_mut().sprout(ctx) };
             for _ in 0..distributed {
                 let Some((i, t)) = iter.next() else { break };
                 stream.memcpy_h2d(&mut dst[d * i..][..d], &table[d * t..][..d]);
             }
-            comm.all_gather(dst, None, &stream);
+            comm.all_gather(&mut dst, None, &stream);
         });
     }
 }

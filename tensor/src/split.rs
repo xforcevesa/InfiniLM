@@ -21,6 +21,13 @@ impl<T: Clone> Splitable for T {
 #[repr(transparent)]
 pub struct LocalSplitable<T>(Rc<T>);
 
+impl<T> AsRef<T> for LocalSplitable<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.0
+    }
+}
+
 impl<T> From<T> for LocalSplitable<T> {
     #[inline]
     fn from(t: T) -> Self {

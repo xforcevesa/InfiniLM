@@ -1,5 +1,4 @@
 #![cfg(detected_nccl)]
-#![allow(unused)]
 
 mod gather;
 mod parameters;
@@ -10,8 +9,8 @@ extern crate log;
 pub use common_nv::cuda;
 
 use common_nv::{
-    cuda::{AsRaw, ContextResource, ContextSpore, CudaDataType, DevMem, Device, StreamSpore},
-    tensor, udim, utok, DataType, LocalSplitable, Tensor,
+    cuda::{AsRaw, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore},
+    udim, utok, Tensor,
 };
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
@@ -49,8 +48,24 @@ impl transformer::Transformer for Transformer {
             .map(|ctx| ctx.apply(|c| c.stream().sporulate()))
             .collect::<Vec<_>>();
 
-        for (context, mut stream) in zip(contexts, streams) {
-            context.apply(|ctx| unsafe { stream.kill(ctx) });
+        let x0 = self.token_embed(&requests, &streams);
+        let x1 = zip(zip(&contexts, &streams), &x0)
+            .map(|((context, stream), x)| {
+                context.apply(|ctx| {
+                    let stream = unsafe { stream.sprout(ctx) };
+                    Tensor::alloc(x.data_type(), x.shape(), |len| {
+                        stream.malloc::<u8>(len).sporulate()
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for ((context, mut stream), (mut x0, mut x1)) in zip(zip(contexts, streams), zip(x0, x1)) {
+            context.apply(|ctx| unsafe {
+                stream.kill(ctx);
+                x0.physical_mut().kill(ctx);
+                x1.physical_mut().kill(ctx);
+            });
         }
         todo!()
     }
@@ -85,11 +100,11 @@ impl Transformer {
         }
     }
 
-    fn token_embed<'ctx, Id>(
+    fn token_embed<Id>(
         &self,
         requests: &[Request<Id, ()>],
         streams: &[StreamSpore],
-    ) -> Vec<Tensor<LocalSplitable<DevMem<'ctx>>>> {
+    ) -> Vec<Tensor<DevMemSpore>> {
         let dt = self.host.data_type();
         let nt = requests.iter().map(Request::seq_len).sum::<udim>();
         let d = self.host.hidden_size() as udim;
@@ -98,7 +113,13 @@ impl Transformer {
             .comms
             .contexts()
             .zip(streams)
-            .map(|(context, stream)| context.apply(|ctx| tensor(dt, &[nt, d], todo!())))
+            .map(|(context, stream)| {
+                context.apply(|ctx| {
+                    Tensor::alloc(dt, &[nt, d], |len| {
+                        unsafe { stream.sprout(ctx) }.malloc::<u8>(len).sporulate()
+                    })
+                })
+            })
             .collect::<Vec<_>>();
 
         let tokens = requests.iter().flat_map(Request::tokens).copied();
@@ -122,12 +143,28 @@ impl Drop for Transformer {
     }
 }
 
-fn convert(dt: DataType) -> CudaDataType {
-    match dt {
-        DataType::F16 => CudaDataType::f16,
-        DataType::BF16 => CudaDataType::bf16,
-        DataType::F32 => CudaDataType::f32,
-        DataType::F64 => CudaDataType::f64,
-        _ => unreachable!(),
+#[test]
+fn test() {
+    use common_nv::cuda::{self, Device};
+    use log::LevelFilter::Trace;
+    use simple_logger::SimpleLogger;
+    use transformer::Transformer as _;
+
+    const N: usize = 1;
+
+    cuda::init();
+    if Device::count() < N {
+        return;
     }
+
+    SimpleLogger::new().with_level(Trace).init().unwrap();
+
+    let time = Instant::now();
+    let transformer = Transformer::new(
+        "../../../TinyLlama-1.1B-Chat-v1.0_F16",
+        &[Device::fetch().unwrap()],
+    );
+    info!("load {:?}", time.elapsed());
+
+    transformer.decode(vec![Request::new(0, &[1, 2, 3], &mut [], 0, true)]);
 }

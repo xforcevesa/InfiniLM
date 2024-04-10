@@ -1,4 +1,6 @@
-﻿use common_nv::{
+﻿#![allow(unused)]
+
+use common_nv::{
     cuda::{Context, ContextGuard, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore},
     udim, Tensor,
 };
@@ -154,7 +156,7 @@ fn test_load() {
     SimpleLogger::new().with_level(Trace).init().unwrap();
 
     let time = Instant::now();
-    let safetensors = Memory::load_safetensors_from_dir("../../../TinyLlama-1.1B-Chat-v1.0");
+    let safetensors = Memory::load_safetensors_from_dir("../../../TinyLlama-1.1B-Chat-v1.0_F16");
     info!("mmap {:?}", time.elapsed());
 
     let model = match safetensors {

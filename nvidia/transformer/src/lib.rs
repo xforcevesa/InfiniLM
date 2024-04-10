@@ -9,8 +9,8 @@ pub use common_nv::cuda;
 
 use ::half::f16;
 use common_nv::{
-    cuda::{bindings::CUdeviceptr, memcpy_d2h, DevMem},
-    slice, tensor, udim, utok, Cache, DataType, LocalSplitable, NvidiaKernels, Tensor,
+    cuda::{bindings::CUdeviceptr, memcpy_d2h, DevMem, DevMemSpore},
+    slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, Tensor,
 };
 use cuda::{AsRaw, Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
@@ -61,15 +61,15 @@ impl transformer::Transformer for Transformer {
             let compute = ctx.stream();
             // 生成词嵌入并预分配空间
             let mut x0 = self.token_embed(&requests, &compute);
-            let mut x1 = tensor(x0.data_type(), x0.shape(), &transfer);
+            let mut x1 =
+                Tensor::alloc(x0.data_type(), x0.shape(), |len| transfer.malloc::<u8>(len));
             let mut buf = LayerBuffer::alloc(&self.host, &requests, |len| {
                 transfer.malloc::<u8>(len).into()
             });
             // 生成位置张量
             let nt = x0.shape()[0]; // `nt` for number of tokens
             let pos_ = pos(&requests, nt);
-            let mut pos = tensor(DataType::U32, &[nt], &transfer);
-            transfer.memcpy_h2d(pos.physical_mut(), &pos_);
+            let pos = Tensor::new(DataType::U32, &[nt], transfer.from_host(&pos_));
             // 推理
             compute.wait_for(&transfer.record());
             {
@@ -170,13 +170,13 @@ impl Transformer {
         &self,
         requests: &[Request<Id, Cache>],
         compute: &Stream<'ctx>,
-    ) -> Tensor<Local<'ctx>> {
+    ) -> Tensor<DevMem<'ctx>> {
         let dt = self.host.data_type();
         let nt = requests.iter().map(Request::seq_len).sum::<udim>();
         let d = self.host.hidden_size() as udim;
         let kernels = self.kernels.on(compute);
 
-        let mut x0 = tensor(dt, &[nt, d], compute);
+        let mut x0 = Tensor::alloc(dt, &[nt, d], |len| compute.malloc::<u8>(len));
         let tokens = requests.iter().flat_map(Request::tokens).copied();
         kernels.gather(&mut x0, &self.host.embed_tokens(), tokens);
         // compute.synchronize();
@@ -188,10 +188,10 @@ impl Transformer {
     fn before_att<'ctx>(
         &self,
         params: &LayerParameter,
-        x0: &Tensor<Local>,
-        x1: &mut Tensor<Local>,
+        x0: &Tensor<DevMem>,
+        x1: &mut Tensor<DevMem>,
         qkv: &mut Tensor<Local<'ctx>>,
-        pos: &Tensor<Local>,
+        pos: &Tensor<DevMem>,
         compute: &Stream,
     ) -> (
         Tensor<Local<'ctx>>,
@@ -240,7 +240,7 @@ impl Transformer {
         q: Tensor<Local>,
         k: Tensor<Local>,
         v: Tensor<Local>,
-        o: &mut Tensor<Local>,
+        o: &mut Tensor<DevMem>,
         q_buf: &mut Local,
         att_buf: &mut Local,
         compute: &Stream,
@@ -324,8 +324,8 @@ impl Transformer {
     fn after_att(
         &self,
         params: &LayerParameter,
-        x0: &mut Tensor<Local>,
-        x1: &mut Tensor<Local>,
+        x0: &mut Tensor<DevMem>,
+        x1: &mut Tensor<DevMem>,
         gate_up: &mut Tensor<Local>,
         compute: &Stream,
     ) {
@@ -366,9 +366,9 @@ impl Transformer {
     fn move_decode<'ctx, Id>(
         &self,
         requests: &[Request<Id, Cache>],
-        x0: Tensor<Local<'ctx>>,
+        x0: Tensor<DevMem<'ctx>>,
         compute: &Stream,
-    ) -> Tensor<Local<'ctx>> {
+    ) -> Tensor<DevMem<'ctx>> {
         let buf = x0.physical().as_ptr() as CUdeviceptr;
         let len = self.host.hidden_size() * self.host.data_type().size();
 
@@ -395,7 +395,7 @@ impl Transformer {
         x0.slice(&[slice![from begin, until dst + 1], slice![all]])
     }
 
-    fn logits(&self, mut x: Tensor<Local>, compute: &Stream) -> Tensor<Cache> {
+    fn logits(&self, mut x: Tensor<DevMem>, compute: &Stream) -> Tensor<Cache> {
         let dt = self.host.data_type();
         let voc = self.host.vocab_size() as udim;
 
@@ -427,6 +427,18 @@ impl Transformer {
         // println!("model norm:\n{}", map_tensor(&logits));
 
         logits
+    }
+}
+
+pub struct Cache {
+    pub context: Arc<Context>,
+    pub mem: DevMemSpore,
+}
+
+impl Drop for Cache {
+    #[inline]
+    fn drop(&mut self) {
+        self.context.apply(|ctx| unsafe { self.mem.kill(ctx) });
     }
 }
 

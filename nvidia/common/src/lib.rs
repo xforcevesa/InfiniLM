@@ -10,11 +10,9 @@ mod mat_mul;
 mod reform;
 mod rms_norm;
 mod rotary_embedding;
-mod storage;
 mod swiglu;
 
 pub use common::utok;
-pub use storage::{tensor, Cache};
 pub use tensor::{slice, udim, DataType, LocalSplitable, Tensor};
 
 use cublas::{Cublas, CublasSpore};
