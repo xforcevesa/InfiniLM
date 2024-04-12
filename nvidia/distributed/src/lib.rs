@@ -11,7 +11,6 @@ use common_nv::{
     cuda::{AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore},
     slice, udim, utok, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
-use core::panic;
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
 use std::{iter::zip, path::Path, sync::Arc, time::Instant};
