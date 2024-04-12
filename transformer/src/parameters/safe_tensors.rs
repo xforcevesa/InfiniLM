@@ -155,7 +155,12 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
 
 #[test]
 fn test_load() {
-    let file = match std::fs::File::open("../../TinyLlama-1.1B-Chat-v1.0/model.safetensors") {
+    let Some(model_dir) = common::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
+
+    let file = match std::fs::File::open(model_dir.join("model.safetensors")) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(e) => panic!("{e:?}"),

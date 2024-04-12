@@ -249,6 +249,11 @@ fn test() {
     use simple_logger::SimpleLogger;
     use transformer::Transformer as _;
 
+    let Some(model_dir) = common_nv::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
+
     const N: usize = 1;
 
     cuda::init();
@@ -259,10 +264,7 @@ fn test() {
     SimpleLogger::new().with_level(Trace).init().unwrap();
 
     let time = Instant::now();
-    let transformer = Transformer::new(
-        "../../../TinyLlama-1.1B-Chat-v1.0_F16",
-        &[Device::fetch().unwrap()],
-    );
+    let transformer = Transformer::new(model_dir, &[Device::fetch().unwrap()]);
     info!("load {:?}", time.elapsed());
 
     let time = Instant::now();

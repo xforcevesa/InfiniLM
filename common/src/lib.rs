@@ -11,5 +11,6 @@ pub type utok = u32;
 pub type upos = u32;
 
 mod blob;
+pub mod test_model;
 
 pub use blob::Blob;

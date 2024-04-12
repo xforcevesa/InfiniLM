@@ -183,8 +183,13 @@ fn test_load() {
     use super::SafeTensorError;
     use std::{io::ErrorKind::NotFound, time::Instant};
 
+    let Some(model_dir) = common::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
+
     let t0 = Instant::now();
-    let safetensors = Memory::load_safetensors_from_dir("../../TinyLlama-1.1B-Chat-v1.0");
+    let safetensors = Memory::load_safetensors_from_dir(model_dir);
     let t1 = Instant::now();
     println!("mmap {:?}", t1 - t0);
 

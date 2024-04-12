@@ -142,7 +142,12 @@ impl Tokenizer for BPE {
 
 #[test]
 fn read_tokenizer() {
-    if let Ok(bpe) = BPE::from_model_file("../../TinyLlama-1.1B-Chat-v1.0/tokenizer.model") {
+    let Some(model_dir) = common::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
+
+    if let Ok(bpe) = BPE::from_model_file(model_dir.join("tokenizer.model")) {
         for i in 0..bpe.offsets.len() {
             println!("{}: {}", bpe.get_piece(i as utok), bpe.get_score(i as utok));
         }
@@ -151,8 +156,13 @@ fn read_tokenizer() {
 
 #[test]
 fn once_upon_a_time() {
+    let Some(model_dir) = common::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
+
     use std::time::Instant;
-    if let Ok(bpe) = BPE::from_model_file("../../TinyLlama-1.1B-Chat-v1.0/tokenizer.model") {
+    if let Ok(bpe) = BPE::from_model_file(model_dir.join("tokenizer.model")) {
         const PROMPT: &str = "▁Once▁upon▁a▁time,";
         let tokens = bpe.encode(PROMPT);
         let t0 = Instant::now();

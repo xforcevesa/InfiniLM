@@ -147,6 +147,11 @@ fn test_load() {
     use std::io::ErrorKind::NotFound;
     use transformer::{Memory, SafeTensorError};
 
+    let Some(model_dir) = common_nv::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
+
     const N: usize = 1;
 
     cuda::init();
@@ -157,7 +162,7 @@ fn test_load() {
     SimpleLogger::new().with_level(Trace).init().unwrap();
 
     let time = Instant::now();
-    let safetensors = Memory::load_safetensors_from_dir("../../../TinyLlama-1.1B-Chat-v1.0_F16");
+    let safetensors = Memory::load_safetensors_from_dir(model_dir);
     info!("mmap {:?}", time.elapsed());
 
     let model = match safetensors {

@@ -118,14 +118,13 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
 #[test]
 fn test() {
     use colored::{Color, Colorize};
-    use std::{io::Write, iter::zip, path::Path, time::Duration};
+    use std::{io::Write, iter::zip, time::Duration};
     use tokio::{runtime::Builder, task::JoinSet, time::sleep};
 
-    let model_dir = "../../TinyLlama-1.1B-Chat-v1.0_F16/";
-    if !Path::new(model_dir).exists() {
-        println!("model not exist");
+    let Some(model_dir) = common::test_model::find() else {
         return;
-    }
+    };
+    println!("model_dir: {}", model_dir.display());
 
     let runtime = Builder::new_current_thread().enable_time().build().unwrap();
     let _rt = runtime.enter();
