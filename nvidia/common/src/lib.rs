@@ -188,7 +188,7 @@ impl Kernels for KernelRuntime<'_> {
         U: Deref<Target = Self::Storage>,
     {
         let ModuleWapper { module, kernel } = &self.kernels.reform;
-        kernel.launch(&module, dst, src, self.stream);
+        kernel.launch(module, dst, src, self.stream);
     }
 
     #[inline]
@@ -197,7 +197,7 @@ impl Kernels for KernelRuntime<'_> {
         T: DerefMut<Target = Self::Storage>,
     {
         let ModuleWapper { module, kernel } = &self.kernels.softmax;
-        kernel.launch(&module, att, self.stream);
+        kernel.launch(module, att, self.stream);
     }
 
     #[inline]
