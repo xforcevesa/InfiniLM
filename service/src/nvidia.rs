@@ -1,7 +1,7 @@
 ﻿use std::{fs::File, path::Path, time::Instant};
-use transformer_nv::{cuda, Transformer};
 
-pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> Transformer {
+pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> transformer_nv::Transformer {
+    use transformer_nv::{cuda, Transformer};
     cuda::init();
 
     let time = Instant::now();
@@ -15,6 +15,24 @@ pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> Transformer {
     dev.set_mempool_threshold(u64::MAX);
     let transformer = Transformer::new(config, safetensors, usize::MAX, dev);
     info!("build transformer ... {:?}", time.elapsed());
+
+    transformer
+}
+
+pub fn distributed(
+    model_dir: impl AsRef<Path>,
+    devices: impl IntoIterator<Item = i32>,
+) -> distributed::Transformer {
+    use distributed::{cuda, Transformer};
+    cuda::init();
+
+    let time = Instant::now();
+    let dev = devices
+        .into_iter()
+        .map(cuda::Device::new)
+        .collect::<Vec<_>>();
+    let transformer = Transformer::new(model_dir, &dev);
+    info!("load {:?}", time.elapsed());
 
     transformer
 }

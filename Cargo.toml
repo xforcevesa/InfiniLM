@@ -21,7 +21,7 @@ serde = "1.0"
 log = "0.4"
 tokio = { version = "1.37", features = ["rt-multi-thread", "sync"] }
 
-cuda = { git = "https://github.com/YdrMaster/cuda-driver", rev = "12c0342" }
-cublas = { git = "https://github.com/YdrMaster/cuda-driver", rev = "12c0342" }
-nccl = { git = "https://github.com/YdrMaster/cuda-driver", rev = "12c0342" }
-search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "12c0342" }
+cuda = { git = "https://github.com/YdrMaster/cuda-driver", rev = "6bec5f3" }
+cublas = { git = "https://github.com/YdrMaster/cuda-driver", rev = "6bec5f3" }
+nccl = { git = "https://github.com/YdrMaster/cuda-driver", rev = "6bec5f3" }
+search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "6bec5f3" }

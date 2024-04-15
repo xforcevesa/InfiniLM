@@ -13,6 +13,7 @@ tokenizer = { path = "../tokenizer" }
 transformer = { path = "../transformer" }
 transformer-cpu = { path = "../transformer-cpu" }
 transformer-nv = { path = "../nvidia/transformer", optional = true }
+distributed = { path = "../nvidia/distributed", optional = true }
 half.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["time"] }
@@ -24,4 +25,4 @@ search-cuda-tools.workspace = true
 colored = "2.1"
 
 [features]
-nvidia = ["transformer-nv"]
+nvidia = ["transformer-nv", "distributed"]

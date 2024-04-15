@@ -83,43 +83,30 @@ impl transformer::Transformer for Transformer {
         let n = contexts.len();
 
         // token embedding
-        let mut x0 = {
-            // 填充 num tokens 到 n 的整数倍，以使用 AllGather 同步诸卡
-            let distributed = (nt as usize + n - 1) / n;
-            let nt_padding = (distributed * n) as udim;
-            let mut x0 = Tensor::alloc(dt, &[nt_padding, d], |len| {
-                malloc_all(&contexts, &streams, len)
-            });
-
+        let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
+        {
             let d = d as usize * dt.size();
             let table = self.host.embed_tokens();
             let table = table.as_slice();
 
-            let mut iter = requests
+            let iter = requests
                 .iter()
                 .flat_map(Request::tokens)
                 .copied()
                 .map(|t| t as usize)
                 .enumerate();
 
-            for (i, comm) in self.comms.call().iter().enumerate() {
-                contexts[i].apply(|ctx| {
+            for (i, context) in contexts.iter().enumerate() {
+                context.apply(|ctx| {
                     let stream = unsafe { ctx.sprout(&streams[i]) };
                     let mut dst = unsafe { ctx.sprout(&x0.physical_mut()[i]) };
-                    // 为每个卡拷贝部分 token
-                    for _ in 0..distributed {
-                        let Some((i, t)) = iter.next() else { break };
+                    for (i, t) in iter.clone() {
                         stream.memcpy_h2d(&mut dst[i * d..][..d], &table[t * d..][..d]);
                     }
-                    comm.all_gather(&mut dst, None, &stream);
                 });
             }
-            // 截取有效部分
-            x0.slice(&[slice![take nt], slice![all]])
-        };
-        let mut x1 = Tensor::alloc(x0.data_type(), x0.shape(), |len| {
-            malloc_all(&contexts, &streams, len)
-        });
+        }
+        let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
         let LayerBuffer {
             qkv,
             gate_up,
@@ -165,13 +152,13 @@ impl transformer::Transformer for Transformer {
                 context.apply(|ctx| {
                     let stream = unsafe { ctx.sprout(&streams[i]) };
                     let kernels = self.kernels[i].on(&stream);
-                    let layer = self.matrix.get(layer, i, ctx);
+                    let params = self.matrix.get(layer, i, ctx);
 
                     let x0 = unsafe { x0.as_ref().map_physical(|u| ctx.sprout(&u[i])) };
                     let mut x1 = unsafe { x1.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
                     let mut qkv = unsafe { buf.qkv.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                    kernels.rms_norm(&mut x1, &x0, &layer.input_layernorm());
-                    kernels.mat_mul(&mut qkv, 0., &x1, &layer.w_qkv(), 1.);
+                    kernels.rms_norm(&mut x1, &x0, &params.input_layernorm());
+                    kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1.);
                 });
             }
             let mut qkv = buf
@@ -267,19 +254,19 @@ impl transformer::Transformer for Transformer {
                     });
                 }
             }
-            // affter attention
+            // after attention
             for (i, comm) in self.comms.call().iter().enumerate() {
                 contexts[i].apply(|ctx| {
                     let stream = unsafe { ctx.sprout(&streams[i]) };
                     let kernels = self.kernels[i].on(&stream);
-                    let layer = self.matrix.get(layer, i, ctx);
+                    let params = self.matrix.get(layer, i, ctx);
 
                     let mut x0 = unsafe { x0.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
                     let o = x1.as_ref().slice(&[slice![all], slice![take d/n as udim]]);
                     let o = unsafe { o.map_physical(|u| ctx.sprout(&u[i])) };
-                    kernels.mat_mul(&mut x0, if i == 0 { 1. } else { 0. }, &o, &layer.w_o(), 1.);
+                    kernels.mat_mul(&mut x0, if i == 0 { 1. } else { 0. }, &o, &params.w_o(), 1.);
                     comm.all_reduce(
-                        &mut x0.physical_mut(),
+                        x0.physical_mut(),
                         None,
                         cast_dt(self.host.data_type()),
                         nccl::ReduceType::ncclSum,
@@ -287,19 +274,26 @@ impl transformer::Transformer for Transformer {
                     );
                 });
             }
+            // for (i, context) in contexts.iter().enumerate() {
+            //     context.apply(|ctx| {
+            //         let stream = unsafe { ctx.sprout(&streams[i]) };
+            //         stream.synchronize();
+            //     })
+            // }
+            // std::process::exit(0);
             for (i, context) in contexts.iter().enumerate() {
                 context.apply(|ctx| {
                     let stream = unsafe { ctx.sprout(&streams[i]) };
                     let kernels = self.kernels[i].on(&stream);
-                    let layer = self.matrix.get(layer, i, ctx);
+                    let params = self.matrix.get(layer, i, ctx);
 
                     let x0 = unsafe { x0.as_ref().map_physical(|u| ctx.sprout(&u[i])) };
                     let mut x1 = unsafe { x1.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
                     let mut gate_up =
                         unsafe { buf.gate_up.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
 
-                    kernels.rms_norm(&mut x1, &x0, &layer.post_att_layernorm());
-                    kernels.mat_mul(&mut gate_up, 0., &x1, &layer.mlp_gate_up(), 1.);
+                    kernels.rms_norm(&mut x1, &x0, &params.post_att_layernorm());
+                    kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
                 });
             }
             let mut gate_up = buf.gate_up.split(1, &[di / n as udim, di / n as udim]);
@@ -309,7 +303,7 @@ impl transformer::Transformer for Transformer {
                 contexts[i].apply(|ctx| {
                     let stream = unsafe { ctx.sprout(&streams[i]) };
                     let kernels = self.kernels[i].on(&stream);
-                    let layer = self.matrix.get(layer, i, ctx);
+                    let params = self.matrix.get(layer, i, ctx);
 
                     let mut gate = unsafe { gate.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
                     let up = unsafe { up.as_ref().map_physical(|u| ctx.sprout(&u[i])) };
@@ -320,7 +314,7 @@ impl transformer::Transformer for Transformer {
                         &mut x0,
                         if i == 0 { 1. } else { 0. },
                         &gate,
-                        &layer.mlp_down(),
+                        &params.mlp_down(),
                         1.,
                     );
                     comm.all_reduce(

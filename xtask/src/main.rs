@@ -25,6 +25,10 @@ fn block_on(f: impl Future) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(f);
     runtime.shutdown_background();
+    #[cfg(feature = "nvidia")]
+    {
+        service::synchronize();
+    }
 }
 
 #[derive(Parser)]
@@ -65,7 +69,7 @@ struct InferenceArgs {
     #[cfg(feature = "nvidia")]
     /// Use Nvidia GPU.
     #[clap(long)]
-    nvidia: bool,
+    nvidia: Option<String>,
 }
 
 impl From<InferenceArgs> for Service {
@@ -105,8 +109,13 @@ impl From<InferenceArgs> for Service {
             },
             #[cfg(feature = "nvidia")]
             {
-                if nvidia {
-                    Device::NvidiaGpu(0)
+                if let Some(devices) = nvidia {
+                    Device::NvidiaGpu(
+                        devices
+                            .split(',')
+                            .map(|d| d.trim().parse::<u32>().unwrap())
+                            .collect(),
+                    )
                 } else {
                     Device::Cpu
                 }

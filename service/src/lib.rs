@@ -27,11 +27,11 @@ pub struct Service {
     _workers: JoinSet<()>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Device {
     Cpu,
-    NvidiaGpu(i32),
+    NvidiaGpu(Vec<u32>),
 }
 
 impl Service {
@@ -50,9 +50,15 @@ impl Service {
             _workers: match device {
                 Device::Cpu => dispatch::run(cpu::transformer(model_dir), sample, receiver),
                 #[cfg(detected_cuda)]
-                Device::NvidiaGpu(n) => {
-                    dispatch::run(nvidia::transformer(model_dir, n), sample, receiver)
-                }
+                Device::NvidiaGpu(devices) => match devices.as_slice() {
+                    &[] => dispatch::run(nvidia::transformer(model_dir, 0), sample, receiver),
+                    &[i] => dispatch::run(nvidia::transformer(model_dir, i as _), sample, receiver),
+                    dev => dispatch::run(
+                        nvidia::distributed(model_dir, dev.iter().map(|&d| d as _)),
+                        sample,
+                        receiver,
+                    ),
+                },
                 #[cfg(not(detected_cuda))]
                 _ => panic!("Unsupported device"),
             },
@@ -139,7 +145,7 @@ fn test() {
         #[cfg(not(detected_cuda))]
         Device::Cpu,
         #[cfg(detected_cuda)]
-        Device::NvidiaGpu(0),
+        Device::NvidiaGpu(vec![0]),
     );
 
     let mut set = JoinSet::new();
@@ -170,4 +176,18 @@ fn test() {
 
     runtime.block_on(async { while set.join_next().await.is_some() {} });
     runtime.shutdown_background();
+}
+
+#[cfg(all(feature = "nvidia"))]
+pub fn synchronize() {
+    #[cfg(detected_cuda)]
+    {
+        use transformer_nv::cuda;
+        cuda::init();
+        for i in 0..cuda::Device::count() {
+            cuda::Device::new(i as _)
+                .retain_primary()
+                .apply(|ctx| ctx.synchronize());
+        }
+    }
 }
