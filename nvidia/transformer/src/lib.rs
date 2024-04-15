@@ -9,14 +9,15 @@ pub use common_nv::cuda;
 
 use ::half::f16;
 use common_nv::{
-    cuda::{bindings::CUdeviceptr, memcpy_d2h, DevMem, DevMemSpore},
+    cuda::{memcpy_d2h, DevMem, DevMemSpore},
     slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
-use cuda::{AsRaw, Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
+use cuda::{Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use std::{
     fs::File,
     io::Read,
+    slice::from_raw_parts,
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -366,33 +367,28 @@ impl Transformer {
     fn move_decode<'ctx, Id>(
         &self,
         requests: &[Request<Id, Cache>],
-        x0: Tensor<DevMem<'ctx>>,
+        mut x0: Tensor<DevMem<'ctx>>,
         compute: &Stream,
     ) -> Tensor<DevMem<'ctx>> {
-        let buf = x0.physical().as_ptr() as CUdeviceptr;
-        let len = self.host.hidden_size() * self.host.data_type().size();
+        let dst = &mut **x0.physical_mut();
+        let src = unsafe { from_raw_parts(dst.as_ptr(), dst.len()) };
 
         let (head, others) = requests.split_first().unwrap();
         let begin = head.seq_len() as usize - 1;
 
-        let mut src = begin;
-        let mut dst = begin;
+        let mut i_src = begin;
+        let mut i_dst = begin;
         for r in others {
-            src += r.seq_len() as usize;
+            i_src += r.seq_len() as usize;
             if r.decode() {
-                dst += 1;
-                if dst < src {
-                    cuda::driver!(cuMemcpyDtoDAsync_v2(
-                        buf + (dst * len) as CUdeviceptr,
-                        buf + (src * len) as CUdeviceptr,
-                        len,
-                        compute.as_raw()
-                    ));
+                i_dst += 1;
+                if i_dst < i_src {
+                    compute.memcpy_d2d(dst, src);
                 }
             }
         }
 
-        x0.slice(&[slice![from begin, until dst + 1], slice![all]])
+        x0.slice(&[slice![from begin, until i_dst + 1], slice![all]])
     }
 
     fn logits(&self, mut x: Tensor<DevMem>, compute: &Stream) -> Tensor<Cache> {
