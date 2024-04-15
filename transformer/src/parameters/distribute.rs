@@ -165,8 +165,8 @@ impl<'a> Distributer<'a> {
             let w = nh / n * dh;
             self.model
                 .self_attn_o_proj(layer)
-                .slice(&[slice![from w*i, take w], slice![all]])
-                .reform_to(&mut Tensor::new(dt, &[w, d], &mut blob[self.scheme.w_o..]));
+                .slice(&[slice![all], slice![from w*i, take w]])
+                .reform_to(&mut Tensor::new(dt, &[d, w], &mut blob[self.scheme.w_o..]));
         }
         let shape_gate_up = &[(di + di) / n, d];
         // mlp gate

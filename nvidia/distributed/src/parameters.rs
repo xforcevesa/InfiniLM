@@ -99,7 +99,7 @@ impl Layer<'_> {
     pub fn w_o(&self) -> Tensor<&[DevByte]> {
         let d = self.scheme.nh * self.scheme.dh;
         let n = self.scheme.n as udim;
-        Tensor::new(self.scheme.dt, &[d / n, d], &self.mem[self.scheme.w_o..]).transpose(&[1, 0])
+        Tensor::new(self.scheme.dt, &[d, d / n], &self.mem[self.scheme.w_o..]).transpose(&[1, 0])
     }
 
     #[inline]

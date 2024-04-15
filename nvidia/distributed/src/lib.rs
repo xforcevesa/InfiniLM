@@ -9,9 +9,12 @@ pub use common_nv::cuda;
 
 use common_nv::{
     cast_dt,
-    cuda::{AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore},
+    cuda::{
+        memcpy_d2h, AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore,
+    },
     slice, udim, utok, DataType, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
+use half::f16;
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
 use std::{iter::zip, path::Path, slice::from_raw_parts, sync::Arc, time::Instant};
@@ -83,7 +86,7 @@ impl transformer::Transformer for Transformer {
         let mut x0 = {
             // 填充 num tokens 到 n 的整数倍，以使用 AllGather 同步诸卡
             let distributed = (nt as usize + n - 1) / n;
-            let nt_padding = (distributed / n * n) as udim;
+            let nt_padding = (distributed * n) as udim;
             let mut x0 = Tensor::alloc(dt, &[nt_padding, d], |len| {
                 malloc_all(&contexts, &streams, len)
             });
@@ -106,7 +109,7 @@ impl transformer::Transformer for Transformer {
                     // 为每个卡拷贝部分 token
                     for _ in 0..distributed {
                         let Some((i, t)) = iter.next() else { break };
-                        stream.memcpy_h2d(&mut dst[d * i..][..d], &table[d * t..][..d]);
+                        stream.memcpy_h2d(&mut dst[i * d..][..d], &table[t * d..][..d]);
                     }
                     comm.all_gather(&mut dst, None, &stream);
                 });
@@ -137,7 +140,6 @@ impl transformer::Transformer for Transformer {
             q_buf,
             att_buf,
         };
-
         // 生成位置张量
         let nt = x0.shape()[0]; // `nt` for number of tokens
         let pos_ = pos(&requests, nt);
@@ -196,7 +198,11 @@ impl transformer::Transformer for Transformer {
             let q = q.as_ref().transpose(&[1, 0, 2]);
             let k = k.as_ref().transpose(&[1, 0, 2]);
             let v = v.as_ref().transpose(&[1, 0, 2]);
-            let mut o = o.as_mut().reshape(&[nt, nh, dh]).transpose(&[1, 0, 2]);
+            let mut o = o
+                .as_mut()
+                .reshape(&[nt, nh, dh])
+                .transpose(&[1, 0, 2])
+                .slice(&[slice![take nh/n as udim], slice![all], slice![all]]);
 
             let mut req = 0;
             for r in requests.iter_mut() {
@@ -257,7 +263,7 @@ impl transformer::Transformer for Transformer {
                         let att = att.reshape(shape_att0);
                         kernels.mat_mul(&mut x2, 0., &att, &v_att, 1.);
 
-                        kernels.reform(&mut o, &x2.reshape(&[nh, seq_len, dh]));
+                        kernels.reform(&mut o, &x2.reshape(&[nh / n as udim, seq_len, dh]));
                     });
                 }
             }
@@ -269,9 +275,9 @@ impl transformer::Transformer for Transformer {
                     let layer = self.matrix.get(layer, i, ctx);
 
                     let mut x0 = unsafe { x0.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                    let x1 = unsafe { x1.as_ref().map_physical(|u| ctx.sprout(&u[i])) };
-
-                    kernels.mat_mul(&mut x0, 1., &x1, &layer.w_o(), 1.);
+                    let o = x1.as_ref().slice(&[slice![all], slice![take d/n as udim]]);
+                    let o = unsafe { o.map_physical(|u| ctx.sprout(&u[i])) };
+                    kernels.mat_mul(&mut x0, if i == 0 { 1. } else { 0. }, &o, &layer.w_o(), 1.);
                     comm.all_reduce(
                         &mut x0.physical_mut(),
                         None,
@@ -310,7 +316,13 @@ impl transformer::Transformer for Transformer {
                     let mut x0 = unsafe { x0.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
 
                     kernels.swiglu(&mut gate, &up);
-                    kernels.mat_mul(&mut x0, 1., &gate, &layer.mlp_down(), 1.);
+                    kernels.mat_mul(
+                        &mut x0,
+                        if i == 0 { 1. } else { 0. },
+                        &gate,
+                        &layer.mlp_down(),
+                        1.,
+                    );
                     comm.all_reduce(
                         &mut x0.physical_mut(),
                         None,
@@ -323,8 +335,8 @@ impl transformer::Transformer for Transformer {
         }
         // decode
         if requests[0].decode() {
-            let contexts = Arc::new(vec![self.comms.contexts().next().unwrap()]);
-            let logits = contexts[0].apply(|ctx| {
+            let context = self.comms.contexts().next().unwrap();
+            let logits = context.apply(|ctx| {
                 let stream = unsafe { ctx.sprout(&streams[0]) };
                 let kernels = self.kernels[0].on(&stream);
 
@@ -369,26 +381,25 @@ impl transformer::Transformer for Transformer {
 
                 kernels.rms_norm(&mut x, &x_, &model_norm);
                 kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
-
-                unsafe {
-                    logits.map_physical(|mem| Cache {
-                        contexts: contexts.clone(),
-                        mem: vec![mem.sporulate()],
-                    })
-                }
+                unsafe { logits.map_physical(|mem| mem.sporulate()) }
             });
-
+            let logits = unsafe {
+                logits.map_physical(|mem| Cache {
+                    contexts: Arc::new(vec![context]),
+                    mem: vec![mem],
+                })
+            };
             // kill
             for (i, context) in contexts.iter().enumerate() {
                 context.apply(|ctx| unsafe {
-                    streams[i].kill(ctx);
-                    x0.physical_mut()[i].kill(ctx);
-                    x1.physical_mut()[i].kill(ctx);
-                    buf.qkv.physical_mut()[i].kill(ctx);
-                    buf.gate_up.physical_mut()[i].kill(ctx);
-                    buf.q_buf[i].kill(ctx);
-                    buf.att_buf[i].kill(ctx);
-                    pos.physical_mut()[i].kill(ctx);
+                    ctx.kill(&mut streams[i]);
+                    ctx.kill(&mut x0.physical_mut()[i]);
+                    ctx.kill(&mut x1.physical_mut()[i]);
+                    ctx.kill(&mut buf.qkv.physical_mut()[i]);
+                    ctx.kill(&mut buf.gate_up.physical_mut()[i]);
+                    ctx.kill(&mut buf.q_buf[i]);
+                    ctx.kill(&mut buf.att_buf[i]);
+                    ctx.kill(&mut pos.physical_mut()[i]);
                 });
             }
             (requests.into_iter().map(Request::id).collect(), logits)
@@ -399,11 +410,22 @@ impl transformer::Transformer for Transformer {
 
     fn sample<Id>(
         &self,
-        _args: &transformer::SampleArgs,
-        _requests: Vec<Id>,
-        _logits: Tensor<Self::Cache>,
+        args: &transformer::SampleArgs,
+        requests: Vec<Id>,
+        logits: Tensor<Self::Cache>,
     ) -> Vec<(Id, utok)> {
-        todo!()
+        assert_eq!(logits.data_type(), DataType::F16);
+        let &[_, voc] = logits.shape() else { panic!() };
+
+        let mut host = vec![f16::ZERO; logits.size()];
+        let Cache { contexts, mem } = logits.physical();
+        contexts[0].apply(|ctx| memcpy_d2h(&mut host, unsafe { &mem[0].sprout(ctx) }));
+
+        requests
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| (id, args.random(&host[i * voc as usize..][..voc as usize])))
+            .collect()
     }
 }
 
