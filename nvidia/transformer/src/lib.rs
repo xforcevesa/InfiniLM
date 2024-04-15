@@ -99,9 +99,10 @@ impl transformer::Transformer for Transformer {
             // 解码
             if requests[0].decode() {
                 let x = self.move_decode(&requests, x0, &compute);
-                let requests = requests.into_iter().map(Request::id).collect();
-                // Sample.sample(sample, requests, self.logits(x, &compute))
-                (requests, self.logits(x, &compute))
+                (
+                    requests.into_iter().map(Request::id).collect(),
+                    self.logits(x, &compute),
+                )
             } else {
                 todo!()
             }
@@ -402,7 +403,7 @@ impl Transformer {
         // 复制一个 x 以实现原地归一化
         let x_ = unsafe {
             x.as_ref()
-                .map_physical(|u| std::slice::from_raw_parts(u.as_ptr(), u.len()))
+                .map_physical(|u| from_raw_parts(u.as_ptr(), u.len()))
         };
         kernels.rms_norm(&mut x, &x_, &model_norm);
         // compute.synchronize();

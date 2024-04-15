@@ -1,6 +1,4 @@
-﻿#![allow(unused)]
-
-use common_nv::{
+﻿use common_nv::{
     cuda::{Context, ContextGuard, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore},
     udim, Tensor,
 };

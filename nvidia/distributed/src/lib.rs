@@ -14,13 +14,15 @@ use common_nv::{
 };
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
-use std::{iter::zip, path::Path, sync::Arc, time::Instant};
+use std::{iter::zip, path::Path, slice::from_raw_parts, sync::Arc, time::Instant};
 use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request};
 
 pub struct Transformer {
     host: Memory,
     comms: CommunicatorGroup,
     kernels: Vec<NvidiaKernels>,
+    model_norm: Tensor<DevMemSpore>,
+    lm_head: Tensor<DevMemSpore>,
     matrix: ParameterMatrix,
 }
 
@@ -297,7 +299,6 @@ impl transformer::Transformer for Transformer {
             let mut gate_up = buf.gate_up.split(1, &[di / n as udim, di / n as udim]);
             let up = gate_up.pop().unwrap();
             let mut gate = gate_up.pop().unwrap();
-
             for (i, comm) in self.comms.call().iter().enumerate() {
                 contexts[i].apply(|ctx| {
                     let stream = unsafe { ctx.sprout(&streams[i]) };
@@ -320,31 +321,80 @@ impl transformer::Transformer for Transformer {
                 });
             }
         }
+        // decode
+        if requests[0].decode() {
+            let contexts = Arc::new(vec![self.comms.contexts().next().unwrap()]);
+            let logits = contexts[0].apply(|ctx| {
+                let stream = unsafe { ctx.sprout(&streams[0]) };
+                let kernels = self.kernels[0].on(&stream);
 
-        // kill
-        for (i, context) in contexts.iter().enumerate() {
-            context.apply(|ctx| unsafe {
-                streams[i].kill(ctx);
-                x0.physical_mut()[i].kill(ctx);
-                x1.physical_mut()[i].kill(ctx);
-                buf.qkv.physical_mut()[i].kill(ctx);
-                buf.gate_up.physical_mut()[i].kill(ctx);
-                buf.q_buf[i].kill(ctx);
-                buf.att_buf[i].kill(ctx);
-                pos.physical_mut()[i].kill(ctx);
+                let slice = {
+                    let mut dst = unsafe { ctx.sprout(&x0.physical_mut()[0]) };
+                    let dst = &mut *dst;
+                    let src = unsafe { from_raw_parts(dst.as_ptr(), dst.len()) };
+
+                    let (head, others) = requests.split_first().unwrap();
+                    let begin = head.seq_len() as usize - 1;
+
+                    let mut i_src = begin;
+                    let mut i_dst = begin;
+                    for r in others {
+                        i_src += r.seq_len() as usize;
+                        if r.decode() {
+                            i_dst += 1;
+                            if i_dst < i_src {
+                                stream.memcpy_d2d(dst, src);
+                            }
+                        }
+                    }
+                    slice![from begin, until i_dst + 1]
+                };
+                let x = x0.as_ref().slice(&[slice, slice![all]]);
+                let mut x = unsafe { x.map_physical(|u| ctx.sprout(&u[0])) };
+
+                let dt = self.host.data_type();
+                let voc = self.host.vocab_size() as udim;
+
+                let mut logits =
+                    Tensor::alloc(dt, &[x.shape()[0], voc], |len| stream.malloc::<u8>(len));
+                // 复制一个 x 以实现原地归一化
+                let x_ = unsafe {
+                    x.as_ref()
+                        .map_physical(|u| from_raw_parts(u.as_ptr(), u.len()))
+                };
+
+                let model_norm =
+                    unsafe { self.model_norm.as_ref().map_physical(|u| ctx.sprout(u)) };
+                let lm_head = unsafe { self.lm_head.as_ref().map_physical(|u| ctx.sprout(u)) };
+
+                kernels.rms_norm(&mut x, &x_, &model_norm);
+                kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
+
+                unsafe {
+                    logits.map_physical(|mem| Cache {
+                        contexts: contexts.clone(),
+                        mem: vec![mem.sporulate()],
+                    })
+                }
             });
+
+            // kill
+            for (i, context) in contexts.iter().enumerate() {
+                context.apply(|ctx| unsafe {
+                    streams[i].kill(ctx);
+                    x0.physical_mut()[i].kill(ctx);
+                    x1.physical_mut()[i].kill(ctx);
+                    buf.qkv.physical_mut()[i].kill(ctx);
+                    buf.gate_up.physical_mut()[i].kill(ctx);
+                    buf.q_buf[i].kill(ctx);
+                    buf.att_buf[i].kill(ctx);
+                    pos.physical_mut()[i].kill(ctx);
+                });
+            }
+            (requests.into_iter().map(Request::id).collect(), logits)
+        } else {
+            todo!()
         }
-        (
-            requests.into_iter().map(Request::id).collect(),
-            Tensor::new(
-                common_nv::DataType::U8,
-                &[],
-                Cache {
-                    contexts: Arc::new(vec![]),
-                    mem: vec![],
-                },
-            ),
-        )
     }
 
     fn sample<Id>(
@@ -367,17 +417,26 @@ impl Transformer {
         let contexts = dev.iter().map(Device::retain_primary).collect::<Vec<_>>();
         let kernels = NvidiaKernelsPtx::new(&host, block_size);
 
+        let comms = CommunicatorGroup::new(
+            &dev.iter()
+                .map(|dev| unsafe { dev.as_raw() })
+                .collect::<Vec<_>>(),
+        );
+        let (model_norm, lm_head) = comms.contexts().next().unwrap().apply(|ctx| {
+            (
+                ctx.from_host(host.model_norm().as_slice()).sporulate(),
+                ctx.from_host(host.lm_head().as_slice()).sporulate(),
+            )
+        });
         Self {
-            comms: CommunicatorGroup::new(
-                &dev.iter()
-                    .map(|dev| unsafe { dev.as_raw() })
-                    .collect::<Vec<_>>(),
-            ),
+            comms,
             kernels: contexts
                 .iter()
                 .map(|context| context.apply(|ctx| kernels.load(ctx)))
                 .collect(),
             matrix: ParameterMatrix::load(&host, &contexts),
+            model_norm: unsafe { host.model_norm().map_physical(|_| model_norm) },
+            lm_head: unsafe { host.lm_head().map_physical(|_| lm_head) }.transpose(&[1, 0]),
             host,
         }
     }
@@ -388,6 +447,10 @@ impl Drop for Transformer {
     fn drop(&mut self) {
         let contexts = self.comms.contexts().collect::<Vec<_>>();
         unsafe {
+            contexts[0].apply(|ctx| {
+                ctx.kill(self.model_norm.physical_mut());
+                ctx.kill(self.lm_head.physical_mut());
+            });
             self.matrix.kill(&contexts);
             for (context, kernels) in zip(contexts, &mut self.kernels) {
                 context.apply(|ctx| kernels.kill(ctx));
