@@ -17,8 +17,9 @@ pub use tensor::{slice, udim, DataType, LocalSplitable, Tensor};
 
 use cublas::{Cublas, CublasSpore};
 use cuda::{
-    memcpy_d2h, ContextGuard, ContextResource, ContextSpore, CudaDataType::f16, DevByte,
-    ModuleSpore, Ptx, Stream,
+    memcpy_d2h, ContextGuard, ContextResource, ContextSpore,
+    CudaDataType::{self, f16},
+    DevByte, ModuleSpore, Ptx, Stream,
 };
 use fused_softmax::FusedSoftmax;
 use reform::Reform;
@@ -208,6 +209,25 @@ impl Kernels for KernelRuntime<'_> {
     {
         let ModuleWapper { module, kernel } = &self.kernels.swiglu;
         kernel.launch(module, gate, up, self.stream);
+    }
+}
+
+#[inline]
+pub fn cast_dt(dt: DataType) -> CudaDataType {
+    match dt {
+        DataType::I8 => CudaDataType::i8,
+        DataType::I16 => CudaDataType::i16,
+        DataType::I32 => CudaDataType::i32,
+        DataType::I64 => CudaDataType::i64,
+        DataType::U8 => CudaDataType::u8,
+        DataType::U16 => CudaDataType::u16,
+        DataType::U32 => CudaDataType::u32,
+        DataType::U64 => CudaDataType::u64,
+        DataType::F16 => CudaDataType::f16,
+        DataType::BF16 => CudaDataType::bf16,
+        DataType::F32 => CudaDataType::f32,
+        DataType::F64 => CudaDataType::f64,
+        _ => unreachable!(),
     }
 }
 

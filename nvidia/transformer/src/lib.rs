@@ -274,7 +274,7 @@ impl Transformer {
 
             let req_slice = &[slice![all], slice![from req, take seq_len], slice![all]];
             let cat_slice = &[slice![all], slice![from pos, take seq_len], slice![all]];
-            let att_slice = &[slice![all], slice![from   0, take att_len], slice![all]];
+            let att_slice = &[slice![all], slice![          take att_len], slice![all]];
             req += seq_len;
 
             let q = q.clone().slice(req_slice);

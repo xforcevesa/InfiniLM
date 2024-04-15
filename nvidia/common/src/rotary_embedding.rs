@@ -60,14 +60,14 @@ extern "C" __global__ void {name}(
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
-        let &[n, nh, dh] = t.shape() else {
+        let &[nt, nh, dh] = t.shape() else {
             panic!("Invalid shape");
         };
 
         assert!(t.contiguous_len() >= 2);
         assert_eq!(t.data_type(), DataType::F16);
         assert_eq!(pos.data_type(), DataType::U32);
-        assert_eq!(pos.shape(), &[n]);
+        assert_eq!(pos.shape(), &[nt]);
         assert!(dh < self.block_size);
 
         let t_ptr = (t.physical().as_ptr() as isize + t.bytes_offset()) as CUdeviceptr;
@@ -82,6 +82,6 @@ extern "C" __global__ void {name}(
 
         let module = unsafe { module.sprout(stream.ctx()) };
         let kernel = module.get_kernel(&self.f);
-        kernel.launch((nh, n), dh / 2, params.as_ptr(), 0, Some(stream))
+        kernel.launch((nh, nt), dh / 2, params.as_ptr(), 0, Some(stream))
     }
 }
