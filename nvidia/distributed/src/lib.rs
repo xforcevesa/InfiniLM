@@ -9,9 +9,7 @@ pub use common_nv::cuda;
 
 use common_nv::{
     cast_dt,
-    cuda::{
-        memcpy_d2h, AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore,
-    },
+    cuda::{memcpy_d2h, AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device},
     slice, udim, utok, DataType, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use half::f16;
@@ -83,7 +81,7 @@ impl transformer::Transformer for Transformer {
         let n = contexts.len();
 
         // token embedding
-        let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
+        let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, len));
         contexts[0].apply(|ctx| {
             let stream = unsafe { ctx.sprout(&streams[0]) };
             let kernels = self.kernels[0].on(&stream);
@@ -101,15 +99,13 @@ impl transformer::Transformer for Transformer {
                 comm.broadcast(&mut dst, None, 0, &stream);
             });
         }
-        let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
+        let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, len));
         let LayerBuffer {
             qkv,
             gate_up,
             q_buf,
             att_buf,
-        } = LayerBuffer::alloc(&self.host, &requests, |len| {
-            malloc_all(&contexts, &streams, len / n)
-        });
+        } = LayerBuffer::alloc(&self.host, &requests, |len| malloc_all(&contexts, len / n));
         let mut buf = LayerBuffer {
             qkv: {
                 let &[a, b] = qkv.shape() else { panic!() };
@@ -484,13 +480,10 @@ impl Drop for Cache {
     }
 }
 
-fn malloc_all(contexts: &[Context], streams: &[StreamSpore], len: usize) -> Vec<DevMemSpore> {
+fn malloc_all(contexts: &[Context], len: usize) -> Vec<DevMemSpore> {
     contexts
         .iter()
-        .zip(streams)
-        .map(|(context, stream)| {
-            context.apply(|ctx| unsafe { ctx.sprout(stream) }.malloc::<u8>(len).sporulate())
-        })
+        .map(|context| context.apply(|ctx| ctx.malloc::<u8>(len).sporulate()))
         .collect()
 }
 
