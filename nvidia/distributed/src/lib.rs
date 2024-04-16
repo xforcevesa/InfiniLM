@@ -84,27 +84,22 @@ impl transformer::Transformer for Transformer {
 
         // token embedding
         let mut x0 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
-        {
-            let d = d as usize * dt.size();
-            let table = self.host.embed_tokens();
-            let table = table.as_slice();
-
-            let iter = requests
-                .iter()
-                .flat_map(Request::tokens)
-                .copied()
-                .map(|t| t as usize)
-                .enumerate();
-
-            for (i, context) in contexts.iter().enumerate() {
-                context.apply(|ctx| {
-                    let stream = unsafe { ctx.sprout(&streams[i]) };
-                    let mut dst = unsafe { ctx.sprout(&x0.physical_mut()[i]) };
-                    for (i, t) in iter.clone() {
-                        stream.memcpy_h2d(&mut dst[i * d..][..d], &table[t * d..][..d]);
-                    }
-                });
-            }
+        contexts[0].apply(|ctx| {
+            let stream = unsafe { ctx.sprout(&streams[0]) };
+            let kernels = self.kernels[0].on(&stream);
+            let mut x = unsafe { x0.as_mut().map_physical(|u| ctx.sprout(&u[0])) };
+            kernels.gather(
+                &mut x,
+                &self.host.embed_tokens(),
+                requests.iter().flat_map(Request::tokens).copied(),
+            );
+        });
+        for (i, comm) in self.comms.call().into_iter().enumerate() {
+            contexts[i].apply(|ctx| {
+                let stream = unsafe { ctx.sprout(&streams[i]) };
+                let mut dst = unsafe { ctx.sprout(&x0.physical_mut()[i]) };
+                comm.broadcast(&mut dst, None, 0, &stream);
+            });
         }
         let mut x1 = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, &streams, len));
         let LayerBuffer {
