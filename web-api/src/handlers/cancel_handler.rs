@@ -1,6 +1,4 @@
-use crate::response::Response;
-use crate::schemas;
-use crate::AppState;
+use crate::{response, schemas, AppState};
 use actix_web::{post, web, HttpResponse};
 
 #[post("/cancel")]
@@ -10,7 +8,7 @@ pub async fn cancel(
 ) -> HttpResponse {
     info!("Request from {}: cancel infer", request.session_id);
     match app_state.service_manager.cancel_session(&request) {
-        Ok(s) => Response::success(s),
-        Err(e) => Response::error(e),
+        Ok(s) => response::success(s),
+        Err(e) => response::error(e),
     }
 }

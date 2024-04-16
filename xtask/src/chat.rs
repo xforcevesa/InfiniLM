@@ -179,12 +179,13 @@ impl Chatting {
 
     async fn infer(&mut self, text: &str) {
         print_now!("{}", "AI: ".green());
-        self.session
-            .chat(text, |s| match s {
+        let mut busy = self.session.chat(text);
+        while let Some(s) = busy.receive().await {
+            match &*s {
                 "\\n" => println!(),
                 _ => print_now!("{s}"),
-            })
-            .await;
+            }
+        }
         println!();
     }
 }

@@ -30,12 +30,11 @@ impl InferenceArgs {
         };
 
         print!("{prompt}");
-        service
-            .launch()
-            .generate(&prompt, |piece| {
-                print!("{piece}");
-                std::io::stdout().flush().unwrap();
-            })
-            .await;
+        let mut session = service.launch();
+        let mut busy = session.generate(&prompt);
+        while let Some(s) = busy.receive().await {
+            print!("{s}");
+            std::io::stdout().flush().unwrap();
+        }
     }
 }

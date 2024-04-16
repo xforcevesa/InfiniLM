@@ -1,30 +1,45 @@
+//! All HttpResponses in this App.
+
 use crate::schemas;
 use actix_web::{web, Error, HttpResponse};
 use futures::Stream;
+use serde::Serialize;
 
-/// All HttpResponses in this App
-pub struct Response;
+#[inline]
+pub fn text_stream(
+    stream: impl Stream<Item = Result<web::Bytes, Error>> + 'static,
+) -> HttpResponse {
+    HttpResponse::Ok()
+        .content_type("text/event-stream")
+        .streaming(stream)
+}
 
-impl Response {
-    pub fn text_stream(
-        stream: impl Stream<Item = Result<web::Bytes, Error>> + 'static,
-    ) -> HttpResponse {
-        HttpResponse::Ok()
-            .content_type("text/event-stream")
-            .streaming(stream)
+#[inline]
+pub fn success(s: impl schemas::Success) -> HttpResponse {
+    #[derive(Serialize)]
+    struct SuccessResponse<'a> {
+        result: &'a str,
+        extra: Option<serde_json::Value>,
     }
 
-    pub fn error(e: schemas::Error) -> HttpResponse {
-        let err = schemas::ErrorResponse { error: e.msg() };
-        HttpResponse::Ok()
-            .content_type("application/json")
-            .json(err)
+    HttpResponse::Ok()
+        .content_type("application/json")
+        .json(SuccessResponse {
+            result: s.msg(),
+            extra: s.extra(),
+        })
+}
+
+#[inline]
+pub fn error(e: schemas::Error) -> HttpResponse {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
     }
 
-    pub fn success(s: schemas::Success) -> HttpResponse {
-        let success = schemas::SuccessResponse { result: s.msg() };
-        HttpResponse::Ok()
-            .content_type("application/json")
-            .json(success)
-    }
+    HttpResponse::Ok()
+        .content_type("application/json")
+        .json(ErrorResponse {
+            error: e.msg().into(),
+        })
 }

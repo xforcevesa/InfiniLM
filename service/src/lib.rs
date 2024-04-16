@@ -166,12 +166,11 @@ fn test() {
 
     for ((prompt, color), mut session) in zip(tasks, sessions) {
         set.spawn(async move {
-            session
-                .chat(prompt, |s| {
-                    print!("{}", s.color(color));
-                    std::io::stdout().flush().unwrap();
-                })
-                .await;
+            let mut busy = session.chat(prompt);
+            while let Some(s) = busy.receive().await {
+                print!("{}", s.color(color));
+                std::io::stdout().flush().unwrap();
+            }
         });
     }
 

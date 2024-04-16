@@ -16,13 +16,14 @@ transformer-nv = { path = "../nvidia/transformer", optional = true }
 distributed = { path = "../nvidia/distributed", optional = true }
 half.workspace = true
 log.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio.workspace = true
 
 [build-dependencies]
 search-cuda-tools.workspace = true
 
 [dev-dependencies]
 colored = "2.1"
+tokio = { workspace = true, features = ["time"] }
 
 [features]
 nvidia = ["transformer-nv", "distributed"]

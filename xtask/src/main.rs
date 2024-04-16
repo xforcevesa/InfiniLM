@@ -29,7 +29,7 @@ fn block_on(f: impl Future) {
     runtime.shutdown_background();
     #[cfg(feature = "nvidia")]
     {
-        service::synchronize();
+        ::service::synchronize();
     }
 }
 

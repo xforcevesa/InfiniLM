@@ -1,6 +1,7 @@
 ﻿use crate::template::Template;
 use common::utok;
 use std::{
+    borrow::Cow,
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
         Arc, Mutex,
@@ -8,7 +9,9 @@ use std::{
     time::Instant,
 };
 use tokenizer::{Normalizer, Tokenizer};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, WeakUnboundedSender};
+use tokio::sync::mpsc::{
+    unbounded_channel, UnboundedReceiver, UnboundedSender, WeakUnboundedSender,
+};
 use transformer::{LayerCache, Request};
 
 pub struct Session {
@@ -42,24 +45,22 @@ impl Session {
     }
 
     #[inline]
-    pub async fn chat(&mut self, prompt: &str, f: impl FnMut(&str)) {
-        self.send(&self.component.template.apply_chat(prompt), f)
-            .await;
+    pub fn chat(&mut self, prompt: &str) -> BusySession {
+        self.send(&self.component.template.apply_chat(prompt))
     }
 
     #[inline]
-    pub async fn generate(&mut self, prompt: &str, f: impl FnMut(&str)) {
-        self.send(&self.component.template.normalize(prompt), f)
-            .await;
+    pub fn generate(&mut self, prompt: &str) -> BusySession {
+        self.send(&self.component.template.normalize(prompt))
     }
 
-    async fn send(&self, prompt: &str, mut f: impl FnMut(&str)) {
+    fn send(&mut self, prompt: &str) -> BusySession {
         let _stamp = Instant::now();
 
         let prompt = self.component.normalizer.encode(prompt);
         let prompt = self.component.tokenizer.encode(&prompt);
 
-        let (responsing, mut receiver) = unbounded_channel();
+        let (responsing, receiver) = unbounded_channel();
         self.abort_handle
             .lock()
             .unwrap()
@@ -75,10 +76,9 @@ impl Session {
         );
 
         self.component.sender.send(chat).unwrap();
-        while let Some(Respond::Token(token)) = receiver.recv().await {
-            let piece = self.component.tokenizer.decode(token);
-            let piece = self.component.normalizer.decode(piece);
-            f(&piece);
+        BusySession {
+            session: self,
+            receiver,
         }
     }
 }
@@ -87,6 +87,26 @@ impl Drop for Session {
     #[inline]
     fn drop(&mut self) {
         self.component.sender.send(Command::Drop(self.id)).unwrap();
+    }
+}
+
+pub struct BusySession<'a> {
+    session: &'a mut Session,
+    receiver: UnboundedReceiver<Respond>,
+}
+
+impl BusySession<'_> {
+    pub async fn receive(&mut self) -> Option<Cow<str>> {
+        if let Some(Respond::Token(token)) = self.receiver.recv().await {
+            let SessionComponent {
+                normalizer,
+                tokenizer,
+                ..
+            } = &*self.session.component;
+            Some(normalizer.decode(tokenizer.decode(token)))
+        } else {
+            None
+        }
     }
 }
 
