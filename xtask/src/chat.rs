@@ -180,7 +180,7 @@ impl Chatting {
     async fn infer(&mut self, text: &str) {
         print_now!("{}", "AI: ".green());
         let mut busy = self.session.chat(text);
-        while let Some(s) = busy.receive().await {
+        while let Some(s) = busy.decode().await {
             match &*s {
                 "\\n" => println!(),
                 _ => print_now!("{s}"),

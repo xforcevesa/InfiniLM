@@ -32,7 +32,7 @@ impl InferenceArgs {
         print!("{prompt}");
         let mut session = service.launch();
         let mut busy = session.generate(&prompt);
-        while let Some(s) = busy.receive().await {
+        while let Some(s) = busy.decode().await {
             print!("{s}");
             std::io::stdout().flush().unwrap();
         }

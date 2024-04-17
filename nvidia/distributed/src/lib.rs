@@ -97,7 +97,7 @@ impl transformer::Transformer for Transformer {
                 requests.iter().flat_map(Request::tokens).copied(),
             );
         });
-        for (i, comm) in self.comms.call().into_iter().enumerate() {
+        for (i, comm) in self.comms.call().iter().enumerate() {
             contexts[i].apply(|ctx| {
                 let stream = unsafe { ctx.sprout(&streams[i]) };
                 let mut dst = unsafe { ctx.sprout(&x0.physical_mut()[i]) };
@@ -314,7 +314,7 @@ impl transformer::Transformer for Transformer {
                         1.,
                     );
                     comm.all_reduce(
-                        &mut x0.physical_mut(),
+                        x0.physical_mut(),
                         None,
                         cast_dt(self.host.data_type()),
                         nccl::ReduceType::ncclSum,

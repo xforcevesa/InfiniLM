@@ -7,7 +7,10 @@ pub async fn cancel(
     request: web::Json<schemas::CancelRequest>,
 ) -> HttpResponse {
     info!("Request from {}: cancel infer", request.session_id);
-    match app_state.service_manager.cancel_session(&request) {
+    match app_state
+        .service_manager
+        .cancel_session(request.into_inner())
+    {
         Ok(s) => response::success(s),
         Err(e) => response::error(e),
     }

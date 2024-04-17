@@ -12,7 +12,7 @@ use std::{
 pub fn find() -> Option<PathBuf> {
     let model = var_os("TEST_MODEL")?;
     if let Ok(path) = canonicalize(&model) {
-        return Some(path.into());
+        return Some(path);
     }
 
     let output = Command::new(env!("CARGO"))
@@ -26,7 +26,7 @@ pub fn find() -> Option<PathBuf> {
         .parent()
         .unwrap();
     if let Ok(path) = canonicalize(workspace.join(model)) {
-        return Some(path.into());
+        return Some(path);
     }
 
     None

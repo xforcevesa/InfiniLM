@@ -17,7 +17,6 @@ use tokio::{sync::mpsc::unbounded_channel, task::JoinSet};
 use transformer::SampleArgs;
 
 pub use session::Session;
-pub use session::SessionHandle;
 
 #[macro_use]
 extern crate log;
@@ -125,8 +124,8 @@ fn tokenizer(model_dir: impl AsRef<Path>) -> Box<dyn Tokenizer + Send + Sync> {
 #[test]
 fn test() {
     use colored::{Color, Colorize};
-    use std::{io::Write, iter::zip, time::Duration};
-    use tokio::{runtime::Builder, task::JoinSet, time::sleep};
+    use std::{io::Write, iter::zip};
+    use tokio::{runtime::Builder, task::JoinSet};
 
     let Some(model_dir) = common::test_model::find() else {
         return;
@@ -158,16 +157,10 @@ fn test() {
 
     let sessions = tasks.iter().map(|_| service.launch()).collect::<Vec<_>>();
 
-    let handle = sessions.last().unwrap().handle();
-    set.spawn(async move {
-        sleep(Duration::from_secs(3)).await;
-        handle.abort();
-    });
-
     for ((prompt, color), mut session) in zip(tasks, sessions) {
         set.spawn(async move {
             let mut busy = session.chat(prompt);
-            while let Some(s) = busy.receive().await {
+            while let Some(s) = busy.decode().await {
                 print!("{}", s.color(color));
                 std::io::stdout().flush().unwrap();
             }
@@ -178,7 +171,7 @@ fn test() {
     runtime.shutdown_background();
 }
 
-#[cfg(all(feature = "nvidia"))]
+#[cfg(feature = "nvidia")]
 pub fn synchronize() {
     #[cfg(detected_cuda)]
     {

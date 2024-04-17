@@ -4,20 +4,17 @@ use std::{
     borrow::Cow,
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
-        Arc, Mutex,
+        Arc,
     },
     time::Instant,
 };
 use tokenizer::{Normalizer, Tokenizer};
-use tokio::sync::mpsc::{
-    unbounded_channel, UnboundedReceiver, UnboundedSender, WeakUnboundedSender,
-};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use transformer::{LayerCache, Request};
 
 pub struct Session {
     id: usize,
     component: Arc<SessionComponent>,
-    abort_handle: Arc<Mutex<Option<WeakUnboundedSender<Respond>>>>,
 }
 
 impl Session {
@@ -27,21 +24,12 @@ impl Session {
         Self {
             id: ID_ROOT.fetch_add(1, Relaxed),
             component,
-            abort_handle: Default::default(),
         }
     }
 
     #[inline]
     pub const fn id(&self) -> usize {
         self.id
-    }
-
-    #[inline]
-    pub fn handle(&self) -> SessionHandle {
-        SessionHandle {
-            id: self.id,
-            abort_handle: self.abort_handle.clone(),
-        }
     }
 
     #[inline]
@@ -61,11 +49,6 @@ impl Session {
         let prompt = self.component.tokenizer.encode(&prompt);
 
         let (responsing, receiver) = unbounded_channel();
-        self.abort_handle
-            .lock()
-            .unwrap()
-            .replace(responsing.downgrade());
-
         let chat = Command::Infer(
             self.id,
             Box::new(Infer {
@@ -92,12 +75,12 @@ impl Drop for Session {
 
 pub struct BusySession<'a> {
     session: &'a mut Session,
-    receiver: UnboundedReceiver<Respond>,
+    receiver: UnboundedReceiver<utok>,
 }
 
 impl BusySession<'_> {
-    pub async fn receive(&mut self) -> Option<Cow<str>> {
-        if let Some(Respond::Token(token)) = self.receiver.recv().await {
+    pub async fn decode(&mut self) -> Option<Cow<str>> {
+        if let Some(token) = self.receiver.recv().await {
             let SessionComponent {
                 normalizer,
                 tokenizer,
@@ -110,45 +93,15 @@ impl BusySession<'_> {
     }
 }
 
-pub struct SessionHandle {
-    id: usize,
-    abort_handle: Arc<Mutex<Option<WeakUnboundedSender<Respond>>>>,
-}
-
-impl SessionHandle {
-    #[inline]
-    pub const fn id(&self) -> usize {
-        self.id
-    }
-
-    #[inline]
-    pub fn abort(&self) {
-        if let Some(sender) = self
-            .abort_handle
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(WeakUnboundedSender::upgrade)
-        {
-            let _ = sender.send(Respond::Abort);
-        }
-    }
-}
-
 pub(crate) enum Command {
     Infer(usize, Box<Infer>),
     Drop(usize),
 }
 
-pub(crate) enum Respond {
-    Token(utok),
-    Abort,
-}
-
 pub(crate) struct Infer {
     pub _stamp: Instant,
     pub prompt: Vec<utok>,
-    pub responsing: UnboundedSender<Respond>,
+    pub responsing: UnboundedSender<utok>,
 }
 
 pub(crate) struct SessionComponent {

@@ -22,7 +22,7 @@ pub async fn start_infer_service(
 ) -> std::io::Result<()> {
     info!("start service at {addrs:?}");
     let app_state = web::Data::new(AppState {
-        service_manager: Arc::new(ServiceManager::from(Arc::new(service))),
+        service_manager: Arc::new(service.into()),
     });
     HttpServer::new(move || {
         App::new()
