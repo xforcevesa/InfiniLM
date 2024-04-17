@@ -137,7 +137,7 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     assert!(!tensors.is_empty());
     assert!(tensors
         .windows(2)
-        .all(|t| t[0].data_type() == t[1].data_type() && t[0].shape()[1..] == t[1].shape()[1..]));
+        .all(|t| t[0].data_type() == t[1].data_type()));
 
     let data_type = tensors[0].data_type();
     let mut shape = Shape::from_slice(tensors[0].shape());

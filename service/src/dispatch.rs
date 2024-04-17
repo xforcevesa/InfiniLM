@@ -68,7 +68,7 @@ where
 
     pub fn manage(&mut self) -> UnboundedSender<Message<T::Cache>> {
         let (sender, mut receiver) = unbounded_channel();
-        let max_seq_len = self.transformer.model().max_position_embeddings();
+        let max_seq_len = self.transformer.max_position_embeddings();
         let transformer = self.transformer.clone();
         let batcher = self.batcher.clone();
         self.set.spawn(async move {
@@ -108,8 +108,8 @@ where
         sample: Arc<Mutex<SampleArgs>>,
         sender: UnboundedSender<Message<T::Cache>>,
     ) {
-        let max_seq_len = self.transformer.model().max_position_embeddings();
-        let eos = self.transformer.model().eos_token_id();
+        let max_seq_len = self.transformer.max_position_embeddings();
+        let eos = self.transformer.eos_token();
         let transformer = self.transformer.clone();
         let batcher = self.batcher.clone();
         self.set.spawn_blocking(move || loop {

@@ -1,6 +1,6 @@
 mod kernel;
 
-use common::Blob;
+use common::{utok, Blob};
 use gemm::f16;
 use kernel::CpuKernels;
 use tensor::{reslice, slice, udim, DataType, LocalSplitable, Tensor};
@@ -12,8 +12,13 @@ impl transformer::Transformer for Transformer {
     type Cache = Blob;
 
     #[inline]
-    fn model(&self) -> &dyn Llama2 {
-        &self.0
+    fn max_position_embeddings(&self) -> usize {
+        self.0.max_position_embeddings()
+    }
+
+    #[inline]
+    fn eos_token(&self) -> utok {
+        self.0.eos_token_id()
     }
 
     #[inline]
@@ -66,7 +71,7 @@ impl transformer::Transformer for Transformer {
         args: &SampleArgs,
         requests: Vec<Id>,
         logits: Tensor<Self::Cache>,
-    ) -> Vec<(Id, common::utok)> {
+    ) -> Vec<(Id, utok)> {
         let &[_, voc] = logits.shape() else { panic!() };
         let dt = logits.data_type();
 

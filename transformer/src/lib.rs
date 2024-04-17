@@ -28,7 +28,8 @@ use tensor::Tensor;
 pub trait Transformer {
     type Cache;
 
-    fn model(&self) -> &dyn Llama2;
+    fn max_position_embeddings(&self) -> usize;
+    fn eos_token(&self) -> utok;
     fn new_cache(&self) -> Vec<LayerCache<Self::Cache>>;
     fn decode<Id>(&self, requests: Vec<Request<Id, Self::Cache>>)
         -> (Vec<Id>, Tensor<Self::Cache>);

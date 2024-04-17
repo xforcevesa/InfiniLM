@@ -31,8 +31,13 @@ impl transformer::Transformer for Transformer {
     type Cache = Cache;
 
     #[inline]
-    fn model(&self) -> &dyn Llama2 {
-        &self.host
+    fn max_position_embeddings(&self) -> usize {
+        self.host.max_position_embeddings()
+    }
+
+    #[inline]
+    fn eos_token(&self) -> utok {
+        self.host.eos_token_id()
     }
 
     #[inline]
