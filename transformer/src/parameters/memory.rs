@@ -184,7 +184,7 @@ fn test_load() {
     println!("model_dir: {}", model_dir.display());
 
     let t0 = Instant::now();
-    let safetensors = Memory::load_safetensors_from_dir(model_dir);
+    let safetensors = Memory::load_safetensors(model_dir);
     let t1 = Instant::now();
     println!("mmap {:?}", t1 - t0);
 

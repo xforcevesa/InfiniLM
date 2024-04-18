@@ -165,7 +165,7 @@ fn test_load() {
     SimpleLogger::new().with_level(Trace).init().unwrap();
 
     let time = Instant::now();
-    let safetensors = Memory::load_safetensors_from_dir(model_dir);
+    let safetensors = Memory::load_safetensors(model_dir);
     info!("mmap {:?}", time.elapsed());
 
     let model = match safetensors {

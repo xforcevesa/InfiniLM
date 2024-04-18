@@ -1,29 +1,27 @@
 ﻿use super::{memory::Layer, storage::HostMem, ConfigJson, Memory, Storage};
 use common::{
-    safe_tensors::{Dtype, SafeTensors, SafeTensorsError},
+    safe_tensors::{
+        Dtype, SafeTensors,
+        SafeTensorsError::{self, Io, Json},
+    },
     Blob,
 };
-use std::{fs::File, io::Read, ops::DerefMut, path::Path, sync::Arc};
+use std::{fs::File, ops::DerefMut, path::Path, sync::Arc};
 use tensor::{udim, DataType, Shape, Tensor};
 
 impl Memory {
-    pub fn load_safetensors_from_dir(
-        model_dir: impl AsRef<Path>,
-    ) -> Result<Self, SafeTensorsError> {
-        let model_dir = model_dir.as_ref();
-        let config = File::open(model_dir.join("config.json")).map_err(SafeTensorsError::Io)?;
-        let model = SafeTensors::load_from_dir(model_dir)?;
-        Self::load_safetensors(config, model, Some(Blob::new)).map_err(SafeTensorsError::Json)
+    pub fn load_safetensors(model_dir: impl AsRef<Path>) -> Result<Self, SafeTensorsError> {
+        Self::load_safetensors_realloc(model_dir, Some(Blob::new))
     }
 
-    pub fn load_safetensors<T: HostMem + DerefMut<Target = [u8]>>(
-        config: impl Read,
-        model: SafeTensors,
+    pub fn load_safetensors_realloc<T: HostMem + DerefMut<Target = [u8]>>(
+        model_dir: impl AsRef<Path>,
         mut realloc: Option<impl FnMut(usize) -> T>,
-    ) -> Result<Self, serde_json::Error> {
-        let config: ConfigJson = serde_json::from_reader(config)?;
+    ) -> Result<Self, SafeTensorsError> {
+        let config = File::open(model_dir.as_ref().join("config.json")).map_err(Io)?;
+        let config: ConfigJson = serde_json::from_reader(&config).map_err(Json)?;
+        let model = SafeTensors::load_from_dir(model_dir)?.share();
 
-        let model = model.share();
         let tensor = |name: &str| {
             let shared = model
                 .share_tensor(name)

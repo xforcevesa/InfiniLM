@@ -2,25 +2,19 @@
 
 mod parameters;
 
-#[macro_use]
-extern crate log;
-
 pub use common_nv::cuda;
 
 use ::half::f16;
 use common_nv::{
     cuda::{memcpy_d2h, DevMem, DevMemSpore},
-    slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, SafeTensors,
-    Tensor,
+    slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use cuda::{Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use std::{
-    fs::File,
     path::Path,
     slice::from_raw_parts,
     sync::{Arc, Mutex},
-    time::Instant,
 };
 use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request, SampleArgs};
 
@@ -140,15 +134,9 @@ type Splitable<'ctx> = LocalSplitable<DevMem<'ctx>>;
 
 impl Transformer {
     pub fn new(model_dir: impl AsRef<Path>, preload_layers: usize, dev: Device) -> Self {
-        let time = Instant::now();
-        let config = File::open(model_dir.as_ref().join("config.json")).unwrap();
-        let model = SafeTensors::load_from_dir(model_dir).unwrap();
-        info!("open file {:?}", time.elapsed());
-
         let context = Arc::new(dev.retain_primary());
-        let host = Memory::load_safetensors(
-            config,
-            model,
+        let host = Memory::load_safetensors_realloc(
+            model_dir,
             Some(|l| context.apply(|ctx| ctx.malloc_host::<u8>(l).sporulate())),
         )
         .unwrap();

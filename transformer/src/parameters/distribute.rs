@@ -293,7 +293,7 @@ fn test() {
     println!("model_dir: {}", model_dir.display());
 
     let time = Instant::now();
-    let safetensors = Memory::load_safetensors_from_dir(model_dir);
+    let safetensors = Memory::load_safetensors(model_dir);
     println!("mmap {:?}", time.elapsed());
 
     let model = match safetensors {

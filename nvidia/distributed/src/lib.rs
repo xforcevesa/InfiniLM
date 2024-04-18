@@ -422,7 +422,7 @@ impl transformer::Transformer for Transformer {
 impl Transformer {
     pub fn new(model_dir: impl AsRef<Path>, dev: &[Device]) -> Self {
         let time = Instant::now();
-        let host = Memory::load_safetensors_from_dir(model_dir).unwrap();
+        let host = Memory::load_safetensors(model_dir).unwrap();
         info!("load host: {:?}", time.elapsed());
 
         let block_size = dev.iter().map(|dev| dev.max_block_dims().0).min().unwrap();
