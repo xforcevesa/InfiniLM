@@ -1,22 +1,24 @@
 ﻿//! safetensors 文件的加载和访问。
 
 use memmap2::Mmap;
-use safetensors::tensor::TensorInfo;
 use std::{
-    collections::HashMap,
+    collections::{hash_map, HashMap},
     fs::File,
     io::{Error as IoError, ErrorKind::NotFound},
     mem::size_of_val,
+    ops::Deref,
     path::Path,
+    pin::Pin,
+    sync::Arc,
 };
 use SafeTensorsError::{Io, Json};
 
-pub use safetensors::Dtype;
+pub use safetensors::{tensor::TensorInfo, Dtype};
 
 /// safetensors 文件的统一结构。
 pub struct SafeTensors {
-    tensors: HashMap<String, (usize, TensorInfo)>,
-    files: Vec<(Mmap, String)>,
+    tensors: HashMap<String, (usize, TensorInfo)>, // name -> (file_index, tensor_info)
+    files: Vec<(Mmap, String)>,                    // file_index -> (mmap, format)
 }
 
 /// 加载 safetensors 文件可能产生的错误。
@@ -44,7 +46,7 @@ pub struct SafeTensor<'a> {
 /// [SafeTensors] 的张量迭代器。
 pub struct Iter<'a> {
     obj: &'a SafeTensors,
-    iter: std::collections::hash_map::Iter<'a, String, (usize, TensorInfo)>,
+    iter: hash_map::Iter<'a, String, (usize, TensorInfo)>,
 }
 
 impl SafeTensors {
@@ -94,7 +96,7 @@ impl SafeTensors {
         // 加载索引文件
         let index = File::open(&path).map_err(Io)?;
         let index = unsafe { Mmap::map(&index) }.map_err(Io)?;
-        let index: SafeTensorIndex = serde_json::from_slice(&index).map_err(Json)?;
+        let index: SafeTensorsIndex = serde_json::from_slice(&index).map_err(Json)?;
         // 初始化状态
         let mut tensors = HashMap::new();
         let mut file_map = HashMap::new();
@@ -129,6 +131,29 @@ impl SafeTensors {
         }
 
         Ok(Self { tensors, files })
+    }
+
+    /// 共享自身。
+    #[inline]
+    pub fn share(self) -> Pin<Arc<Self>> {
+        Pin::new(Arc::new(self))
+    }
+
+    /// 从共享的 [SafeTensors] 中获取共享的张量。
+    pub fn share_tensor(self: &Pin<Arc<Self>>, name: &str) -> Option<SharedTensor> {
+        let value = self.tensors.get(name)?;
+        let data = self.get_internal(value.0, &value.1).data;
+        Some(SharedTensor {
+            safetensors: self.clone(),
+            value: unsafe { &*(value as *const _) },
+            data: unsafe { &*(data as *const _) },
+        })
+    }
+
+    /// 检查张量是否存在。
+    #[inline]
+    pub fn contains(&self, name: &str) -> bool {
+        self.tensors.contains_key(name)
     }
 
     /// 获取张量。
@@ -192,35 +217,77 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
+/// 共享的张量。
+#[derive(Clone)]
+pub struct SharedTensor {
+    safetensors: Pin<Arc<SafeTensors>>,
+    value: &'static (usize, TensorInfo),
+    data: &'static [u8],
+}
+
+impl Deref for SharedTensor {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+impl SharedTensor {
+    /// 数据类型。
+    #[inline]
+    pub fn dtype(&self) -> Dtype {
+        self.value.1.dtype
+    }
+
+    /// 形状。
+    #[inline]
+    pub fn shape(&self) -> &[usize] {
+        &self.value.1.shape
+    }
+
+    /// 文件格式。
+    #[inline]
+    pub fn format(&self) -> &str {
+        &self.safetensors.files[self.value.0].1
+    }
+
+    /// 数据。
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
+}
+
 #[allow(missing_docs)]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct SafeTensorIndex {
-    pub metadata: SafeTensorIndexMetadata,
+pub struct SafeTensorsIndex {
+    pub metadata: SafeTensorsIndexMetadata,
     pub weight_map: HashMap<String, String>,
 }
 
 #[allow(missing_docs)]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct SafeTensorIndexMetadata {
+pub struct SafeTensorsIndexMetadata {
     pub total_size: usize,
 }
 
 #[allow(missing_docs)]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct SafeTensorHeader {
+pub struct SafeTensorsHeader {
     #[serde(flatten)]
     pub tensors: HashMap<String, TensorInfo>,
     #[serde(rename = "__metadata__")]
-    pub metadata: SafeTensorHeaderMetadata,
+    pub metadata: SafeTensorsHeaderMetadata,
 }
 
 #[allow(missing_docs)]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct SafeTensorHeaderMetadata {
+pub struct SafeTensorsHeaderMetadata {
     pub format: String,
 }
 
-fn load_header(file: &Mmap) -> Result<SafeTensorHeader, SafeTensorsError> {
+fn load_header(file: &Mmap) -> Result<SafeTensorsHeader, SafeTensorsError> {
     let header_len = unsafe { *file.as_ptr().cast::<u64>() };
     let header = &file[size_of_val(&header_len)..][..header_len as _];
     serde_json::from_slice(header).map_err(Json)

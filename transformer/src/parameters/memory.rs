@@ -1,6 +1,6 @@
 ﻿use super::{ConfigJson, DataType, Llama2, Storage};
 use common::utok;
-use tensor::Tensor;
+use tensor::{slice, Tensor};
 
 pub struct Memory {
     pub(super) config: ConfigJson,
@@ -98,32 +98,30 @@ impl Llama2 for Memory {
     #[inline]
     fn self_attn_q_proj(&self, layer: usize) -> Tensor<Storage> {
         let d = self.config.hidden_size;
-        let dt = self.config.torch_dtype.size();
-        let mut physical = self.layers[layer].w_qkv.physical().clone();
-        physical.range.end = physical.range.start + d * d * dt;
-        Tensor::new(self.config.torch_dtype, &[d as _, d as _], physical)
+        self.layers[layer]
+            .w_qkv
+            .clone()
+            .slice(&[slice![take d], slice![all]])
     }
 
     #[inline]
     fn self_attn_k_proj(&self, layer: usize) -> Tensor<Storage> {
         let d = self.config.hidden_size;
         let dkv = self.kv_hidden_size();
-        let dt = self.config.torch_dtype.size();
-        let mut physical = self.layers[layer].w_qkv.physical().clone();
-        physical.range.start += d * d * dt;
-        physical.range.end = physical.range.start + dkv * d * dt;
-        Tensor::new(self.config.torch_dtype, &[dkv as _, d as _], physical)
+        self.layers[layer]
+            .w_qkv
+            .clone()
+            .slice(&[slice![from d, take dkv], slice![all]])
     }
 
     #[inline]
     fn self_attn_v_proj(&self, layer: usize) -> Tensor<Storage> {
         let d = self.config.hidden_size;
         let dkv = self.kv_hidden_size();
-        let dt = self.config.torch_dtype.size();
-        let mut physical = self.layers[layer].w_qkv.physical().clone();
-        physical.range.start += (d + dkv) * d * dt;
-        physical.range.end = physical.range.start + dkv * d * dt;
-        Tensor::new(self.config.torch_dtype, &[dkv as _, d as _], physical)
+        self.layers[layer]
+            .w_qkv
+            .clone()
+            .slice(&[slice![from d + dkv, take dkv], slice![all]])
     }
 
     #[inline]
@@ -144,11 +142,10 @@ impl Llama2 for Memory {
     #[inline]
     fn mlp_gate(&self, layer: usize) -> Tensor<Storage> {
         let di = self.config.intermediate_size;
-        let d = self.config.hidden_size;
-        let dt = self.config.torch_dtype.size();
-        let mut physical = self.layers[layer].mlp_gate_up.physical().clone();
-        physical.range.end = physical.range.start + di * d * dt;
-        Tensor::new(self.config.torch_dtype, &[di as _, d as _], physical)
+        self.layers[layer]
+            .mlp_gate_up
+            .clone()
+            .slice(&[slice![take di], slice![all]])
     }
 
     #[inline]
@@ -159,12 +156,10 @@ impl Llama2 for Memory {
     #[inline]
     fn mlp_up(&self, layer: usize) -> Tensor<Storage> {
         let di = self.config.intermediate_size;
-        let d = self.config.hidden_size;
-        let dt = self.config.torch_dtype.size();
-        let mut physical = self.layers[layer].mlp_gate_up.physical().clone();
-        physical.range.start += di * d * dt;
-        physical.range.end = physical.range.start + di * d * dt;
-        Tensor::new(self.config.torch_dtype, &[di as _, d as _], physical)
+        self.layers[layer]
+            .mlp_gate_up
+            .clone()
+            .slice(&[slice![from di, take di], slice![all]])
     }
 
     #[inline]
@@ -180,7 +175,7 @@ impl Llama2 for Memory {
 
 #[test]
 fn test_load() {
-    use super::SafeTensorError;
+    use common::safe_tensors::SafeTensorsError;
     use std::{io::ErrorKind::NotFound, time::Instant};
 
     let Some(model_dir) = common::test_model::find() else {
@@ -195,7 +190,7 @@ fn test_load() {
 
     let safetensors = match safetensors {
         Ok(m) => m,
-        Err(SafeTensorError::Io(e)) if e.kind() == NotFound => return,
+        Err(SafeTensorsError::Io(e)) if e.kind() == NotFound => return,
         Err(e) => panic!("{e:?}"),
     };
 

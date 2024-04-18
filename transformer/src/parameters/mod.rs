@@ -10,7 +10,6 @@ mod distribute;
 
 pub use distribute::{DistributeScheme, DistributedLayer, Distributer};
 pub use memory::Memory;
-pub use safe_tensors::SafeTensorError;
 pub use save::save;
 pub use storage::Storage;
 

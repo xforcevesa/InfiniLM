@@ -2501,10 +2501,8 @@ version = "0.0.0"
 dependencies = [
  "common",
  "half",
- "memmap2",
  "rand",
  "rayon",
- "safetensors",
  "serde",
  "serde_json",
  "tensor",

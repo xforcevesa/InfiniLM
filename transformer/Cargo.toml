@@ -9,8 +9,6 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
-memmap2 = "0.9"
-safetensors = "0.4"
 rand = "0.8"
 half.workspace = true
 rayon.workspace = true

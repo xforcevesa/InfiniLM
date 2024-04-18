@@ -283,7 +283,8 @@ impl DistributeScheme {
 
 #[test]
 fn test() {
-    use super::{Memory, SafeTensorError};
+    use super::Memory;
+    use common::safe_tensors::SafeTensorsError;
     use std::{io::ErrorKind::NotFound, time::Instant};
 
     let Some(model_dir) = common::test_model::find() else {
@@ -297,7 +298,7 @@ fn test() {
 
     let model = match safetensors {
         Ok(m) => m,
-        Err(SafeTensorError::Io(e)) if e.kind() == NotFound => return,
+        Err(SafeTensorsError::Io(e)) if e.kind() == NotFound => return,
         Err(e) => panic!("{e:?}"),
     };
 

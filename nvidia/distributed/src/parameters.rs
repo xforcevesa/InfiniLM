@@ -141,11 +141,14 @@ impl Layer<'_> {
 
 #[test]
 fn test_load() {
-    use common_nv::cuda::{self, Device};
+    use common_nv::{
+        cuda::{self, Device},
+        SafeTensorsError,
+    };
     use log::LevelFilter::Trace;
     use simple_logger::SimpleLogger;
     use std::io::ErrorKind::NotFound;
-    use transformer::{Memory, SafeTensorError};
+    use transformer::Memory;
 
     let Some(model_dir) = common_nv::test_model::find() else {
         return;
@@ -167,7 +170,7 @@ fn test_load() {
 
     let model = match safetensors {
         Ok(m) => m,
-        Err(SafeTensorError::Io(e)) if e.kind() == NotFound => return,
+        Err(SafeTensorsError::Io(e)) if e.kind() == NotFound => return,
         Err(e) => panic!("{e:?}"),
     };
 

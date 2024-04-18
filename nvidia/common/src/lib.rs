@@ -12,7 +12,10 @@ mod rms_norm;
 mod rotary_embedding;
 mod swiglu;
 
-pub use common::{test_model, utok};
+pub use common::{
+    safe_tensors::{SafeTensors, SafeTensorsError},
+    test_model, utok,
+};
 pub use tensor::{slice, udim, DataType, LocalSplitable, Tensor};
 
 use cublas::{Cublas, CublasSpore};

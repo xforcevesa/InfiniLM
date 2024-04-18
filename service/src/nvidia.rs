@@ -1,19 +1,13 @@
-﻿use std::{fs::File, path::Path, time::Instant};
+﻿use std::{path::Path, time::Instant};
 
 pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> transformer_nv::Transformer {
     use transformer_nv::{cuda, Transformer};
+
+    let time = Instant::now();
     cuda::init();
-
-    let time = Instant::now();
-    let model_dir = model_dir.as_ref();
-    let config = File::open(model_dir.join("config.json")).unwrap();
-    let safetensors = File::open(model_dir.join("model.safetensors")).unwrap();
-    info!("open file {:?}", time.elapsed());
-
-    let time = Instant::now();
     let dev = cuda::Device::new(device);
     dev.set_mempool_threshold(u64::MAX);
-    let transformer = Transformer::new(config, safetensors, usize::MAX, dev);
+    let transformer = Transformer::new(model_dir, usize::MAX, dev);
     info!("build transformer ... {:?}", time.elapsed());
 
     transformer

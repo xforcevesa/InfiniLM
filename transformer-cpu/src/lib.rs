@@ -327,8 +327,9 @@ fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Blob> {
 
 #[test]
 fn test_build() {
+    use common::safe_tensors::SafeTensorsError;
     use std::{io::ErrorKind::NotFound, time::Instant};
-    use transformer::{Memory, SafeTensorError};
+    use transformer::Memory;
 
     let Some(model_dir) = common::test_model::find() else {
         return;
@@ -342,7 +343,7 @@ fn test_build() {
 
     let safetensors = match safetensors {
         Ok(m) => m,
-        Err(SafeTensorError::Io(e)) if e.kind() == NotFound => return,
+        Err(SafeTensorsError::Io(e)) if e.kind() == NotFound => return,
         Err(e) => panic!("{e:?}"),
     };
 

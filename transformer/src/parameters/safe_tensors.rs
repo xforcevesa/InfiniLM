@@ -1,46 +1,34 @@
 ﻿use super::{memory::Layer, storage::HostMem, ConfigJson, Memory, Storage};
-use common::Blob;
-use memmap2::Mmap;
-use safetensors::{tensor::TensorInfo, Dtype};
-use std::{collections::HashMap, fs::File, io::Read, path::Path, sync::Arc};
+use common::{
+    safe_tensors::{Dtype, SafeTensors, SafeTensorsError},
+    Blob,
+};
+use std::{fs::File, io::Read, ops::DerefMut, path::Path, sync::Arc};
 use tensor::{udim, DataType, Shape, Tensor};
 
-#[derive(Debug)]
-pub enum SafeTensorError {
-    Io(std::io::Error),
-    Serde(serde_json::Error),
-}
-
 impl Memory {
-    pub fn load_safetensors_from_dir(model_dir: impl AsRef<Path>) -> Result<Self, SafeTensorError> {
+    pub fn load_safetensors_from_dir(
+        model_dir: impl AsRef<Path>,
+    ) -> Result<Self, SafeTensorsError> {
         let model_dir = model_dir.as_ref();
-        let config = File::open(model_dir.join("config.json")).map_err(SafeTensorError::Io)?;
-        let model = File::open(model_dir.join("model.safetensors")).map_err(SafeTensorError::Io)?;
-        let model = unsafe { Mmap::map(&model) }.map_err(SafeTensorError::Io)?;
-        Self::load_safetensors(config, model, true).map_err(SafeTensorError::Serde)
+        let config = File::open(model_dir.join("config.json")).map_err(SafeTensorsError::Io)?;
+        let model = SafeTensors::load_from_dir(model_dir)?;
+        Self::load_safetensors(config, model, Some(Blob::new)).map_err(SafeTensorsError::Json)
     }
 
-    pub fn load_safetensors(
+    pub fn load_safetensors<T: HostMem + DerefMut<Target = [u8]>>(
         config: impl Read,
-        model: impl HostMem,
-        allow_realloc: bool,
+        model: SafeTensors,
+        mut realloc: Option<impl FnMut(usize) -> T>,
     ) -> Result<Self, serde_json::Error> {
         let config: ConfigJson = serde_json::from_reader(config)?;
 
-        let len = unsafe { *model.as_ptr().cast::<u64>() } as usize;
-        let offset = std::mem::size_of::<u64>();
-        let header = &model[offset..][..len];
-        let header: SafeTensorHeaderJson = serde_json::from_slice(header)?;
-
-        let mmap = Arc::new(model);
-        let offset = offset + len;
+        let model = model.share();
         let tensor = |name: &str| {
-            let info = header
-                .tensors
-                .get(name)
+            let shared = model
+                .share_tensor(name)
                 .unwrap_or_else(|| panic!("missing tensor: {name}"));
-            let (start, end) = info.data_offsets;
-            let data_type = match info.dtype {
+            let data_type = match shared.dtype() {
                 Dtype::BOOL => DataType::Bool,
                 Dtype::I8 => DataType::I8,
                 Dtype::I16 => DataType::I16,
@@ -56,14 +44,11 @@ impl Memory {
                 Dtype::F64 => DataType::F64,
                 _ => unreachable!(),
             };
-            debug_assert_eq!(data_type, config.torch_dtype);
+            assert_eq!(data_type, config.torch_dtype);
             Tensor::new(
                 data_type,
-                &info.shape.iter().map(|&d| d as udim).collect::<Shape>(),
-                Storage {
-                    data: mmap.clone(),
-                    range: offset + start..offset + end,
-                },
+                &shared.shape().iter().map(|&d| d as udim).collect::<Shape>(),
+                Storage::SafeTensor(shared),
             )
         };
 
@@ -76,9 +61,9 @@ impl Memory {
                         input_layernorm: tensor(&name("input_layernorm")),
                         w_qkv: {
                             let qkv = name("self_attn.qkv_proj");
-                            if header.tensors.contains_key(&qkv) {
+                            if model.contains(&qkv) {
                                 tensor(&qkv)
-                            } else if allow_realloc {
+                            } else if let Some(realloc) = realloc.as_mut() {
                                 let d = config.hidden_size as udim;
                                 let nkvh = config.num_key_value_heads as udim;
                                 let nh = config.num_attention_heads as udim;
@@ -94,7 +79,7 @@ impl Memory {
                                     .reshape(skv)
                                     .transpose(perm);
                                 let v = tensor(&name("self_attn.v_proj")).reshape(skv);
-                                concat0(&[&q, &k, &v]).reshape(&[d + dkv + dkv, d])
+                                concat0(&[&q, &k, &v], realloc).reshape(&[d + dkv + dkv, d])
                             } else {
                                 panic!("missing concat tensor: {qkv}");
                             }
@@ -103,13 +88,16 @@ impl Memory {
                         post_attention_layernorm: tensor(&name("post_attention_layernorm")),
                         mlp_gate_up: {
                             let gate_up = name("mlp.gate_up_proj");
-                            if header.tensors.contains_key(&gate_up) {
+                            if model.contains(&gate_up) {
                                 tensor(&gate_up)
-                            } else if allow_realloc {
-                                concat0(&[
-                                    &tensor(&name("mlp.gate_proj")),
-                                    &tensor(&name("mlp.up_proj")),
-                                ])
+                            } else if let Some(realloc) = realloc.as_mut() {
+                                concat0(
+                                    &[
+                                        &tensor(&name("mlp.gate_proj")),
+                                        &tensor(&name("mlp.up_proj")),
+                                    ],
+                                    realloc,
+                                )
                             } else {
                                 panic!("missing concat tensor: {gate_up}");
                             }
@@ -125,15 +113,10 @@ impl Memory {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub(crate) struct SafeTensorHeaderJson {
-    #[serde(flatten)]
-    pub tensors: HashMap<String, TensorInfo>,
-    #[serde(rename = "__metadata__")]
-    pub meta: Option<HashMap<String, serde_json::Value>>,
-}
-
-fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
+fn concat0<T: HostMem + DerefMut<Target = [u8]>>(
+    tensors: &[&Tensor<Storage>],
+    realloc: impl FnOnce(usize) -> T,
+) -> Tensor<Storage> {
     assert!(!tensors.is_empty());
     assert!(tensors
         .windows(2)
@@ -143,32 +126,12 @@ fn concat0(tensors: &[&Tensor<Storage>]) -> Tensor<Storage> {
     let mut shape = Shape::from_slice(tensors[0].shape());
     shape[0] = tensors.iter().map(|t| t.shape()[0]).sum();
 
-    let mut ans = Tensor::alloc(data_type, &shape, Blob::new);
+    let mut ans = Tensor::alloc(data_type, &shape, realloc);
     let mut offset = 0;
     for t in tensors {
         let len = t.bytes_size();
         unsafe { t.reform_to_raw(&mut ans.physical_mut()[offset..][..len]) };
         offset += len;
     }
-    unsafe { ans.map_physical(Storage::new) }
-}
-
-#[test]
-fn test_load() {
-    let Some(model_dir) = common::test_model::find() else {
-        return;
-    };
-    println!("model_dir: {}", model_dir.display());
-
-    let file = match std::fs::File::open(model_dir.join("model.safetensors")) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-        Err(e) => panic!("{e:?}"),
-    };
-    let mmap = unsafe { Mmap::map(&file).unwrap() };
-    let len = unsafe { *mmap.as_ptr().cast::<u64>() } as usize;
-    let offset = std::mem::size_of::<u64>();
-    let header = &mmap[offset..][..len];
-    let header: SafeTensorHeaderJson = serde_json::from_slice(header).unwrap();
-    println!("{}", serde_json::to_string_pretty(&header).unwrap());
+    unsafe { ans.map_physical(|b| Storage::Others(Arc::new(b))) }
 }

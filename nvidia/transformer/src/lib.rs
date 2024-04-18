@@ -10,13 +10,14 @@ pub use common_nv::cuda;
 use ::half::f16;
 use common_nv::{
     cuda::{memcpy_d2h, DevMem, DevMemSpore},
-    slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, Tensor,
+    slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, SafeTensors,
+    Tensor,
 };
 use cuda::{Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
 use std::{
     fs::File,
-    io::Read,
+    path::Path,
     slice::from_raw_parts,
     sync::{Arc, Mutex},
     time::Instant,
@@ -138,18 +139,19 @@ impl transformer::Transformer for Transformer {
 type Splitable<'ctx> = LocalSplitable<DevMem<'ctx>>;
 
 impl Transformer {
-    pub fn new(config: File, mut safetensors: File, preload_layers: usize, dev: Device) -> Self {
-        let context = Arc::new(dev.retain_primary());
+    pub fn new(model_dir: impl AsRef<Path>, preload_layers: usize, dev: Device) -> Self {
         let time = Instant::now();
-        let mut host = context.apply(|ctx| {
-            ctx.malloc_host::<u8>(safetensors.metadata().unwrap().len() as _)
-                .sporulate()
-        });
-        safetensors.read_exact(&mut host).unwrap();
-        drop(safetensors);
-        info!("read to host {:?}", time.elapsed());
+        let config = File::open(model_dir.as_ref().join("config.json")).unwrap();
+        let model = SafeTensors::load_from_dir(model_dir).unwrap();
+        info!("open file {:?}", time.elapsed());
 
-        let host = Memory::load_safetensors(config, host, false).unwrap();
+        let context = Arc::new(dev.retain_primary());
+        let host = Memory::load_safetensors(
+            config,
+            model,
+            Some(|l| context.apply(|ctx| ctx.malloc_host::<u8>(l).sporulate())),
+        )
+        .unwrap();
         let load_layers = preload_layers.min(host.num_hidden_layers());
 
         let (model, layers, kernels, transfer) = context.apply(|ctx| {

@@ -1,6 +1,7 @@
 ﻿use super::{memory::Layer, ConfigJson, Llama2, Memory, Storage};
 use common::Blob;
 use half::{bf16, f16};
+use std::sync::Arc;
 use tensor::{DataType, Tensor, Ty};
 
 impl Memory {
@@ -59,5 +60,5 @@ fn typed<T: Ty + Sync, U: Ty + Send>(
         .zip(reslice_mut(ans.physical_mut()))
         .for_each(|(src, dst)| *dst = cast(src));
 
-    unsafe { ans.map_physical(Storage::new) }
+    unsafe { ans.map_physical(|b| Storage::Others(Arc::new(b))) }
 }

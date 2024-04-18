@@ -1,6 +1,5 @@
-﻿use super::{safe_tensors::SafeTensorHeaderJson, ConfigJson, Llama2, Storage};
-use safetensors::{tensor::TensorInfo, Dtype};
-use serde_json::json;
+﻿use super::{ConfigJson, Llama2, Storage};
+use common::safe_tensors::{Dtype, SafeTensorsHeader, SafeTensorsHeaderMetadata, TensorInfo};
 use std::{
     collections::HashMap,
     fs,
@@ -16,9 +15,11 @@ pub fn save(model: &dyn Llama2, dir: impl AsRef<Path>) -> io::Result<()> {
     fs::write(dir.join("config.json"), config)?;
 
     let mut offset = 0usize;
-    let mut header = SafeTensorHeaderJson {
+    let mut header = SafeTensorsHeader {
         tensors: HashMap::new(),
-        meta: Some([("format".into(), json!("pt"))].into()),
+        metadata: SafeTensorsHeaderMetadata {
+            format: "pt".into(),
+        },
     };
 
     let mut tensor_info = |tensor: Tensor<Storage>| TensorInfo {
