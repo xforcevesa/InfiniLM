@@ -53,11 +53,14 @@ impl Service {
                 Device::NvidiaGpu(devices) => match devices.as_slice() {
                     &[] => dispatch::run(nvidia::transformer(model_dir, 0), sample, receiver),
                     &[i] => dispatch::run(nvidia::transformer(model_dir, i as _), sample, receiver),
+                    #[cfg(detected_nccl)]
                     dev => dispatch::run(
                         nvidia::distributed(model_dir, dev.iter().map(|&d| d as _)),
                         sample,
                         receiver,
                     ),
+                    #[cfg(not(detected_nccl))]
+                    _ => panic!("No NCCL detected"),
                 },
                 #[cfg(not(detected_cuda))]
                 _ => panic!("Unsupported device"),

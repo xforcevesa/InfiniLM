@@ -13,6 +13,7 @@ pub fn transformer(model_dir: impl AsRef<Path>, device: i32) -> transformer_nv::
     transformer
 }
 
+#[cfg(detected_nccl)]
 pub fn distributed(
     model_dir: impl AsRef<Path>,
     devices: impl IntoIterator<Item = i32>,
