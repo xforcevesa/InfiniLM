@@ -95,6 +95,7 @@ impl BusySession<'_> {
 
 pub(crate) enum Command {
     Infer(usize, Box<Infer>),
+    Fork(usize, usize),
     Drop(usize),
 }
 

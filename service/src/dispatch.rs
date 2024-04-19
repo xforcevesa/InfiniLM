@@ -87,6 +87,9 @@ where
                             responsing: infer.responsing,
                         });
                     }
+                    Message::Cmd(Command::Fork(id, new_id)) => {
+                        warn!("TODO: fork session {id} to {new_id}");
+                    }
                     Message::Cmd(Command::Drop(id)) => {
                         if sessions.remove(&id).is_none() {
                             removing.insert(id);

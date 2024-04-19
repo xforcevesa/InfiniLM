@@ -74,6 +74,16 @@ impl Service {
     }
 
     #[inline]
+    pub fn fork(&self, session: &Session) -> Session {
+        let new = Session::new(self.session_component.clone());
+        self.session_component
+            .sender
+            .send(session::Command::Fork(session.id(), new.id()))
+            .unwrap();
+        new
+    }
+
+    #[inline]
     pub fn sample_args(&self) -> SampleArgs {
         self.sample.lock().unwrap().clone()
     }
