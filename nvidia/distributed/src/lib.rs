@@ -183,7 +183,7 @@ impl transformer::Transformer for Transformer {
                 .as_mut()
                 .reshape(&[nt, nh, dh])
                 .transpose(&[1, 0, 2])
-                .slice(&[slice![take nh/n as udim], slice![all], slice![all]]);
+                .slice(&[slice![=> nh/n as udim], slice![=>], slice![=>]]);
 
             let mut req = 0;
             for r in requests.iter_mut() {
@@ -191,9 +191,9 @@ impl transformer::Transformer for Transformer {
                 let seq_len = r.seq_len();
                 let att_len = r.att_len();
 
-                let req_slice = &[slice![all], slice![from req, take seq_len], slice![all]];
-                let cat_slice = &[slice![all], slice![from pos, take seq_len], slice![all]];
-                let att_slice = &[slice![all], slice![          take att_len], slice![all]];
+                let req_slice = &[slice![=>], slice![req =>=> seq_len], slice![=>]];
+                let cat_slice = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
+                let att_slice = &[slice![=>], slice![      => att_len], slice![=>]];
                 req += seq_len;
 
                 let q = q.clone().slice(req_slice);
@@ -256,7 +256,7 @@ impl transformer::Transformer for Transformer {
                     let params = self.matrix.get(layer, i, ctx);
 
                     let mut x0 = unsafe { x0.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                    let o = x1.as_ref().slice(&[slice![all], slice![take d/n as udim]]);
+                    let o = x1.as_ref().slice(&[slice![=>], slice![=> d/n as udim]]);
                     let o = unsafe { o.map_physical(|u| ctx.sprout(&u[i])) };
                     kernels.mat_mul(&mut x0, if i == 0 { 1. } else { 0. }, &o, &params.w_o(), 1.);
                     comm.all_reduce(
@@ -347,7 +347,7 @@ impl transformer::Transformer for Transformer {
                     }
                     slice![from begin, until i_dst + 1]
                 };
-                let x = x0.as_ref().slice(&[slice, slice![all]]);
+                let x = x0.as_ref().slice(&[slice, slice![=>]]);
                 let mut x = unsafe { x.map_physical(|u| ctx.sprout(&u[0])) };
 
                 let dt = self.host.data_type();

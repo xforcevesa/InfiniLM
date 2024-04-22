@@ -96,22 +96,28 @@ impl SliceDim {
 
 #[macro_export]
 macro_rules! slice {
-    [all] => {
-        slice![0; 1; usize::MAX]
+    [=$idx:expr] => {
+        slice![$idx; 0; 1]
     };
-    [rev] => {
+    [<-] => {
         slice![usize::MAX; -1; usize::MAX]
     };
-    [take $len:expr] => {
+    [=>] => {
+        slice![0; 1; usize::MAX]
+    };
+    [$start:expr=>] => {
+        slice![$start; 1; usize::MAX]
+    };
+    [=>$len:expr] => {
         slice![0; 1; $len]
     };
-    [from $start:expr, until $end:expr] => {
+    [$start:expr => $end:expr] => {
         slice![$start; 1; $end - $start]
     };
-    [from $start:expr, take $len:expr] => {
+    [$start:expr =>=> $len:expr] => {
         slice![$start; 1; $len]
     };
-    [from $start:expr, take $len:expr, per $step:expr] => {
+    [$start:expr => $step:expr => $len:expr] => {
         slice![$start; $step; $len]
     };
     [$start:expr; $step:expr; $len:expr] => {
@@ -133,10 +139,12 @@ fn test_macro() {
             len: 2,
         }
     );
-    assert_eq!(slice![all], slice![0; 1; usize::MAX]);
-    assert_eq!(slice![rev], slice![usize::MAX; -1; usize::MAX]);
-    assert_eq!(slice![take 5], slice![0; 1; 5]);
-    assert_eq!(slice![from 3, until 5], slice![3; 1; 2]);
-    assert_eq!(slice![from 3, take 5], slice![3; 1; 5]);
-    assert_eq!(slice![from 3, take 5, per 2], slice![3; 2; 5]);
+    assert_eq!(slice![=2], slice![2; 0; 1]);
+    assert_eq!(slice![<-], slice![usize::MAX; -1; usize::MAX]);
+    assert_eq!(slice![=>], slice![0; 1; usize::MAX]);
+    assert_eq!(slice![3=>], slice![3; 1; usize::MAX]);
+    assert_eq!(slice![=>5], slice![0; 1; 5]);
+    assert_eq!(slice![3 => 5], slice![3; 1; 2]);
+    assert_eq!(slice![3 =>=> 5], slice![3; 1; 5]);
+    assert_eq!(slice![3 => 2 => 5], slice![3; 2; 5]);
 }

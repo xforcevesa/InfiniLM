@@ -3,6 +3,7 @@ members = [
     "common",
     "tensor",
     "tokenizer",
+    "causal-lm",
     "transformer",
     "transformer-cpu",
     "nvidia/common",

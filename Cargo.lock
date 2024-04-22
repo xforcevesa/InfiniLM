@@ -463,6 +463,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "causal-lm"
+version = "0.0.0"
+dependencies = [
+ "common",
+ "tensor",
+]
+
+[[package]]
 name = "cc"
 version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"

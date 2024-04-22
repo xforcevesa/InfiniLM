@@ -181,9 +181,9 @@ impl Transformer {
             let seq_len = r.seq_len();
             let att_len = r.att_len();
 
-            let req_slice = &[slice![all], slice![from req, take seq_len], slice![all]];
-            let cat_slice = &[slice![all], slice![from pos, take seq_len], slice![all]];
-            let att_slice = &[slice![all], slice![from   0, take att_len], slice![all]];
+            let req_slice = &[slice![=>], slice![req =>=> seq_len], slice![=>]];
+            let cat_slice = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
+            let att_slice = &[slice![=>], slice![      => att_len], slice![=>]];
             req += seq_len;
 
             let q = q.clone().slice(req_slice);
@@ -270,7 +270,7 @@ impl Transformer {
             }
         }
 
-        x0.slice(&[slice![from begin, until dst + 1], slice![all]])
+        x0.slice(&[slice![begin => dst + 1], slice![=>]])
     }
 
     fn logits(&self, mut x: Tensor<Blob>) -> Tensor<Blob> {

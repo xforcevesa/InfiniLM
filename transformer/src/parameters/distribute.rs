@@ -132,10 +132,10 @@ impl<'a> Distributer<'a> {
             let w = nh / n * dh;
             self.model
                 .self_attn_q_proj(layer)
-                .slice(&[slice![from w*i, take w], slice![all]])
+                .slice(&[slice![w*i =>=> w], slice![=>]])
                 .reform_to(
                     &mut Tensor::new(dt, shape_qkv, &mut blob[self.scheme.w_qkv..])
-                        .slice(&[slice![take w], slice![all]]),
+                        .slice(&[slice![=>w], slice![=>]]),
                 );
         }
         // wk
@@ -143,10 +143,10 @@ impl<'a> Distributer<'a> {
             let w = nkvh / n * dh;
             self.model
                 .self_attn_k_proj(layer)
-                .slice(&[slice![from w*i, take w], slice![all]])
+                .slice(&[slice![w*i =>=> w], slice![=>]])
                 .reform_to(
                     &mut Tensor::new(dt, shape_qkv, &mut blob[self.scheme.w_qkv..])
-                        .slice(&[slice![from d/n, take w], slice![all]]),
+                        .slice(&[slice![d/n =>=> w], slice![=>]]),
                 );
         }
         // wv
@@ -154,10 +154,10 @@ impl<'a> Distributer<'a> {
             let w = nkvh / n * dh;
             self.model
                 .self_attn_v_proj(layer)
-                .slice(&[slice![from w*i, take w], slice![all]])
+                .slice(&[slice![w*i =>=> w], slice![=>]])
                 .reform_to(
                     &mut Tensor::new(dt, shape_qkv, &mut blob[self.scheme.w_qkv..])
-                        .slice(&[slice![from d/n + w, take w], slice![all]]),
+                        .slice(&[slice![d/n + w =>=> w], slice![=>]]),
                 );
         }
         // wo
@@ -165,7 +165,7 @@ impl<'a> Distributer<'a> {
             let w = nh / n * dh;
             self.model
                 .self_attn_o_proj(layer)
-                .slice(&[slice![all], slice![from w*i, take w]])
+                .slice(&[slice![=>], slice![w*i =>=> w]])
                 .reform_to(&mut Tensor::new(dt, &[d, w], &mut blob[self.scheme.w_o..]));
         }
         let shape_gate_up = &[(di + di) / n, d];
@@ -174,10 +174,10 @@ impl<'a> Distributer<'a> {
             let w = di / n;
             self.model
                 .mlp_gate(layer)
-                .slice(&[slice![from w*i, take w], slice![all]])
+                .slice(&[slice![w*i =>=> w], slice![=>]])
                 .reform_to(
                     &mut Tensor::new(dt, shape_gate_up, &mut blob[self.scheme.mlp_gate_up..])
-                        .slice(&[slice![take w], slice![all]]),
+                        .slice(&[slice![=>w], slice![=>]]),
                 );
         }
         // mlp up
@@ -185,10 +185,10 @@ impl<'a> Distributer<'a> {
             let w = di / n;
             self.model
                 .mlp_up(layer)
-                .slice(&[slice![from w*i, take w], slice![all]])
+                .slice(&[slice![w*i =>=> w], slice![=>]])
                 .reform_to(
                     &mut Tensor::new(dt, shape_gate_up, &mut blob[self.scheme.mlp_gate_up..])
-                        .slice(&[slice![from w, take w], slice![all]]),
+                        .slice(&[slice![w =>=> w], slice![=>]]),
                 );
         }
         // mlp down
@@ -196,7 +196,7 @@ impl<'a> Distributer<'a> {
             let w = di / n;
             self.model
                 .mlp_down(layer)
-                .slice(&[slice![all], slice![from w*i, take w]])
+                .slice(&[slice![=>], slice![w*i =>=> w]])
                 .reform_to(&mut Tensor::new(
                     dt,
                     &[d, w],

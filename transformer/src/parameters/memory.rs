@@ -101,7 +101,7 @@ impl Llama2 for Memory {
         self.layers[layer]
             .w_qkv
             .clone()
-            .slice(&[slice![take d], slice![all]])
+            .slice(&[slice![=>d], slice![=>]])
     }
 
     #[inline]
@@ -111,7 +111,7 @@ impl Llama2 for Memory {
         self.layers[layer]
             .w_qkv
             .clone()
-            .slice(&[slice![from d, take dkv], slice![all]])
+            .slice(&[slice![d =>=> dkv], slice![=>]])
     }
 
     #[inline]
@@ -121,7 +121,7 @@ impl Llama2 for Memory {
         self.layers[layer]
             .w_qkv
             .clone()
-            .slice(&[slice![from d + dkv, take dkv], slice![all]])
+            .slice(&[slice![d + dkv =>=> dkv], slice![=>]])
     }
 
     #[inline]
@@ -145,7 +145,7 @@ impl Llama2 for Memory {
         self.layers[layer]
             .mlp_gate_up
             .clone()
-            .slice(&[slice![take di], slice![all]])
+            .slice(&[slice![=>di], slice![=>]])
     }
 
     #[inline]
@@ -159,7 +159,7 @@ impl Llama2 for Memory {
         self.layers[layer]
             .mlp_gate_up
             .clone()
-            .slice(&[slice![from di, take di], slice![all]])
+            .slice(&[slice![di =>=> di], slice![=>]])
     }
 
     #[inline]
