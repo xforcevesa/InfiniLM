@@ -4,7 +4,6 @@ use std::{
     ops::{Deref, DerefMut},
     rc::Rc,
     slice::from_raw_parts_mut,
-    sync::Arc,
 };
 
 pub trait Splitable {
@@ -20,13 +19,6 @@ impl<T: Clone> Splitable for T {
 
 #[repr(transparent)]
 pub struct LocalSplitable<T>(Rc<T>);
-
-impl<T> AsRef<T> for LocalSplitable<T> {
-    #[inline]
-    fn as_ref(&self) -> &T {
-        &self.0
-    }
-}
 
 impl<T> From<T> for LocalSplitable<T> {
     #[inline]
@@ -51,43 +43,6 @@ impl<T: Deref> Deref for LocalSplitable<T> {
 }
 
 impl<T, U> DerefMut for LocalSplitable<T>
-where
-    T: DerefMut<Target = [U]>,
-{
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        let data = self.0.as_ptr().cast_mut();
-        let len = self.0.len();
-        unsafe { from_raw_parts_mut(data, len) }
-    }
-}
-
-#[repr(transparent)]
-pub struct SendSplitable<T>(Arc<T>);
-
-impl<T> From<T> for SendSplitable<T> {
-    #[inline]
-    fn from(t: T) -> Self {
-        Self(Arc::new(t))
-    }
-}
-
-impl<T> Splitable for SendSplitable<T> {
-    #[inline]
-    fn split(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T: Deref> Deref for SendSplitable<T> {
-    type Target = T::Target;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-
-impl<T, U> DerefMut for SendSplitable<T>
 where
     T: DerefMut<Target = [U]>,
 {

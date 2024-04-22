@@ -20,7 +20,7 @@ pub use data_type::{DataType, Ty};
 pub use nalgebra::DVector;
 pub use pattern::{expand_indices, idx_strides, Affine, Shape};
 pub use slice::SliceDim;
-pub use split::{LocalSplitable, SendSplitable, Splitable};
+pub use split::{LocalSplitable, Splitable};
 pub use tensor::Tensor;
 
 use std::mem::{align_of, size_of, size_of_val};
