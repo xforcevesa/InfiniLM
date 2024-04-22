@@ -7,7 +7,7 @@ pub use common_nv::cuda;
 use ::half::f16;
 use common_nv::{
     cuda::{memcpy_d2h, DevMem, DevMemSpore},
-    slice, udim, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, Tensor,
+    slice, split, udim, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use cuda::{Context, ContextResource, ContextSpore, Device, Stream, StreamSpore};
 use parameters::{LayerParameter, LayersParameters, ModelParameters};
@@ -176,8 +176,6 @@ impl Transformer {
         let mut x0 = Tensor::alloc(dt, &[nt, d], |len| compute.malloc::<u8>(len));
         let tokens = requests.iter().flat_map(Request::tokens).copied();
         kernels.gather(&mut x0, &self.host.embed_tokens(), tokens);
-        // compute.synchronize();
-        // println!("gather:\n{}", map_tensor(&x0));
 
         x0
     }
@@ -208,24 +206,16 @@ impl Transformer {
         let w_qkv = &params.w_qkv(ctx);
 
         kernels.rms_norm(x1, x0, input_layernorm);
-        // compute.synchronize();
-        // println!("layer {layer} input norm:\n{}", map_tensor(&x1));
 
         kernels.mat_mul(qkv, 0., x1, w_qkv, 1.);
-        let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
-        let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
-        let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
-        let mut q = qkv.pop().unwrap().reshape(&[nt, nh, dh]);
-        // compute.synchronize();
-        // println!("layer {layer} q:\n{}", map_tensor(&q));
-        // println!("layer {layer} k:\n{}", map_tensor(&k));
-        // println!("layer {layer} v:\n{}", map_tensor(&v));
+
+        let (q, k, v) = split!(qkv; [1]: d, dkv, dkv);
+        let mut q = q.reshape(&[nt, nh, dh]);
+        let mut k = k.reshape(&[nt, nkvh, dh]);
+        let v = v.reshape(&[nt, nkvh, dh]);
 
         kernels.rotary_embedding(&mut q, pos);
         kernels.rotary_embedding(&mut k, pos);
-        // compute.synchronize();
-        // println!("layer {layer} rot q:\n{}", map_tensor(&q));
-        // println!("layer {layer} rot k:\n{}", map_tensor(&k));
 
         (q, k, v)
     }
@@ -254,14 +244,10 @@ impl Transformer {
         let ctx = compute.ctx();
         let kernels = self.kernels.on(compute);
 
-        let q = q.as_ref().transpose(&[1, 0, 2]);
-        let k = k.as_ref().transpose(&[1, 0, 2]);
-        let v = v.as_ref().transpose(&[1, 0, 2]);
+        let q = q.as_ref().transpose(&[1, 0, 2]).map_physical(|u| &**u);
+        let k = k.as_ref().transpose(&[1, 0, 2]).map_physical(|u| &**u);
+        let v = v.as_ref().transpose(&[1, 0, 2]).map_physical(|u| &**u);
         let mut o = o.as_mut().reshape(&[nt, nh, dh]).transpose(&[1, 0, 2]);
-
-        let q = unsafe { q.map_physical(|u| &**u) };
-        let k = unsafe { k.map_physical(|u| &**u) };
-        let v = unsafe { v.map_physical(|u| &**u) };
 
         let mut req = 0;
         for r in requests.iter_mut() {
@@ -277,18 +263,15 @@ impl Transformer {
             let q = q.clone().slice(req_slice);
             let k = k.clone().slice(req_slice);
             let v = v.clone().slice(req_slice);
-            let o = o.as_mut().slice(req_slice);
-            let mut o = unsafe { o.map_physical(|u| &mut ***u) };
+            let mut o = o.as_mut().slice(req_slice).map_physical(|u| &mut ***u);
 
             let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], &mut **q_buf);
             let (k_cache, v_cache) = r.cache(layer);
             let mut k_cache = unsafe { k_cache.as_mut().map_physical(|s| s.mem.sprout(ctx)) };
             let mut v_cache = unsafe { v_cache.as_mut().map_physical(|s| s.mem.sprout(ctx)) };
 
-            let k_cat = k_cache.as_mut().slice(cat_slice);
-            let v_cat = v_cache.as_mut().slice(cat_slice);
-            let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
-            let mut v_cat = unsafe { v_cat.map_physical(|u| &mut **u) };
+            let mut k_cat = k_cache.as_mut().slice(cat_slice).map_physical(|u| &mut **u);
+            let mut v_cat = v_cache.as_mut().slice(cat_slice).map_physical(|u| &mut **u);
             kernels.reform(&mut q_att, &q);
             kernels.reform(&mut k_cat, &k);
             kernels.reform(&mut v_cat, &v);
@@ -296,10 +279,6 @@ impl Transformer {
             let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
             let k_att = k_cache.slice(att_slice).transpose(&[0, 2, 1]);
             let v_att = v_cache.slice(att_slice);
-            // compute.synchronize();
-            // println!("layer {layer} q attention:\n{}", map_tensor(&q_att));
-            // println!("layer {layer} k attention:\n{}", map_tensor(&k_att));
-            // println!("layer {layer} v attention:\n{}", map_tensor(&v_att));
 
             let shape_att0 = &[nkvh, head_group * seq_len, att_len];
             let shape_att1 = &[nkvh * head_group, seq_len, att_len];
@@ -313,8 +292,6 @@ impl Transformer {
             kernels.mat_mul(&mut x2, 0., &att, &v_att, 1.);
 
             kernels.reform(&mut o, &x2.reshape(&[nh, seq_len, dh]));
-            // compute.synchronize();
-            // println!("layer {layer} after attention:\n{}", map_tensor(&o));
         }
     }
 
@@ -336,28 +313,11 @@ impl Transformer {
         let mlp_down = &params.mlp_down(ctx);
 
         kernels.mat_mul(x0, 1., x1, w_o, 1.);
-        // compute.synchronize();
-        // println!("layer {layer} o_proj:\n{}", map_tensor(&x0));
-
         kernels.rms_norm(x1, x0, post_attention_layernorm);
-        // compute.synchronize();
-        // println!("layer {layer} post norm:\n{}", map_tensor(&x1));
-
         kernels.mat_mul(gate_up, 0., x1, mlp_gate_up, 1.);
-        let mut gate_up = gate_up.split(1, &[di as _, di as _]);
-        let up = gate_up.pop().unwrap();
-        let mut gate = gate_up.pop().unwrap();
-        // compute.synchronize();
-        // println!("layer {layer} gate:\n{}", map_tensor(&gate));
-        // println!("layer {layer} up:\n{}", map_tensor(&up));
-
+        let (mut gate, up) = split!(gate_up; [1]: di, di);
         kernels.swiglu(&mut gate, &up);
-        // compute.synchronize();
-        // println!("layer {layer} swiglu:\n{}", map_tensor(&gate));
-
         kernels.mat_mul(x0, 1., &gate, mlp_down, 1.);
-        // compute.synchronize();
-        // println!("layer {layer} down:\n{}", map_tensor(&x0));
     }
 
     fn move_decode<'ctx, Id>(
@@ -401,8 +361,6 @@ impl Transformer {
                 .map_physical(|u| from_raw_parts(u.as_ptr(), u.len()))
         };
         kernels.rms_norm(&mut x, &x_, &model_norm);
-        // compute.synchronize();
-        // println!("model norm:\n{}", map_tensor(&x));
 
         kernels.mat_mul(
             &mut unsafe {
@@ -415,8 +373,6 @@ impl Transformer {
             &lm_head,
             1.,
         );
-        // compute.synchronize();
-        // println!("model norm:\n{}", map_tensor(&logits));
 
         logits
     }

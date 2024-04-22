@@ -1,4 +1,4 @@
-use crate::schemas::{Drop, DropSuccess, Error, Fork, ForkSuccess, Infer};
+use crate::schemas::{Drop, DropSuccess, Fork, ForkSuccess, Infer, SessionError};
 use futures::{
     channel::mpsc::{self, Receiver},
     SinkExt,
@@ -41,7 +41,7 @@ impl ServiceManager {
             inputs,
             first_request,
         }: Infer,
-    ) -> Result<Receiver<String>, Error> {
+    ) -> Result<Receiver<String>, SessionError> {
         let mut session = match self.sessions.lock().unwrap().entry(session_id.clone()) {
             // Case session id exists
             Entry::Occupied(mut e) => match e.get_mut().take() {
@@ -53,14 +53,14 @@ impl ServiceManager {
                 // take the existing session
                 Some(session) => session,
                 // If session is being served
-                None => return Err(Error::SessionBusy),
+                None => return Err(SessionError::Busy),
             },
             // First request, create new session
             Entry::Vacant(e) if first_request => {
                 e.insert(Some(self.infer_service.launch())).take().unwrap()
             }
             // Session id does not exist but user thinks otherwise, histroy lost
-            _ => return Err(Error::SessionNotFound),
+            _ => return Err(SessionError::NotFound),
         };
 
         let (mut sender, receiver) = mpsc::channel(4096);
@@ -88,17 +88,17 @@ impl ServiceManager {
             session_id,
             new_session_id,
         }: Fork,
-    ) -> Result<ForkSuccess, Error> {
+    ) -> Result<ForkSuccess, SessionError> {
         let mut sessions = self.sessions.lock().unwrap();
         let session = sessions
             .get_mut(&session_id)
-            .ok_or(Error::SessionNotFound)?
+            .ok_or(SessionError::NotFound)?
             .take()
-            .ok_or(Error::SessionBusy)?;
+            .ok_or(SessionError::Busy)?;
         let result = match sessions.entry(new_session_id) {
             Entry::Occupied(e) => {
                 warn!("Failed to fork because \"{}\" already exists", e.key());
-                Err(Error::SessionDuplicate)
+                Err(SessionError::Duplicate)
             }
             Entry::Vacant(e) => {
                 e.insert(Some(self.infer_service.fork(&session)));
@@ -109,12 +109,12 @@ impl ServiceManager {
         result
     }
 
-    pub fn drop_(&self, Drop { session_id }: Drop) -> Result<DropSuccess, Error> {
+    pub fn drop_(&self, Drop { session_id }: Drop) -> Result<DropSuccess, SessionError> {
         self.sessions
             .lock()
             .unwrap()
             .remove(&session_id)
             .map(|_| DropSuccess)
-            .ok_or(Error::SessionNotFound)
+            .ok_or(SessionError::NotFound)
     }
 }

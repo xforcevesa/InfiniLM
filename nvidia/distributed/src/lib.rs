@@ -10,7 +10,7 @@ pub use common_nv::cuda;
 use common_nv::{
     cast_dt,
     cuda::{memcpy_d2h, AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device},
-    slice, udim, utok, DataType, NvidiaKernels, NvidiaKernelsPtx, Tensor,
+    slice, split, udim, utok, DataType, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use half::f16;
 use nccl::CommunicatorGroup;
@@ -157,13 +157,11 @@ impl transformer::Transformer for Transformer {
                     kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1.);
                 });
             }
-            let mut qkv = buf
-                .qkv
-                .as_ref()
-                .split(1, &[d / n as udim, dkv / n as udim, dkv / n as udim]);
-            let v = qkv.pop().unwrap().reshape(&[nt, nkvh / n as udim, dh]);
-            let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh / n as udim, dh]);
-            let mut q = qkv.pop().unwrap().reshape(&[nt, nh / n as udim, dh]);
+            let (q, k, v) =
+                split!(buf.qkv.as_ref(); [1]: d / n as udim, dkv / n as udim, dkv / n as udim);
+            let mut q = q.reshape(&[nt, nh / n as udim, dh]);
+            let mut k = k.reshape(&[nt, nkvh / n as udim, dh]);
+            let v = v.reshape(&[nt, nkvh / n as udim, dh]);
             for (i, context) in contexts.iter().enumerate() {
                 context.apply(|ctx| {
                     let stream = unsafe { ctx.sprout(&streams[i]) };
@@ -227,10 +225,10 @@ impl transformer::Transformer for Transformer {
                             unsafe { v_cache.as_mut().map_physical(|u| ctx.sprout(&u.mem[i])) };
                         let mut att = unsafe { att.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
 
-                        let k_cat = k_cache.as_mut().slice(cat_slice);
-                        let v_cat = v_cache.as_mut().slice(cat_slice);
-                        let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
-                        let mut v_cat = unsafe { v_cat.map_physical(|u| &mut **u) };
+                        let mut k_cat =
+                            k_cache.as_mut().slice(cat_slice).map_physical(|u| &mut **u);
+                        let mut v_cat =
+                            v_cache.as_mut().slice(cat_slice).map_physical(|u| &mut **u);
                         kernels.reform(&mut q_att, &q);
                         kernels.reform(&mut k_cat, &k);
                         kernels.reform(&mut v_cat, &v);
@@ -292,9 +290,7 @@ impl transformer::Transformer for Transformer {
                     kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
                 });
             }
-            let mut gate_up = buf.gate_up.split(1, &[di / n as udim, di / n as udim]);
-            let up = gate_up.pop().unwrap();
-            let mut gate = gate_up.pop().unwrap();
+            let (mut gate, up) = split!(buf.gate_up; [1]: di / n as udim, di / n as udim);
             for (i, comm) in self.comms.call().iter().enumerate() {
                 contexts[i].apply(|ctx| {
                     let stream = unsafe { ctx.sprout(&streams[i]) };
@@ -371,14 +367,12 @@ impl transformer::Transformer for Transformer {
 
                 kernels.rms_norm(&mut x, &x_, &model_norm);
                 kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
-                unsafe { logits.map_physical(|mem| mem.sporulate()) }
+                logits.map_physical(|mem| mem.sporulate())
             });
-            let logits = unsafe {
-                logits.map_physical(|mem| Cache {
-                    contexts: Arc::new(vec![context]),
-                    mem: vec![mem],
-                })
-            };
+            let logits = logits.map_physical(|mem| Cache {
+                contexts: Arc::new(vec![context]),
+                mem: vec![mem],
+            });
             // kill
             for (i, context) in contexts.iter().enumerate() {
                 context.apply(|ctx| unsafe {
@@ -447,8 +441,8 @@ impl Transformer {
                 .map(|context| context.apply(|ctx| kernels.load(ctx)))
                 .collect(),
             matrix: ParameterMatrix::load(&host, &contexts),
-            model_norm: unsafe { host.model_norm().map_physical(|_| model_norm) },
-            lm_head: unsafe { host.lm_head().map_physical(|_| lm_head) }.transpose(&[1, 0]),
+            model_norm: host.model_norm().map_physical(|_| model_norm),
+            lm_head: host.lm_head().map_physical(|_| lm_head).transpose(&[1, 0]),
             host,
         }
     }

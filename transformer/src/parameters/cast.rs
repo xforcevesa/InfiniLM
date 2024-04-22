@@ -60,5 +60,5 @@ fn typed<T: Ty + Sync, U: Ty + Send>(
         .zip(reslice_mut(ans.physical_mut()))
         .for_each(|(src, dst)| *dst = cast(src));
 
-    unsafe { ans.map_physical(|b| Storage::Others(Arc::new(b))) }
+    ans.map_physical(|b| Storage::Others(Arc::new(b)))
 }

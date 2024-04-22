@@ -1,11 +1,11 @@
-﻿use std::{
+﻿use crate::{idim, pattern::Pattern, udim, Affine, Shape, Tensor};
+use std::{
+    collections::VecDeque,
     ops::{Deref, DerefMut},
     rc::Rc,
     slice::from_raw_parts_mut,
     sync::Arc,
 };
-
-use crate::{idim, pattern::Pattern, udim, Affine, Shape, Tensor};
 
 pub trait Splitable {
     fn split(&self) -> Self;
@@ -100,7 +100,7 @@ where
 }
 
 impl<Physical: Splitable> Tensor<Physical> {
-    pub fn split(&self, axis: usize, segments: &[udim]) -> Vec<Self> {
+    pub fn split(&self, axis: usize, segments: &[udim]) -> VecDeque<Self> {
         build(axis, segments, &self.shape)
             .into_iter()
             .map(|(shape, affine)| Self {
@@ -114,8 +114,8 @@ impl<Physical: Splitable> Tensor<Physical> {
 }
 
 fn build(axis: usize, segments: &[udim], input: &[udim]) -> Vec<(Shape, Affine)> {
-    assert!(axis < input.len());
-    assert_eq!(input[axis], segments.iter().sum());
+    assert!(input.len() > axis);
+    assert!(input[axis] >= segments.iter().sum());
 
     segments
         .iter()
@@ -182,4 +182,19 @@ fn test() {
             0, 0, 0, 1, //
         ]
     );
+}
+
+#[macro_export]
+macro_rules! split {
+    ($src:expr; [$axis:expr]: $($n:expr),+) => {
+        {
+            let mut vec = $src.split($axis, &[$($n as _),+]);
+            ($((vec.pop_front().unwrap(),$n).0,)+)
+        }
+    };
+}
+
+#[test]
+fn test_macro() {
+    let (_a, _b, _c) = split!(Tensor::new(crate::DataType::U8, &[10], ()); [0]: 2, 3, 4);
 }

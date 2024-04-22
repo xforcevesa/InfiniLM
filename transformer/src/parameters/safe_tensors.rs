@@ -131,5 +131,5 @@ fn concat0<T: HostMem + DerefMut<Target = [u8]>>(
         unsafe { t.reform_to_raw(&mut ans.physical_mut()[offset..][..len]) };
         offset += len;
     }
-    unsafe { ans.map_physical(|b| Storage::Others(Arc::new(b))) }
+    ans.map_physical(|b| Storage::Others(Arc::new(b)))
 }

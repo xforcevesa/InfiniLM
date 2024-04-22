@@ -3,7 +3,7 @@ mod kernel;
 use common::{utok, Blob};
 use gemm::f16;
 use kernel::CpuKernels;
-use tensor::{reslice, slice, udim, DataType, LocalSplitable, Tensor};
+use tensor::{reslice, slice, split, udim, DataType, LocalSplitable, Tensor};
 use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request, SampleArgs};
 
 pub struct Transformer(Memory);
@@ -23,7 +23,7 @@ impl transformer::Transformer for Transformer {
 
     #[inline]
     fn new_cache(&self) -> Vec<LayerCache<Self::Cache>> {
-        LayerCache::new_layers(&self.0, tensor)
+        LayerCache::new_layers(&self.0, |dt, shape| Tensor::alloc(dt, shape, Blob::new))
     }
 
     fn decode<Id>(
@@ -34,7 +34,7 @@ impl transformer::Transformer for Transformer {
         requests.sort_unstable_by_key(Request::purely_decode);
         // 生成词嵌入并预分配空间
         let mut x0 = self.token_embed(&requests);
-        let mut x1 = tensor(x0.data_type(), x0.shape());
+        let mut x1 = Tensor::alloc(x0.data_type(), x0.shape(), Blob::new);
         let mut buf = LayerBuffer::alloc(&self.0, &requests, Blob::new);
         // 生成位置张量
         let nt = x0.shape()[0]; // `nt` for number of tokens
@@ -109,10 +109,9 @@ impl Transformer {
         let d = self.0.hidden_size() as udim;
         let kernels = CpuKernels::new(&self.0);
 
-        let mut x0 = tensor(dt, &[nt, d]);
+        let mut x0 = Tensor::alloc(dt, &[nt, d], Blob::new);
         let tokens = requests.iter().flat_map(Request::tokens).copied();
         kernels.gather(&mut x0, &self.0.embed_tokens(), tokens);
-        // println!("gather:\n{x0}");
 
         x0
     }
@@ -135,22 +134,17 @@ impl Transformer {
 
         let input_layernorm = self.0.input_layernorm(layer);
         kernels.rms_norm(x1, x0, &input_layernorm);
-        // println!("layer {layer} input norm:\n{x1}");
 
         let w_qkv = self.0.w_qkv(layer).transpose(&[1, 0]);
         kernels.mat_mul(qkv, 0., x1, &w_qkv, 1.);
-        let mut qkv = qkv.split(1, &[d as _, dkv as _, dkv as _]);
-        let v = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
-        let mut k = qkv.pop().unwrap().reshape(&[nt, nkvh, dh]);
-        let mut q = qkv.pop().unwrap().reshape(&[nt, nh, dh]);
-        // println!("layer {layer} q:\n{q}");
-        // println!("layer {layer} k:\n{k}");
-        // println!("layer {layer} v:\n{v}");
+
+        let (q, k, v) = split!(qkv; [1]: d, dkv, dkv);
+        let mut q = q.reshape(&[nt, nh, dh]);
+        let mut k = k.reshape(&[nt, nkvh, dh]);
+        let v = v.reshape(&[nt, nkvh, dh]);
 
         kernels.rotary_embedding(&mut q, pos);
         kernels.rotary_embedding(&mut k, pos);
-        // println!("layer {layer} rot q:\n{q}");
-        // println!("layer {layer} rot k:\n{k}");
 
         (q, k, v)
     }
@@ -176,14 +170,10 @@ impl Transformer {
         let head_div = (dh as f32).sqrt().recip();
         let kernels = CpuKernels::new(&self.0);
 
-        let q = q.as_ref().transpose(&[1, 0, 2]);
-        let k = k.as_ref().transpose(&[1, 0, 2]);
-        let v = v.as_ref().transpose(&[1, 0, 2]);
+        let q = q.as_ref().transpose(&[1, 0, 2]).map_physical(|u| &**u);
+        let k = k.as_ref().transpose(&[1, 0, 2]).map_physical(|u| &**u);
+        let v = v.as_ref().transpose(&[1, 0, 2]).map_physical(|u| &**u);
         let mut o = o.as_mut().reshape(&[nt, nh, dh]).transpose(&[1, 0, 2]);
-
-        let q = unsafe { q.map_physical(|u| &**u) };
-        let k = unsafe { k.map_physical(|u| &**u) };
-        let v = unsafe { v.map_physical(|u| &**u) };
 
         let mut req = 0;
         for r in requests.iter_mut() {
@@ -199,27 +189,23 @@ impl Transformer {
             let q = q.clone().slice(req_slice);
             let k = k.clone().slice(req_slice);
             let v = v.clone().slice(req_slice);
-            let o = o.as_mut().slice(req_slice);
-            let mut o = unsafe { o.map_physical(|u| &mut ***u) };
+            let mut o = o.as_mut().slice(req_slice).map_physical(|u| &mut ***u);
 
             let mut q_att = Tensor::new(dt, &[nh, seq_len, dh], &mut q_buf[..]);
             let (k_cache, v_cache) = r.cache(layer);
-            let k_cat = k_cache.as_mut().slice(cat_slice);
-            let v_cat = v_cache.as_mut().slice(cat_slice);
-            let mut k_cat = unsafe { k_cat.map_physical(|u| &mut **u) };
-            let mut v_cat = unsafe { v_cat.map_physical(|u| &mut **u) };
+            let mut k_cat = k_cache.as_mut().slice(cat_slice).map_physical(|u| &mut **u);
+            let mut v_cat = v_cache.as_mut().slice(cat_slice).map_physical(|u| &mut **u);
             kernels.reform(&mut q_att, &q);
             kernels.reform(&mut k_cat, &k);
             kernels.reform(&mut v_cat, &v);
 
             let q_att = q_att.reshape(&[nkvh, head_group * seq_len, dh]);
-            let k_att = k_cache.as_ref().slice(att_slice).transpose(&[0, 2, 1]);
-            let v_att = v_cache.as_ref().slice(att_slice);
-            let k_att = unsafe { k_att.map_physical(|u| &**u) };
-            let v_att = unsafe { v_att.map_physical(|u| &**u) };
-            // println!("layer {layer} q attention:\n{q_att}");
-            // println!("layer {layer} k attention:\n{k_att}");
-            // println!("layer {layer} v attention:\n{v_att}");
+            let k_att = k_cache
+                .as_ref()
+                .slice(att_slice)
+                .transpose(&[0, 2, 1])
+                .map_physical(|u| &**u);
+            let v_att = v_cache.as_ref().slice(att_slice).map_physical(|u| &**u);
 
             let shape_att0 = &[nkvh, head_group * seq_len, att_len];
             let shape_att1 = &[nkvh * head_group, seq_len, att_len];
@@ -232,7 +218,6 @@ impl Transformer {
             kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
 
             kernels.reform(&mut o, &x2.reshape(&[nh, seq_len, dh]));
-            // println!("layer {layer} after attention:\n{}", o);
         }
     }
 
@@ -248,26 +233,18 @@ impl Transformer {
 
         let wo = self.0.self_attn_o_proj(layer).transpose(&[1, 0]);
         kernels.mat_mul(x0, 1., x1, &wo, 1.);
-        // println!("layer {layer} o_proj:\n{x0}");
 
         let post_layernorm = self.0.post_attention_layernorm(layer);
         kernels.rms_norm(x1, x0, &post_layernorm);
-        // println!("layer {layer} post norm:\n{x1}");
 
         let w_gate_up = self.0.mlp_gate_up(layer).transpose(&[1, 0]);
         kernels.mat_mul(gate_up, 0., x1, &w_gate_up, 1.);
-        let mut gate_up = gate_up.split(1, &[di as _, di as _]);
-        let up = gate_up.pop().unwrap();
-        let mut gate = gate_up.pop().unwrap();
-        // println!("layer {layer} gate:\n{gate}");
-        // println!("layer {layer} up:\n{up}");
 
+        let (mut gate, up) = split!(gate_up; [1]: di, di);
         kernels.swiglu(&mut gate, &up);
-        // println!("layer {layer} swiglu:\n{gate}");
 
         let mlp_down = self.0.mlp_down(layer).transpose(&[1, 0]);
         kernels.mat_mul(x0, 1., &gate, &mlp_down, 1.);
-        // println!("layer {layer} down:\n{x0}");
     }
 
     fn move_decode<Id>(
@@ -301,8 +278,7 @@ impl Transformer {
         let voc = self.0.vocab_size() as udim;
         let kernels = CpuKernels::new(&self.0);
 
-        let mut logits = tensor(dt, &[x.shape()[0], voc]);
-        // println!("decode slice:\n{x}");
+        let mut logits = Tensor::alloc(dt, &[x.shape()[0], voc], Blob::new);
 
         // 复制一个 x 以实现原地归一化
         let x_ = unsafe {
@@ -310,19 +286,12 @@ impl Transformer {
                 .map_physical(|u| std::slice::from_raw_parts(u.as_ptr(), u.len()))
         };
         kernels.rms_norm(&mut x, &x_, &self.0.model_norm());
-        // println!("model norm:\n{x}");
 
         let lm_head = self.0.lm_head().transpose(&[1, 0]);
         kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
-        // println!("logits:\n{logits}");
 
         logits
     }
-}
-
-#[inline]
-fn tensor(dt: DataType, shape: &[udim]) -> Tensor<Blob> {
-    Tensor::alloc(dt, shape, Blob::new)
 }
 
 #[test]

@@ -13,11 +13,9 @@ impl ModelParameters {
     pub fn new(host: &dyn Llama2, stream: &Stream) -> Self {
         macro_rules! map {
             ($param:ident) => {
-                unsafe {
-                    host.$param()
-                        .as_ref()
-                        .map_physical(|slice| stream.from_host(slice).sporulate())
-                }
+                host.$param()
+                    .as_ref()
+                    .map_physical(|slice| stream.from_host(slice).sporulate())
             };
         }
         Self {
@@ -134,11 +132,9 @@ impl LayerParameter {
     fn new(host: &dyn Llama2, layer: usize, stream: &Stream) -> Self {
         macro_rules! map {
             ($param:ident) => {
-                unsafe {
-                    host.$param(layer)
-                        .as_ref()
-                        .map_physical(|slice| stream.from_host(slice).sporulate())
-                }
+                host.$param(layer)
+                    .as_ref()
+                    .map_physical(|slice| stream.from_host(slice).sporulate())
             };
         }
         Self {

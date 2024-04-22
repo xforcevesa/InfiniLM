@@ -16,7 +16,7 @@ pub use common::{
     safe_tensors::{SafeTensors, SafeTensorsError},
     test_model, utok,
 };
-pub use tensor::{slice, udim, DataType, LocalSplitable, Tensor};
+pub use tensor::{slice, split, udim, DataType, LocalSplitable, Tensor};
 
 use cublas::{Cublas, CublasSpore};
 use cuda::{

@@ -37,19 +37,19 @@ impl Success for DropSuccess {
     }
 }
 
-pub(crate) enum Error {
-    SessionBusy,
-    SessionDuplicate,
-    SessionNotFound,
+pub(crate) enum SessionError {
+    Busy,
+    Duplicate,
+    NotFound,
 }
 
-impl Error {
+impl SessionError {
     #[inline]
     pub fn msg(&self) -> &'static str {
         match self {
-            Self::SessionBusy => "Session is busy",
-            Self::SessionDuplicate => "Session already exists",
-            Self::SessionNotFound => "Session histroy is lost",
+            Self::Busy => "Session is busy",
+            Self::Duplicate => "Session already exists",
+            Self::NotFound => "Session histroy is lost",
         }
     }
 }
