@@ -1,11 +1,11 @@
 mod kernel;
 
-use causal_lm::{CausalLM, DecodingMeta, QueryContext};
+use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleMeta};
 use common::{upos, utok, Blob};
 use gemm::f16;
 use itertools::izip;
 use kernel::CpuKernels;
-use std::slice::from_raw_parts;
+use std::{iter::repeat, path::Path, slice::from_raw_parts};
 use tensor::{reslice, slice, split, udim, DataType, LocalSplitable, Tensor};
 use transformer::{pos, Kernels, LayerBuffer, LayerCache, Llama2, Memory, Request, SampleArgs};
 
@@ -17,6 +17,16 @@ impl CausalLM for Transformer {
     #[inline]
     fn eos_token(&self) -> utok {
         self.0.eos_token_id()
+    }
+
+    #[inline]
+    fn load(model_dir: impl AsRef<Path>) -> Self {
+        let memory = Memory::load_safetensors(model_dir).unwrap();
+        if memory.data_type() == DataType::F16 {
+            Self(memory)
+        } else {
+            Self(Memory::cast(&memory, DataType::F16))
+        }
     }
 
     fn new_cache(&self) -> Tensor<Self::Storage> {
@@ -142,7 +152,9 @@ impl CausalLM for Transformer {
                 let pos = query.pos();
                 let seq_len = query.seq_len();
                 let att_len = query.att_len();
-                let (mut k_cache, mut v_cache) = query.cache(layer);
+                let Some((mut k_cache, mut v_cache)) = query.cache(layer) else {
+                    continue;
+                };
 
                 let slice_cat = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
                 let slice_att = &[slice![=>], slice![      => att_len], slice![=>]];
@@ -261,22 +273,18 @@ impl CausalLM for Transformer {
         logits
     }
 
-    fn sample(&self, logits: Tensor<Self::Storage>, args: causal_lm::SampleArgs) -> Vec<utok> {
-        let &[nt, voc] = logits.shape() else { panic!() };
-        let dt = logits.data_type();
-
-        macro_rules! sample {
-            ($ty:ty) => {{
-                let logits: &[$ty] = reslice(logits.as_slice());
-                (0..nt).map(|i| args.random(&kernel::slice!(logits; voc; [i]))).collect()
-            }};
-        }
-
-        match dt {
-            DataType::F16 => sample!(f16),
-            DataType::F32 => sample!(f32),
-            _ => unreachable!(),
-        }
+    fn sample(
+        &self,
+        args: impl IntoIterator<Item = SampleMeta>,
+        logits: Tensor<Self::Storage>,
+    ) -> Vec<utok> {
+        let &[_, voc] = logits.shape() else { panic!() };
+        let logits: &[f16] = reslice(logits.as_slice());
+        args.into_iter()
+            .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
+            .enumerate()
+            .map(|(i, args)| args.random(&kernel::slice!(logits; voc; [i])))
+            .collect()
     }
 }
 

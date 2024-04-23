@@ -1,6 +1,7 @@
 mod batcher;
 mod cpu;
 mod dispatch;
+mod new;
 #[cfg(detected_cuda)]
 mod nvidia;
 mod session;

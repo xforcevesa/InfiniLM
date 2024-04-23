@@ -345,7 +345,7 @@ impl transformer::Transformer for Transformer {
                             }
                         }
                     }
-                    slice![from begin, until i_dst + 1]
+                    slice![begin => i_dst + 1]
                 };
                 let x = x0.as_ref().slice(&[slice, slice![=>]]);
                 let mut x = unsafe { x.map_physical(|u| ctx.sprout(&u[0])) };

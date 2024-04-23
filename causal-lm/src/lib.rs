@@ -9,12 +9,15 @@ pub use query_context::QueryContext;
 pub use sample::SampleArgs;
 
 use common::{upos, utok};
+use std::path::Path;
 use tensor::{udim, Tensor};
 
 /// 因果语言模型。
 pub trait CausalLM {
     /// 存储中间结果的类型。
     type Storage;
+    /// 从文件系统加载模型。
+    fn load(model_dir: impl AsRef<Path>) -> Self;
     /// 模型定义的句子结束符。
     fn eos_token(&self) -> utok;
     /// 创建一个新的缓存（`num_layers x 2 x num_kv_head x max_seq_len x head_dim`）。
@@ -38,7 +41,11 @@ pub trait CausalLM {
         hidden_state: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage>;
     /// 对 logits 进行采样。
-    fn sample(&self, logits: Tensor<Self::Storage>, args: SampleArgs) -> Vec<utok>;
+    fn sample(
+        &self,
+        args: impl IntoIterator<Item = SampleMeta>,
+        logits: Tensor<Self::Storage>,
+    ) -> Vec<utok>;
 }
 
 /// 解码的要求。
@@ -47,6 +54,14 @@ pub struct DecodingMeta {
     pub num_query: usize,
     /// 解码的长度。
     pub num_decode: usize,
+}
+
+/// 解码的要求。
+pub struct SampleMeta {
+    /// 解码的长度。
+    pub num_decode: usize,
+    /// 采样参数。
+    pub args: SampleArgs,
 }
 
 /// 生成位置张量。

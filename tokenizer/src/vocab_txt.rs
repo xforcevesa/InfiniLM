@@ -54,12 +54,7 @@ impl Tokenizer for VocabTxt {
         let mut tokens = Vec::<utok>::new();
 
         while !text.is_empty() {
-            let piece = if text.len() > self.max_piece_len {
-                &text[..self.max_piece_len]
-            } else {
-                text
-            };
-            if let Some((pre, tok)) = self.trie.get_longest_common_prefix(piece) {
+            if let Some((pre, tok)) = self.trie.get_longest_common_prefix(text) {
                 tokens.push(*tok);
                 text = &text[pre.len()..];
             } else {

@@ -5,7 +5,7 @@ use tensor::{slice, split, udim, LocalSplitable, Tensor};
 /// 查询 Transformer 的的信息。
 pub struct QueryContext<'a, Storage> {
     /// K-V cache.
-    pub cache: &'a mut Tensor<Storage>,
+    pub cache: Option<&'a mut Tensor<Storage>>,
     /// 查询在上下文中的位置。
     pub range: Range<upos>,
 }
@@ -35,25 +35,26 @@ where
     Storage: DerefMut<Target = [T]>,
 {
     /// 提取第 `layer` 层的 K-V 缓存。
-    pub fn cache(&mut self, layer: usize) -> KVCache<T> {
-        let &[_, 2, nkvh, max_seq_len, dh] = self.cache.shape() else {
-            unreachable!()
-        };
-        let u = self
-            .cache
-            .as_mut()
-            .map_physical(|u| LocalSplitable::from(&mut **u))
-            .slice(&[
-                slice![=layer],
-                slice![=>],
-                slice![=>],
-                slice![=>],
-                slice![=>],
-            ]);
-        let (k, v) = split!(u; [1]: 1, 1);
-        (
-            k.reshape(&[nkvh, max_seq_len, dh]),
-            v.reshape(&[nkvh, max_seq_len, dh]),
-        )
+    pub fn cache(&mut self, layer: usize) -> Option<KVCache<T>> {
+        self.cache.as_mut().map(|cache| {
+            let &[_, 2, nkvh, max_seq_len, dh] = cache.shape() else {
+                unreachable!()
+            };
+            let u = cache
+                .as_mut()
+                .map_physical(|u| LocalSplitable::from(&mut **u))
+                .slice(&[
+                    slice![=layer],
+                    slice![=>],
+                    slice![=>],
+                    slice![=>],
+                    slice![=>],
+                ]);
+            let (k, v) = split!(u; [1]: 1, 1);
+            (
+                k.reshape(&[nkvh, max_seq_len, dh]),
+                v.reshape(&[nkvh, max_seq_len, dh]),
+            )
+        })
     }
 }

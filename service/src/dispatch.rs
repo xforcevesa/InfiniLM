@@ -31,7 +31,7 @@ where
 
 struct Dispatcher<T: Transformer> {
     transformer: Arc<T>,
-    batcher: Arc<Batcher<T::Cache>>,
+    batcher: Arc<Batcher<Task<T::Cache>>>,
     set: JoinSet<()>,
 }
 
@@ -46,7 +46,7 @@ where
     T::Cache: Send + 'static,
 {
     #[inline]
-    pub fn new(transformer: T, batcher: Batcher<T::Cache>) -> Self {
+    pub fn new(transformer: T, batcher: Batcher<Task<T::Cache>>) -> Self {
         Dispatcher {
             transformer: Arc::new(transformer),
             batcher: Arc::new(batcher),

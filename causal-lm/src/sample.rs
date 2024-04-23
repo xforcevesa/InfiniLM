@@ -10,6 +10,17 @@ pub struct SampleArgs {
     pub top_p: f32,
 }
 
+impl Default for SampleArgs {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            temperature: 0.,
+            top_k: usize::MAX,
+            top_p: 1.,
+        }
+    }
+}
+
 impl SampleArgs {
     #[inline]
     fn is_argmax(&self) -> bool {
