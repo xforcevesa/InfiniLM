@@ -1,10 +1,12 @@
 //! 提供因果语言模型的特性定义。
 
-// #![deny(warnings, missing_docs)]
+#![deny(warnings, missing_docs)]
 
 mod query_context;
+mod sample;
 
 pub use query_context::QueryContext;
+pub use sample::SampleArgs;
 
 use common::{upos, utok};
 use tensor::{udim, Tensor};
@@ -36,7 +38,7 @@ pub trait CausalLM {
         hidden_state: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage>;
     /// 对 logits 进行采样。
-    fn sample(&self, logits: Tensor<Self::Storage>) -> Vec<utok>;
+    fn sample(&self, logits: Tensor<Self::Storage>, args: SampleArgs) -> Vec<utok>;
 }
 
 /// 解码的要求。
@@ -50,7 +52,7 @@ pub struct DecodingMeta {
 /// 生成位置张量。
 #[inline]
 pub fn pos<'a, S: 'a>(
-    queries: impl IntoIterator<Item = QueryContext<'a, S>>,
+    queries: impl IntoIterator<Item = &'a QueryContext<'a, S>>,
     nt_hint: udim,
 ) -> Tensor<Vec<upos>> {
     let mut ans = Vec::with_capacity(nt_hint as usize);
