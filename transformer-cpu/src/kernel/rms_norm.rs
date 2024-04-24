@@ -1,10 +1,11 @@
-﻿use super::slice;
-use gemm::f16;
+﻿use gemm::f16;
 use std::{
     iter::zip,
-    ops::{Deref, DerefMut, Mul, MulAssign},
+    ops::{Deref, DerefMut, Mul},
+    slice::{from_raw_parts, from_raw_parts_mut},
 };
-use tensor::{reslice, reslice_mut, DataType, Tensor};
+use tensor::{DataType, Tensor};
+use transformer::BetweenF32;
 
 pub fn rms_norm<T, U, V>(o: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
 where
@@ -12,57 +13,59 @@ where
     U: Deref<Target = [u8]>,
     V: Deref<Target = [u8]>,
 {
-    let &[.., d] = o.shape() else { panic!() };
+    let &[n, d] = o.shape() else { panic!() };
     let dt = o.data_type();
 
-    debug_assert_eq!(x.data_type(), dt);
-    debug_assert_eq!(w.data_type(), dt);
-    debug_assert_eq!(o.shape(), x.shape());
-    debug_assert_eq!(w.shape(), &[d]);
-    debug_assert!(o.is_contiguous());
-    debug_assert!(x.is_contiguous());
-    debug_assert!(w.is_contiguous());
+    assert_eq!(x.data_type(), dt);
+    assert_eq!(w.data_type(), dt);
+    assert_eq!(o.shape(), x.shape());
+    assert_eq!(w.shape(), &[d]);
+    assert!(o.contiguous_len() >= 1);
+    assert!(x.contiguous_len() >= 1);
+    assert!(w.is_contiguous());
 
-    let o = o.as_mut_slice();
-    let x = x.as_slice();
-    let w = w.as_slice();
+    let ptr_o = o.locate_start_mut();
+    let ptr_x = x.locate_start();
+    let ptr_w = w.locate_start();
+
+    let stride_o = o.strides()[0] as usize;
+    let stride_x = x.strides()[0] as usize;
+    let n = n as usize;
+    let d = d as usize;
 
     match dt {
-        DataType::F16 => rms_norm_op(o, x, w, |x| {
-            f16::from_f32(rms_norm_reduce(x.iter().copied().map(f16::to_f32), epsilon))
-        }),
-        DataType::F32 => rms_norm_op(o, x, w, |x| rms_norm_reduce(x.iter().copied(), epsilon)),
+        DataType::F16 => rms_norm_op::<f16>(ptr_o, stride_o, ptr_x, stride_x, ptr_w, n, d, epsilon),
+        DataType::F32 => rms_norm_op::<f32>(ptr_o, stride_o, ptr_x, stride_x, ptr_w, n, d, epsilon),
         _ => unreachable!("unsupported data type \"{dt:?}\""),
     }
 }
 
-fn rms_norm_op<T: Copy + Mul<Output = T> + MulAssign>(
-    o: &mut [u8],
-    x: &[u8],
-    w: &[u8],
-    reduce: impl Fn(&[T]) -> T,
+fn rms_norm_op<T: Mul<Output = T> + BetweenF32 + Copy>(
+    o: *mut u8,
+    stride_o: usize,
+    x: *const u8,
+    stride_x: usize,
+    w: *const u8,
+    n: usize,
+    d: usize,
+    epsilon: f32,
 ) {
-    let o: &mut [T] = reslice_mut(o);
-    let x: &[T] = reslice(x);
-    let w: &[T] = reslice(w);
-    let d = w.len();
+    let o = o.cast::<T>();
+    let x = x.cast::<T>();
+    let w = unsafe { from_raw_parts(w.cast::<T>(), d) };
+    for i in 0..n {
+        let o = unsafe { from_raw_parts_mut(o.add(stride_o * i), d) };
+        let x = unsafe { from_raw_parts(x.add(stride_x * i), d) };
 
-    for i in 0..x.len() / w.len() {
-        let o = &mut slice!(o; d; [i]);
-        let x = &slice!(x; d; [i]);
-        let k = reduce(x);
+        // (Σx^2 / n + δ)^(-1/2)
+        let mut len = 0usize;
+        let mut sum = 0.0f32;
+        for x in x.iter().map(T::get) {
+            len += 1;
+            sum += x * x;
+        }
+        let k = T::cast((sum / (len as f32) + epsilon).sqrt().recip());
+
         zip(o, zip(x, w)).for_each(|(o, (x, w))| *o = *w * (k * *x));
     }
-}
-
-#[inline]
-fn rms_norm_reduce(x: impl Iterator<Item = f32>, epsilon: f32) -> f32 {
-    // (Σx^2 / n + δ)^(-1/2)
-    let mut len = 0usize;
-    let mut sum = 0.0f32;
-    for x in x {
-        len += 1;
-        sum += x * x;
-    }
-    (sum / (len as f32) + epsilon).sqrt().recip()
 }

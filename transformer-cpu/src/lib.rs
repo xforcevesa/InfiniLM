@@ -601,3 +601,44 @@ fn test_build() {
     let t1 = Instant::now();
     println!("build transformer {:?}", t1 - t0);
 }
+
+#[test]
+fn test_infer() {
+    use std::time::Instant;
+
+    let Some(model_dir) = common::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
+
+    let t0 = Instant::now();
+    let model = <Transformer as CausalLM>::load(model_dir);
+    let t1 = Instant::now();
+    println!("load {:?}", t1 - t0);
+
+    const PROMPT: [utok; 5] = [9038, 2501, 263, 931, 29892];
+
+    let mut cache = model.new_cache();
+
+    let token_embedded = CausalLM::token_embed(&model, PROMPT);
+
+    let queries = [QueryContext {
+        cache: Some(&mut cache),
+        range: 0..PROMPT.len() as _,
+    }];
+    let hidden_state = CausalLM::forward(&model, queries, token_embedded);
+
+    let decoding = [DecodingMeta {
+        num_query: PROMPT.len(),
+        num_decode: 1,
+    }];
+    let logits = CausalLM::decode(&model, decoding, hidden_state);
+
+    let args = [SampleMeta {
+        num_decode: 1,
+        args: causal_lm::SampleArgs::default(),
+    }];
+    let tokens = CausalLM::sample(&model, args, logits);
+
+    println!("{:?}", tokens);
+}
