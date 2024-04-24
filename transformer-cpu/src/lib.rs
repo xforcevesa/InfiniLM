@@ -616,29 +616,37 @@ fn test_infer() {
     let t1 = Instant::now();
     println!("load {:?}", t1 - t0);
 
-    const PROMPT: [utok; 5] = [9038, 2501, 263, 931, 29892];
-
     let mut cache = model.new_cache();
 
-    let token_embedded = CausalLM::token_embed(&model, PROMPT);
+    let mut prompt: Vec<utok> = vec![
+        29966, 29989, 1792, 29989, 29958, 13, 29903, 388, 376, 18567, 29908, 304, 592, 21106,
+        29879, 5299, 29989, 465, 22137, 29989, 29958, 13,
+    ];
+    let mut pos = 0;
 
-    let queries = [QueryContext {
-        cache: Some(&mut cache),
-        range: 0..PROMPT.len() as _,
-    }];
-    let hidden_state = CausalLM::forward(&model, queries, token_embedded);
+    while prompt != &[model.eos_token()] {
+        let token_embedded = CausalLM::token_embed(&model, prompt.iter().copied());
 
-    let decoding = [DecodingMeta {
-        num_query: PROMPT.len(),
-        num_decode: 1,
-    }];
-    let logits = CausalLM::decode(&model, decoding, hidden_state);
+        let queries = [QueryContext {
+            cache: Some(&mut cache),
+            range: pos..pos + prompt.len() as upos,
+        }];
+        let hidden_state = CausalLM::forward(&model, queries, token_embedded);
 
-    let args = [SampleMeta {
-        num_decode: 1,
-        args: causal_lm::SampleArgs::default(),
-    }];
-    let tokens = CausalLM::sample(&model, args, logits);
+        let decoding = [DecodingMeta {
+            num_query: prompt.len(),
+            num_decode: 1,
+        }];
+        let logits = CausalLM::decode(&model, decoding, hidden_state);
 
-    println!("{:?}", tokens);
+        let args = [SampleMeta {
+            num_decode: 1,
+            args: causal_lm::SampleArgs::default(),
+        }];
+        let tokens = CausalLM::sample(&model, args, logits);
+
+        println!("{:?}", tokens);
+        pos += prompt.len() as upos;
+        prompt = tokens;
+    }
 }
