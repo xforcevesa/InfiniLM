@@ -6,9 +6,9 @@ use std::{collections::HashMap, io::Write};
 
 impl InferenceArgs {
     pub async fn chat(self) {
-        init_log(self.log.as_ref().map(String::as_str));
+        init_log(self.log.as_deref());
 
-        let service = Service::<transformer_cpu::Transformer>::new(self.model);
+        let (service, _handle) = Service::<transformer_cpu::Transformer>::new(self.model);
         let sessions = HashMap::from([(0, service.launch())]);
         Chatting {
             service,
@@ -184,7 +184,7 @@ impl<M: CausalLM> Chatting<M> {
 
     async fn infer(&mut self, text: &str) {
         print_now!("{}", "AI: ".green());
-        let mut busy = self.session_mut().chat(0, text).unwrap();
+        let mut busy = self.session_mut().chat([text]);
         while let Some(s) = busy.decode().await {
             match &*s {
                 "\\n" => println!(),

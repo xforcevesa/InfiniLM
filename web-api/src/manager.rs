@@ -56,14 +56,14 @@ where
             .unwrap()
             .entry(session_id.clone())
         {
-            Entry::Occupied(mut e) => match e.get() {
-                Some(session)
-                    if dialog_pos == 0
-                        || (inputs.len() == 1 && dialog_pos <= session.dialog_pos()) =>
-                {
-                    Ok(e.get_mut().take().unwrap())
+            Entry::Occupied(mut e) => match e.get_mut() {
+                Some(session) => {
+                    if session.revert(dialog_pos).is_ok() {
+                        Ok(e.get_mut().take().unwrap())
+                    } else {
+                        Err(Error::InvalidDialogPos)
+                    }
                 }
-                Some(_) => Err(Error::InvalidDialogPos),
                 None => Err(Error::SessionBusy),
             },
             Entry::Vacant(e) if dialog_pos == 0 => {
@@ -76,11 +76,7 @@ where
         let self_ = self.clone();
         tokio::spawn(async move {
             {
-                let mut busy = if dialog_pos == 0 {
-                    session.reset(inputs.iter().map(|s| s.content.as_str()))
-                } else {
-                    session.chat(dialog_pos, &inputs[0].content).unwrap()
-                };
+                let mut busy = session.chat(inputs.iter().map(|s| s.content.as_str()));
                 while let Some(s) = busy.decode().await {
                     if let Err(e) = sender.send(s.into_owned()).await {
                         warn!("Failed to send piece to {session_id} with error \"{e}\"");
