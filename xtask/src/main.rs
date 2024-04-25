@@ -1,8 +1,10 @@
 mod cast;
 mod chat;
+mod service;
 
 use clap::Parser;
-use std::future::Future;
+use service::ServiceArgs;
+use std::{ffi::c_int, future::Future};
 
 #[macro_use]
 extern crate clap;
@@ -13,7 +15,7 @@ fn main() {
         Cast(cast) => cast.invode(),
         // Generate(args) => block_on(args.inference.generate(&args.prompt)),
         Chat(chat) => block_on(chat.chat()),
-        // Service(service) => block_on(service.serve()),
+        Service(service) => block_on(service.serve()),
     }
 }
 
@@ -48,8 +50,8 @@ enum Commands {
     // Generate(generate::GenerateArgs),
     /// Chat locally
     Chat(InferenceArgs),
-    // /// Start the service
-    // Service(ServiceArgs),
+    /// Start the service
+    Service(ServiceArgs),
 }
 
 #[derive(Args, Default)]
@@ -66,20 +68,34 @@ struct InferenceArgs {
     nvidia: Option<String>,
 }
 
-fn init_log(log: Option<&str>) {
-    use log::LevelFilter;
-    use simple_logger::SimpleLogger;
+impl InferenceArgs {
+    fn init_log(&self) {
+        use log::LevelFilter;
+        use simple_logger::SimpleLogger;
 
-    let log = log
-        .as_ref()
-        .and_then(|log| match log.to_lowercase().as_str() {
-            "off" | "none" => Some(LevelFilter::Off),
-            "trace" => Some(LevelFilter::Trace),
-            "debug" => Some(LevelFilter::Debug),
-            "info" => Some(LevelFilter::Info),
-            "error" => Some(LevelFilter::Error),
-            _ => None,
-        })
-        .unwrap_or(LevelFilter::Warn);
-    SimpleLogger::new().with_level(log).init().unwrap();
+        let log = self
+            .log
+            .as_ref()
+            .and_then(|log| match log.to_lowercase().as_str() {
+                "off" | "none" => Some(LevelFilter::Off),
+                "trace" => Some(LevelFilter::Trace),
+                "debug" => Some(LevelFilter::Debug),
+                "info" => Some(LevelFilter::Info),
+                "error" => Some(LevelFilter::Error),
+                _ => None,
+            })
+            .unwrap_or(LevelFilter::Warn);
+        SimpleLogger::new().with_level(log).init().unwrap();
+    }
+
+    fn nvidia(&self) -> Vec<c_int> {
+        self.nvidia
+            .as_ref()
+            .map_or("", String::as_str)
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<c_int>().unwrap())
+            .collect()
+    }
 }

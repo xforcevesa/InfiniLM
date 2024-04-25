@@ -9,7 +9,11 @@ use causal_lm::CausalLM;
 use futures::StreamExt;
 use manager::ServiceManager;
 use schemas::{Drop, Fork, Infer};
-use std::{fmt::Debug, net::ToSocketAddrs, sync::Arc};
+use std::{
+    fmt::Debug,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
+    sync::Arc,
+};
 
 #[macro_use]
 extern crate log;
@@ -20,15 +24,13 @@ struct AppState<M: CausalLM> {
     service_manager: Arc<ServiceManager<M>>,
 }
 
-pub async fn start_infer_service<M>(
-    service: service::Service<M>,
-    addrs: impl ToSocketAddrs + Debug,
-) -> std::io::Result<()>
+pub async fn start_infer_service<M>(service: service::Service<M>, port: u16) -> std::io::Result<()>
 where
     M: CausalLM + Send + Sync + 'static,
     M::Storage: Send + Sync + 'static,
 {
-    info!("start service at {addrs:?}");
+    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
+    info!("start service at {addr}");
     let app_state = web::Data::new(AppState {
         service_manager: Arc::new(service.into()),
     });
@@ -39,7 +41,7 @@ where
             .route("/fork", web::post().to(fork::<M>))
             .route("/drop", web::post().to(drop::<M>))
     })
-    .bind(addrs)?
+    .bind(addr)?
     .run()
     .await
 }

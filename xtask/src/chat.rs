@@ -1,21 +1,11 @@
-﻿use crate::{init_log, InferenceArgs};
+﻿use crate::InferenceArgs;
 use causal_lm::CausalLM;
 use colored::Colorize;
 use service::{Service, Session};
-use std::{collections::HashMap, ffi::c_int, io::Write};
+use std::{collections::HashMap, io::Write};
 
 impl InferenceArgs {
     pub async fn chat(self) {
-        init_log(self.log.as_deref());
-        let nvidia = self
-            .nvidia
-            .unwrap_or_default()
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.parse::<c_int>().unwrap())
-            .collect::<Vec<_>>();
-
         macro_rules! chat {
             ($ty:ty; $meta:expr) => {
                 let (service, _handle) = Service::<$ty>::load(self.model, $meta);
@@ -30,7 +20,8 @@ impl InferenceArgs {
             };
         }
 
-        match nvidia.as_slice() {
+        self.init_log();
+        match self.nvidia().as_slice() {
             [] => {
                 use transformer_cpu::Transformer as M;
                 chat!(M; ());
