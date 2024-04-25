@@ -15,7 +15,9 @@ impl ServiceArgs {
     pub async fn serve(self) {
         macro_rules! serve {
             ($ty:ty; $meta:expr) => {
-                let (service, _handle) = Service::<$ty>::load(self.inference.model, $meta);
+                let default_sample = self.inference.sample_args();
+                let (mut service, _handle) = Service::<$ty>::load(self.inference.model, $meta);
+                service.default_sample = default_sample;
                 start_infer_service(service, self.port).await.unwrap();
             };
         }

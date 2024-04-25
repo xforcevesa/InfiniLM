@@ -4,7 +4,7 @@ mod batcher;
 mod session;
 mod template;
 
-use causal_lm::CausalLM;
+use causal_lm::{CausalLM, SampleArgs};
 use session::HandleComponent;
 use std::{fmt::Debug, path::Path, sync::Arc};
 use template::Template;
@@ -14,8 +14,10 @@ use tokio::task::JoinHandle;
 pub use session::{BusySession, ChatError, Session};
 
 /// 对话服务。
-#[repr(transparent)]
-pub struct Service<M: CausalLM>(Arc<ServiceComponent<M>>);
+pub struct Service<M: CausalLM> {
+    component: Arc<ServiceComponent<M>>,
+    pub default_sample: SampleArgs,
+}
 
 /// 服务中不变的组件，将在所有会话之间共享。
 ///
@@ -44,12 +46,15 @@ where
     pub fn load(model_dir: impl AsRef<Path>, meta: M::Meta) -> (Self, JoinHandle<()>) {
         let handle = Arc::new(HandleComponent::from(M::load(&model_dir, meta).unwrap()));
         (
-            Self(Arc::new(ServiceComponent {
-                handle: handle.clone(),
-                tokenizer: tokenizer(&model_dir),
-                normalizer: normalizer(&model_dir),
-                template: template(model_dir),
-            })),
+            Self {
+                component: Arc::new(ServiceComponent {
+                    handle: handle.clone(),
+                    tokenizer: tokenizer(&model_dir),
+                    normalizer: normalizer(&model_dir),
+                    template: template(model_dir),
+                }),
+                default_sample: Default::default(),
+            },
             tokio::task::spawn_blocking(move || handle.run()),
         )
     }
@@ -59,7 +64,9 @@ impl<M: CausalLM> Service<M> {
     /// 从对话服务启动一个会话。
     #[inline]
     pub fn launch(&self) -> Session<M> {
-        self.0.clone().into()
+        let mut session: Session<M> = self.component.clone().into();
+        session.sample = self.default_sample.clone();
+        session
     }
 }
 

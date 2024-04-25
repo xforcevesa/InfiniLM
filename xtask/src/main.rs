@@ -2,6 +2,7 @@ mod cast;
 mod chat;
 mod service;
 
+use causal_lm::SampleArgs;
 use clap::Parser;
 use service::ServiceArgs;
 use std::{ffi::c_int, future::Future};
@@ -62,6 +63,17 @@ struct InferenceArgs {
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
+
+    /// Random sample temperature.
+    #[clap(long)]
+    temperature: Option<f32>,
+    /// Random sample top-k.
+    #[clap(long)]
+    top_k: Option<usize>,
+    /// Random sample top-p.
+    #[clap(long)]
+    top_p: Option<f32>,
+
     #[cfg(feature = "nvidia")]
     /// Use Nvidia GPU.
     #[clap(long)]
@@ -97,5 +109,14 @@ impl InferenceArgs {
             .filter(|s| !s.is_empty())
             .map(|s| s.parse::<c_int>().unwrap())
             .collect()
+    }
+
+    #[inline]
+    fn sample_args(&self) -> SampleArgs {
+        SampleArgs {
+            temperature: self.temperature.unwrap_or(0.),
+            top_k: self.top_k.unwrap_or(usize::MAX),
+            top_p: self.top_p.unwrap_or(1.),
+        }
     }
 }

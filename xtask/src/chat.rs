@@ -8,7 +8,9 @@ impl InferenceArgs {
     pub async fn chat(self) {
         macro_rules! chat {
             ($ty:ty; $meta:expr) => {
-                let (service, _handle) = Service::<$ty>::load(self.model, $meta);
+                let default_sample = self.sample_args();
+                let (mut service, _handle) = Service::<$ty>::load(self.model, $meta);
+                service.default_sample = default_sample;
                 Chatting {
                     service,
                     current: 0,
@@ -96,10 +98,10 @@ impl<M: CausalLM> Chatting<M> {
                     self.current = id;
                 } else {
                     self.sessions.insert(self.current, self.service.launch());
+                    println!("Create new session {}.", self.current);
                     while self.sessions.contains_key(&self.next_id) {
                         self.next_id += 1;
                     }
-                    println!("Create new session {}.", self.current);
                 }
             }
             self.print_session();
@@ -141,6 +143,7 @@ impl<M: CausalLM> Chatting<M> {
         println!("top-p = {}", args.top_p);
     }
 
+    #[inline]
     fn print_session(&mut self) {
         print_now!("{}{}{}", "User[".yellow(), self.current, "]: ".yellow());
     }

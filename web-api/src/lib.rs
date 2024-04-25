@@ -10,8 +10,7 @@ use futures::StreamExt;
 use manager::ServiceManager;
 use schemas::{Drop, Fork, Infer};
 use std::{
-    fmt::Debug,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
 };
 
