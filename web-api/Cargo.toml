@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Zezhong Pan <panzezhong@qiyuanlab.com>"]
 
 [dependencies]
-transformer = { path = "../transformer" }
+causal-lm = { path = "../causal-lm" }
 service = { path = "../service" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

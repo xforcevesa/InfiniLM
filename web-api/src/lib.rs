@@ -4,7 +4,8 @@ mod manager;
 mod response;
 mod schemas;
 
-use actix_web::{post, web, App, HttpResponse, HttpServer};
+use actix_web::{web, App, HttpResponse, HttpServer};
+use causal_lm::CausalLM;
 use futures::StreamExt;
 use manager::ServiceManager;
 use schemas::{Drop, Fork, Infer};
@@ -14,15 +15,19 @@ use std::{fmt::Debug, net::ToSocketAddrs, sync::Arc};
 extern crate log;
 
 /// All global variables and services shared among all endpoints in this App
-struct AppState {
+struct AppState<M: CausalLM> {
     /// Manager of this App, which provides all kinds of services such as infer, session management, etc
-    service_manager: Arc<ServiceManager>,
+    service_manager: Arc<ServiceManager<M>>,
 }
 
-pub async fn start_infer_service(
-    service: service::Service,
+pub async fn start_infer_service<M>(
+    service: service::Service<M>,
     addrs: impl ToSocketAddrs + Debug,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    M: CausalLM + Send + Sync + 'static,
+    M::Storage: Send + Sync + 'static,
+{
     info!("start service at {addrs:?}");
     let app_state = web::Data::new(AppState {
         service_manager: Arc::new(service.into()),
@@ -30,17 +35,20 @@ pub async fn start_infer_service(
     HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
-            .service(infer)
-            .service(fork)
-            .service(drop)
+            .route("/infer", web::post().to(infer::<M>))
+            .route("/fork", web::post().to(fork::<M>))
+            .route("/drop", web::post().to(drop::<M>))
     })
     .bind(addrs)?
     .run()
     .await
 }
 
-#[post("/infer")]
-async fn infer(app_state: web::Data<AppState>, request: web::Json<Infer>) -> HttpResponse {
+async fn infer<M>(app_state: web::Data<AppState<M>>, request: web::Json<Infer>) -> HttpResponse
+where
+    M: CausalLM + Send + Sync + 'static,
+    M::Storage: Send + Sync + 'static,
+{
     info!("Request from {}: infer", request.session_id);
     match app_state.service_manager.infer(request.into_inner()) {
         Ok(stream) => response::text_stream(stream.map(|word| Ok(word.into()))),
@@ -48,8 +56,11 @@ async fn infer(app_state: web::Data<AppState>, request: web::Json<Infer>) -> Htt
     }
 }
 
-#[post("/fork")]
-async fn fork(app_state: web::Data<AppState>, request: web::Json<Fork>) -> HttpResponse {
+async fn fork<M>(app_state: web::Data<AppState<M>>, request: web::Json<Fork>) -> HttpResponse
+where
+    M: CausalLM + Send + Sync + 'static,
+    M::Storage: Send + Sync + 'static,
+{
     info!("Request from {}: fork", request.session_id);
     match app_state.service_manager.fork(request.into_inner()) {
         Ok(s) => response::success(s),
@@ -57,8 +68,11 @@ async fn fork(app_state: web::Data<AppState>, request: web::Json<Fork>) -> HttpR
     }
 }
 
-#[post("/drop")]
-async fn drop(app_state: web::Data<AppState>, request: web::Json<Drop>) -> HttpResponse {
+async fn drop<M>(app_state: web::Data<AppState<M>>, request: web::Json<Drop>) -> HttpResponse
+where
+    M: CausalLM + Send + Sync + 'static,
+    M::Storage: Send + Sync + 'static,
+{
     info!("Request from {}: drop", request.session_id);
     match app_state.service_manager.drop_(request.into_inner()) {
         Ok(s) => response::success(s),

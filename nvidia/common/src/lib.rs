@@ -247,3 +247,12 @@ where
         })
     }
 }
+
+pub fn synchronize() {
+    cuda::init();
+    for i in 0..cuda::Device::count() {
+        cuda::Device::new(i as _)
+            .retain_primary()
+            .apply(|ctx| ctx.synchronize());
+    }
+}

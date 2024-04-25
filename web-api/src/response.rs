@@ -31,7 +31,7 @@ pub fn success(s: impl schemas::Success) -> HttpResponse {
 }
 
 #[inline]
-pub fn error(e: schemas::SessionError) -> HttpResponse {
+pub fn error(e: schemas::Error) -> HttpResponse {
     #[derive(Serialize)]
     struct ErrorResponse {
         error: String,

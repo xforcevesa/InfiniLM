@@ -2157,16 +2157,11 @@ dependencies = [
  "causal-lm",
  "colored",
  "common",
- "distributed",
- "half",
  "log",
- "search-cuda-tools",
  "tensor",
  "tokenizer",
  "tokio",
- "transformer",
  "transformer-cpu",
- "transformer-nv",
 ]
 
 [[package]]
@@ -2522,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "transformer-cpu"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "causal-lm",
  "common",
@@ -2704,13 +2699,13 @@ name = "web-api"
 version = "0.0.1"
 dependencies = [
  "actix-web",
+ "causal-lm",
  "futures",
  "log",
  "serde",
  "serde_json",
  "service",
  "tokio",
- "transformer",
 ]
 
 [[package]]
@@ -2746,9 +2741,9 @@ dependencies = [
 
 [[package]]
 name = "winapi-util"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "134306a13c5647ad6453e8deaec55d3a44d6021970129e6188735e74bf546697"
+checksum = "4d4cc384e1e73b93bafa6fb4f1df8c41695c8a91cf9c4c64358067d15a7b6c6b"
 dependencies = [
  "windows-sys 0.52.0",
 ]
@@ -2925,6 +2920,7 @@ dependencies = [
 name = "xtask"
 version = "0.0.0"
 dependencies = [
+ "causal-lm",
  "clap",
  "colored",
  "common",
@@ -2934,6 +2930,7 @@ dependencies = [
  "tensor",
  "tokio",
  "transformer",
+ "transformer-cpu",
  "web-api",
 ]
 
@@ -2959,9 +2956,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "525b4ec142c6b68a2d10f01f7bbf6755599ca3f81ea53b8431b7dd348f5fdb2d"
+checksum = "63381fa6624bf92130a6b87c0d07380116f80b565c42cf0d754136f0238359ef"
 
 [[package]]
 name = "zstd"

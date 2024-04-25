@@ -1,4 +1,5 @@
-use crate::schemas::{Drop, DropSuccess, Fork, ForkSuccess, Infer, SessionError};
+use crate::schemas::{Drop, DropSuccess, Error, Fork, ForkSuccess, Infer};
+use causal_lm::CausalLM;
 use futures::{
     channel::mpsc::{self, Receiver},
     SinkExt,
@@ -9,29 +10,33 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub struct ServiceManager {
+pub struct ServiceManager<M: CausalLM> {
     /// Inference service provided by backend model
-    infer_service: Service,
+    infer_service: Service<M>,
 
     /// All sessions, session id as key.
     /// New session will be created when a new id comes.
     /// The value will become empty when that session is being served,
     /// so that a new request with the same id will not be double-served.
     /// A session must be re-inserted after being served.
-    sessions: Mutex<HashMap<String, Option<Session>>>,
+    pending_sessions: Mutex<HashMap<String, Option<Session<M>>>>,
 }
 
-impl From<Service> for ServiceManager {
+impl<M: CausalLM> From<Service<M>> for ServiceManager<M> {
     #[inline]
-    fn from(infer_service: Service) -> Self {
+    fn from(infer_service: Service<M>) -> Self {
         Self {
             infer_service,
-            sessions: Default::default(),
+            pending_sessions: Default::default(),
         }
     }
 }
 
-impl ServiceManager {
+impl<M> ServiceManager<M>
+where
+    M: CausalLM + Send + Sync + 'static,
+    M::Storage: Send + Sync + 'static,
+{
     /// Get existing or create new infer session for a infer request.
     /// Return session or error.
     pub fn infer(
@@ -39,43 +44,52 @@ impl ServiceManager {
         Infer {
             session_id,
             inputs,
-            first_request,
+            dialog_pos,
         }: Infer,
-    ) -> Result<Receiver<String>, SessionError> {
-        let mut session = match self.sessions.lock().unwrap().entry(session_id.clone()) {
-            // Case session id exists
-            Entry::Occupied(mut e) => match e.get_mut().take() {
-                // Session id exists but user thinks otherwise
-                Some(_) if first_request => {
-                    e.insert(Some(self.infer_service.launch())); // drop the old session
-                    e.get_mut().take().unwrap()
+    ) -> Result<Receiver<String>, Error> {
+        if inputs.is_empty() {
+            return Err(Error::EmptyInput);
+        }
+        let mut session = match self
+            .pending_sessions
+            .lock()
+            .unwrap()
+            .entry(session_id.clone())
+        {
+            Entry::Occupied(mut e) => match e.get() {
+                Some(session)
+                    if dialog_pos == 0
+                        || (inputs.len() == 1 && dialog_pos <= session.dialog_pos()) =>
+                {
+                    Ok(e.get_mut().take().unwrap())
                 }
-                // take the existing session
-                Some(session) => session,
-                // If session is being served
-                None => return Err(SessionError::Busy),
+                Some(_) => Err(Error::InvalidDialogPos),
+                None => Err(Error::SessionBusy),
             },
-            // First request, create new session
-            Entry::Vacant(e) if first_request => {
-                e.insert(Some(self.infer_service.launch())).take().unwrap()
+            Entry::Vacant(e) if dialog_pos == 0 => {
+                Ok(e.insert(Some(self.infer_service.launch())).take().unwrap())
             }
-            // Session id does not exist but user thinks otherwise, histroy lost
-            _ => return Err(SessionError::NotFound),
-        };
-
+            Entry::Vacant(_) => Err(Error::SessionNotFound),
+        }?;
         let (mut sender, receiver) = mpsc::channel(4096);
 
         let self_ = self.clone();
         tokio::spawn(async move {
-            let mut busy = session.chat(&inputs);
-            while let Some(s) = busy.decode().await {
-                if let Err(e) = sender.send(s.into_owned()).await {
-                    warn!("Failed to send piece to {session_id} with error \"{e}\"");
-                    break;
+            {
+                let mut busy = if dialog_pos == 0 {
+                    session.reset(inputs.iter().map(|s| s.content.as_str()))
+                } else {
+                    session.chat(dialog_pos, &inputs[0].content).unwrap()
+                };
+                while let Some(s) = busy.decode().await {
+                    if let Err(e) = sender.send(s.into_owned()).await {
+                        warn!("Failed to send piece to {session_id} with error \"{e}\"");
+                        break;
+                    }
                 }
             }
-            if let Some(opt) = self_.sessions.lock().unwrap().get_mut(&session_id) {
-                opt.get_or_insert(session);
+            if let Some(container) = self_.pending_sessions.lock().unwrap().get_mut(&session_id) {
+                container.get_or_insert(session);
             }
         });
 
@@ -88,33 +102,28 @@ impl ServiceManager {
             session_id,
             new_session_id,
         }: Fork,
-    ) -> Result<ForkSuccess, SessionError> {
-        let mut sessions = self.sessions.lock().unwrap();
-        let session = sessions
+    ) -> Result<ForkSuccess, Error> {
+        let mut sessions = self.pending_sessions.lock().unwrap();
+        if sessions.contains_key(&new_session_id) {
+            warn!("Failed to fork because \"{new_session_id}\" already exists");
+            return Err(Error::SessionDuplicate);
+        }
+        let new = sessions
             .get_mut(&session_id)
-            .ok_or(SessionError::NotFound)?
-            .take()
-            .ok_or(SessionError::Busy)?;
-        let result = match sessions.entry(new_session_id) {
-            Entry::Occupied(e) => {
-                warn!("Failed to fork because \"{}\" already exists", e.key());
-                Err(SessionError::Duplicate)
-            }
-            Entry::Vacant(e) => {
-                e.insert(Some(self.infer_service.fork(&session)));
-                Ok(ForkSuccess)
-            }
-        };
-        sessions.get_mut(&session_id).unwrap().replace(session);
-        result
+            .ok_or(Error::SessionNotFound)?
+            .as_ref()
+            .ok_or(Error::SessionBusy)?
+            .fork();
+        sessions.insert(new_session_id, Some(new));
+        Ok(ForkSuccess)
     }
 
-    pub fn drop_(&self, Drop { session_id }: Drop) -> Result<DropSuccess, SessionError> {
-        self.sessions
+    pub fn drop_(&self, Drop { session_id }: Drop) -> Result<DropSuccess, Error> {
+        self.pending_sessions
             .lock()
             .unwrap()
             .remove(&session_id)
             .map(|_| DropSuccess)
-            .ok_or(SessionError::NotFound)
+            .ok_or(Error::SessionNotFound)
     }
 }

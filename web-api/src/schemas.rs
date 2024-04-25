@@ -1,8 +1,15 @@
 #[derive(serde::Deserialize)]
 pub(crate) struct Infer {
     pub session_id: String,
-    pub inputs: String,
-    pub first_request: bool,
+    pub inputs: Vec<Sentence>,
+    pub dialog_pos: usize,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct Sentence {
+    #[allow(unused)]
+    pub role: String,
+    pub content: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -37,19 +44,24 @@ impl Success for DropSuccess {
     }
 }
 
-pub(crate) enum SessionError {
-    Busy,
-    Duplicate,
-    NotFound,
+#[derive(Debug)]
+pub(crate) enum Error {
+    SessionBusy,
+    SessionDuplicate,
+    SessionNotFound,
+    EmptyInput,
+    InvalidDialogPos,
 }
 
-impl SessionError {
+impl Error {
     #[inline]
     pub fn msg(&self) -> &'static str {
         match self {
-            Self::Busy => "Session is busy",
-            Self::Duplicate => "Session already exists",
-            Self::NotFound => "Session histroy is lost",
+            Self::SessionBusy => "Session is busy",
+            Self::SessionDuplicate => "Session already exists",
+            Self::SessionNotFound => "Session histroy is lost",
+            Self::EmptyInput => "Input is empty",
+            Self::InvalidDialogPos => "Invalid dialog position",
         }
     }
 }

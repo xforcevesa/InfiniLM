@@ -1,65 +1,31 @@
-﻿use crate::InferenceArgs;
+﻿use crate::{init_log, InferenceArgs};
+use causal_lm::CausalLM;
 use colored::Colorize;
 use service::{Service, Session};
 use std::{collections::HashMap, io::Write};
-use transformer::SampleArgs;
 
 impl InferenceArgs {
     pub async fn chat(self) {
-        let mut chatting = Chatting::from(self);
+        init_log(self.log.as_ref().map(String::as_str));
 
-        println!(
-            "\
-###########################################
-# 欢迎使用九源推理框架-大模型单机对话demo #
-###########################################"
-        );
-        chatting.print_args();
-        println!();
-        print_help();
-        print_splitter();
-
-        let mut input = String::new();
-        loop {
-            chatting.print_session();
-            input.clear();
-            std::io::stdin()
-                .read_line(&mut input)
-                .expect("Unable to read line.");
-            let input = input.trim();
-            if !input.is_empty() {
-                // 以 / 开头则为用户指令
-                if input.starts_with('/') {
-                    if !chatting.execute_command(input) {
-                        break;
-                    }
-                } else {
-                    chatting.infer(input).await;
-                }
-            }
-        }
-    }
-}
-
-struct Chatting {
-    service: Service,
-    sample: SampleArgs,
-    session: Session,
-    sessions: HashMap<usize, Session>,
-}
-
-impl From<InferenceArgs> for Chatting {
-    fn from(args: InferenceArgs) -> Self {
-        let service: Service = args.into();
-        let session = service.launch();
-        let sample = service.sample_args();
-        Self {
+        let service = Service::<transformer_cpu::Transformer>::new(self.model);
+        let sessions = HashMap::from([(0, service.launch())]);
+        Chatting {
             service,
-            sample,
-            session,
-            sessions: HashMap::new(),
+            current: 0,
+            next_id: 1,
+            sessions,
         }
+        .chat()
+        .await;
     }
+}
+
+struct Chatting<M: CausalLM> {
+    service: Service<M>,
+    current: usize,
+    next_id: usize,
+    sessions: HashMap<usize, Session<M>>,
 }
 
 macro_rules! print_now {
@@ -68,9 +34,11 @@ macro_rules! print_now {
         std::io::stdout().flush().unwrap();
     }};
 }
+
 fn print_splitter() {
     println!("=====================================");
 }
+
 fn print_help() {
     println!(
         "\
@@ -85,39 +53,76 @@ fn print_help() {
     );
 }
 
-impl Chatting {
-    fn print_args(&self) {
+impl<M: CausalLM> Chatting<M> {
+    async fn chat(mut self) {
         println!(
-            "PID = {}, temperature = {}, top-k = {}, top-p = {}",
-            std::process::id(),
-            self.sample.temperature,
-            self.sample.top_k,
-            self.sample.top_p,
+            "\
+###########################################
+# 欢迎使用九源推理框架-大模型单机对话demo #
+###########################################"
         );
+        self.print_args();
+        println!();
+        print_help();
+        print_splitter();
+
+        let mut input = String::new();
+        loop {
+            self.print_session();
+            input.clear();
+            std::io::stdin()
+                .read_line(&mut input)
+                .expect("Unable to read line.");
+            let input = input.trim();
+            if !input.is_empty() {
+                // 以 / 开头则为用户指令
+                if input.starts_with('/') {
+                    if !self.execute_command(input) {
+                        break;
+                    }
+                } else {
+                    self.infer(input).await;
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn session(&self) -> &Session<M> {
+        self.sessions.get(&self.current).unwrap()
+    }
+
+    #[inline]
+    fn session_mut(&mut self) -> &mut Session<M> {
+        self.sessions.get_mut(&self.current).unwrap()
+    }
+
+    fn print_args(&self) {
+        println!("PID = {}", std::process::id());
+        println!("Current session = {}", self.current);
+        let args = &self.session().sample;
+        println!("temperature = {}", args.temperature);
+        println!("top-k = {}", args.top_k);
+        println!("top-p = {}", args.top_p);
     }
 
     fn print_session(&mut self) {
-        print_now!(
-            "{}{}{}",
-            "User[".yellow(),
-            self.session.id(),
-            "]: ".yellow()
-        );
+        print_now!("{}{}{}", "User[".yellow(), self.current, "]: ".yellow());
     }
 
     fn execute_command(&mut self, command: &str) -> bool {
         match command.split_whitespace().collect::<Vec<_>>().as_slice() {
             ["/create"] => {
-                let old = std::mem::replace(&mut self.session, self.service.launch());
-                self.sessions.insert(old.id(), old);
+                self.current = self.next_id;
+                self.next_id += 1;
+                self.sessions.insert(self.current, self.service.launch());
             }
             ["/switch", n] => match n.parse() {
                 Ok(target_id) => {
-                    if target_id == self.session.id() {
+                    if target_id == self.current {
                         println!("Already in session {}", target_id);
-                    } else if let Some(target) = self.sessions.remove(&target_id) {
-                        let old = std::mem::replace(&mut self.session, target);
-                        self.sessions.insert(old.id(), old);
+                    } else if self.sessions.contains_key(&target_id) {
+                        self.current = target_id;
                     } else {
                         println!("Invalid session ID.");
                     }
@@ -126,20 +131,23 @@ impl Chatting {
             },
             ["/drop", n] => match n.parse() {
                 Ok(target_id) => {
-                    if target_id == self.session.id() {
-                        if let Some((&id, _)) = self.sessions.iter().next() {
-                            let _ = std::mem::replace(
-                                &mut self.session,
-                                self.sessions.remove(&id).unwrap(),
-                            );
-                        } else {
-                            self.session = self.service.launch();
-                        }
-                        println!("Session {target_id} is dropped.")
-                    } else if self.sessions.remove(&target_id).is_some() {
-                        println!("Session {target_id} is dropped.");
-                    } else {
+                    if self.sessions.remove(&target_id).is_none() {
                         println!("Invalid session ID.");
+                    } else {
+                        println!("Session {target_id} is dropped.");
+                        if target_id == self.current {
+                            if let Some((&id, _)) = self.sessions.iter().next() {
+                                self.current = id;
+                                println!("Current session is dropped, switched to {id}.");
+                            } else {
+                                self.current = self.next_id;
+                                self.next_id += 1;
+                                println!(
+                                    "Current session is dropped, switched to new session {}.",
+                                    self.current
+                                );
+                            }
+                        }
                     }
                 }
                 Err(_) => println!("Invalid drop command"),
@@ -147,24 +155,21 @@ impl Chatting {
             ["/args"] => self.print_args(),
             ["/args", "temperature", t] => {
                 if let Ok(t) = t.parse() {
-                    self.sample.temperature = t;
-                    self.service.set_sample_args(self.sample.clone());
+                    self.session_mut().sample.temperature = t;
                 } else {
                     println!("Invalid temperature");
                 }
             }
             ["/args", "top-k", k] => {
                 if let Ok(k) = k.parse() {
-                    self.sample.top_k = k;
-                    self.service.set_sample_args(self.sample.clone());
+                    self.session_mut().sample.top_k = k;
                 } else {
                     println!("Invalid top-k");
                 }
             }
             ["/args", "top-p", p] => {
                 if let Ok(p) = p.parse() {
-                    self.sample.top_p = p;
-                    self.service.set_sample_args(self.sample.clone());
+                    self.session_mut().sample.top_p = p;
                 } else {
                     println!("Invalid top-p");
                 }
@@ -179,7 +184,7 @@ impl Chatting {
 
     async fn infer(&mut self, text: &str) {
         print_now!("{}", "AI: ".green());
-        let mut busy = self.session.chat(text);
+        let mut busy = self.session_mut().chat(0, text).unwrap();
         while let Some(s) = busy.decode().await {
             match &*s {
                 "\\n" => println!(),

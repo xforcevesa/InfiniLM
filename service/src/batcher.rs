@@ -1,18 +1,10 @@
-﻿use crate::session::SessionContext;
-use common::utok;
-use std::sync::{
+﻿use std::sync::{
     atomic::{
         AtomicBool,
         Ordering::{Acquire, Release},
     },
     Condvar, Mutex,
 };
-use tokio::sync::mpsc::UnboundedSender;
-
-pub struct Task<Cache> {
-    pub ctx: SessionContext<Cache>,
-    pub responsing: UnboundedSender<utok>,
-}
 
 pub struct Batcher<T> {
     queue: Mutex<Vec<T>>,
