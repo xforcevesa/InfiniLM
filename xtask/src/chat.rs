@@ -1,24 +1,15 @@
-﻿use crate::InferenceArgs;
-use causal_lm::CausalLM;
+﻿use causal_lm::CausalLM;
 use colored::Colorize;
 use service::{Service, Session};
 use std::{collections::HashMap, io::Write};
 
-impl InferenceArgs {
+impl crate::InferenceArgs {
     pub async fn chat(self) {
         macro_rules! chat {
             ($ty:ty; $meta:expr) => {
-                let default_sample = self.sample_args();
-                let (mut service, _handle) = Service::<$ty>::load(self.model, $meta);
-                service.default_sample = default_sample;
-                Chatting {
-                    service,
-                    current: 0,
-                    next_id: 0,
-                    sessions: Default::default(),
-                }
-                .chat()
-                .await
+                let (mut service, _handle) = Service::<$ty>::load(&self.model, $meta);
+                service.default_sample = self.sample_args();
+                Chatting::new(service).chat().await
             };
         }
 
@@ -75,6 +66,16 @@ fn print_help() {
 }
 
 impl<M: CausalLM> Chatting<M> {
+    #[inline]
+    fn new(service: Service<M>) -> Self {
+        Chatting {
+            service,
+            current: 0,
+            next_id: 0,
+            sessions: Default::default(),
+        }
+    }
+
     async fn chat(mut self) {
         println!(
             "\
