@@ -61,7 +61,7 @@ extern "C" __global__ void {folding}(
 
         let (ptx, log) = Ptx::compile(code);
         if !log.is_empty() {
-            println!("{log}");
+            warn!("{log}");
         }
         Self {
             ptx: ptx.unwrap(),

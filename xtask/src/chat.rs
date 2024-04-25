@@ -38,7 +38,6 @@ impl InferenceArgs {
             #[cfg(feature = "nvidia")]
             &[n] => {
                 use transformer_nv::{cuda, Transformer as M};
-                cuda::init();
                 chat!(M; cuda::Device::new(n));
             }
             #[cfg(feature = "nvidia")]

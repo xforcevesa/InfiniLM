@@ -20,7 +20,7 @@ use std::{
 };
 use transformer::{Kernels, Llama2, Memory};
 
-pub use common_nv::cuda;
+pub use common_nv::{cuda, synchronize};
 
 pub struct Transformer {
     host: Memory,
