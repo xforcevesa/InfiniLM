@@ -3,7 +3,7 @@ use service::Service;
 use web_api::start_infer_service;
 
 #[derive(Args, Default)]
-pub(crate) struct ServiceArgs {
+pub struct ServiceArgs {
     #[clap(flatten)]
     pub inference: InferenceArgs,
     /// Port to bind the service to

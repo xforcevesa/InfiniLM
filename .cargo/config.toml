@@ -1,6 +1,7 @@
 ﻿[alias]
 xtask = "run --package xtask --release --"
 debug = "run --package xtask --"
+deploy = "xtask deploy"
 generate = "xtask generate"
 chat = "xtask chat"
 cast = "xtask cast"

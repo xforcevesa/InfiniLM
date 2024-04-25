@@ -1,9 +1,11 @@
 mod cast;
 mod chat;
+mod deploy;
 mod service;
 
 use causal_lm::SampleArgs;
 use clap::Parser;
+use deploy::DeployArgs;
 use service::ServiceArgs;
 use std::{ffi::c_int, future::Future};
 
@@ -13,6 +15,7 @@ extern crate clap;
 fn main() {
     use Commands::*;
     match Cli::parse().command {
+        Deploy(deploy) => deploy.deploy(),
         Cast(cast) => cast.invode(),
         // Generate(args) => block_on(args.inference.generate(&args.prompt)),
         Chat(chat) => block_on(chat.chat()),
@@ -45,6 +48,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Deploy binary
+    Deploy(DeployArgs),
     /// Cast model
     Cast(cast::CastArgs),
     // /// Generate following text
