@@ -14,7 +14,7 @@ mod swiglu;
 
 pub use common::{
     safe_tensors::{SafeTensors, SafeTensorsError},
-    test_model, utok,
+    test_model, upos, utok,
 };
 pub use tensor::{slice, split, udim, DataType, LocalSplitable, Tensor};
 

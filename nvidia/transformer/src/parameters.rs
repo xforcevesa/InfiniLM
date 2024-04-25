@@ -36,6 +36,12 @@ impl ModelParameters {
             self.lm_head.as_ref().map_physical(|s| s.sprout(ctx)),
         )
     }
+
+    pub unsafe fn kill(&mut self, ctx: &ContextGuard) {
+        self.model_norm.physical_mut().kill(ctx);
+        self.lm_head.physical_mut().kill(ctx);
+        self.sync_event.kill(ctx);
+    }
 }
 
 pub(crate) struct LayersParameters {
@@ -71,6 +77,18 @@ impl LayersParameters {
         stream.wait_for(unsafe { &params.sync_event.sprout(stream.ctx()) });
 
         params
+    }
+
+    pub unsafe fn kill(&mut self, ctx: &ContextGuard) {
+        for layer in &mut self.layers {
+            layer.input_layernorm.physical_mut().kill(ctx);
+            layer.w_qkv.physical_mut().kill(ctx);
+            layer.self_attn_o_proj.physical_mut().kill(ctx);
+            layer.post_attention_layernorm.physical_mut().kill(ctx);
+            layer.mlp_gate_up.physical_mut().kill(ctx);
+            layer.mlp_down.physical_mut().kill(ctx);
+            layer.sync_event.kill(ctx);
+        }
     }
 }
 

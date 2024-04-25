@@ -12,6 +12,7 @@ tensor = { path = "../tensor" }
 causal-lm = { path = "../causal-lm" }
 transformer = { path = "../transformer" }
 transformer-cpu = { path = "../transformer-cpu" }
+transformer-nv = { path = "../nvidia/transformer", optional = true }
 service = { path = "../service" }
 web-api = { path = "../web-api" }
 log.workspace = true
@@ -22,4 +23,4 @@ clap = { version = "4.5", features = ["derive"] }
 
 [features]
 default = ["nvidia"]
-nvidia = []
+nvidia = ["transformer-nv"]

@@ -6,7 +6,7 @@ mod template;
 
 use causal_lm::CausalLM;
 use session::HandleComponent;
-use std::{path::Path, sync::Arc};
+use std::{fmt::Debug, path::Path, sync::Arc};
 use template::Template;
 use tokenizer::{BPECommonNormalizer, Normalizer, Tokenizer, VocabTxt, BPE};
 use tokio::task::JoinHandle;
@@ -39,9 +39,10 @@ impl<M> Service<M>
 where
     M: CausalLM + Send + Sync + 'static,
     M::Storage: Send,
+    M::Error: Debug,
 {
-    pub fn new(model_dir: impl AsRef<Path>) -> (Self, JoinHandle<()>) {
-        let handle = Arc::new(HandleComponent::from(M::load(&model_dir)));
+    pub fn load(model_dir: impl AsRef<Path>, meta: M::Meta) -> (Self, JoinHandle<()>) {
+        let handle = Arc::new(HandleComponent::from(M::load(&model_dir, meta).unwrap()));
         (
             Self(Arc::new(ServiceComponent {
                 handle: handle.clone(),
@@ -76,7 +77,7 @@ fn test() {
     let runtime = Builder::new_current_thread().build().unwrap();
     let _rt = runtime.enter();
 
-    let (service, _handle) = Service::<transformer_cpu::Transformer>::new(model_dir);
+    let (service, _handle) = Service::<transformer_cpu::Transformer>::load(model_dir, ());
 
     let mut set = JoinSet::new();
     let tasks = vec![

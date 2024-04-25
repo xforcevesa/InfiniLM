@@ -4,13 +4,14 @@
 // assert BLOCK_SIZE >= blockDim.x
 template<unsigned int BLOCK_SIZE, class Tdata>
 static __device__ void padding(
-    Tdata *__restrict__ y_,
+    Tdata *__restrict__ o_,
+    unsigned int const stride_o,
     Tdata const *__restrict__ x_,
+    unsigned int const stride_x,
     Tdata const *__restrict__ w_,
-    float const epsilon,
-    unsigned int const leading_dim) {
-    auto y = y_ + blockIdx.x * leading_dim + threadIdx.x;
-    auto x = x_[blockIdx.x * leading_dim + threadIdx.x];
+    float const epsilon) {
+    auto o = o_ + blockIdx.x * stride_o + threadIdx.x;
+    auto x = x_[blockIdx.x * stride_x + threadIdx.x];
     auto w = w_[threadIdx.x];
 
     using BlockOp = cub::BlockReduce<float, BLOCK_SIZE>;
@@ -23,19 +24,20 @@ static __device__ void padding(
     }
     __syncthreads();
 
-    *y = rms * x * w;
+    *o = rms * x * w;
 }
 
 template<unsigned int BLOCK_SIZE, unsigned int ITEMS_PER_THREAD, class Tdata>
 static __device__ void folding(
-    Tdata *__restrict__ y,
+    Tdata *__restrict__ o,
+    unsigned int const stride_o,
     Tdata const *__restrict__ x,
+    unsigned int const stride_x,
     Tdata const *__restrict__ w,
     float const epsilon,
-    unsigned int const leading_dim,
     unsigned int const items_size) {
-    y += blockIdx.x * leading_dim;
-    x += blockIdx.x * leading_dim;
+    o += blockIdx.x * stride_o;
+    x += blockIdx.x * stride_x;
 
     float thread_data[ITEMS_PER_THREAD];
     {
@@ -66,7 +68,7 @@ static __device__ void folding(
 #pragma unroll
     for (unsigned int i = 0; i < ITEMS_PER_THREAD; ++i) {
         if (auto j = i + threadIdx.x * ITEMS_PER_THREAD; j < items_size) {
-            y[j] = Tdata(float(rms) * float(thread_data[i]) * float(w[j]));
+            o[j] = Tdata(float(rms) * float(thread_data[i]) * float(w[j]));
         }
     }
 }

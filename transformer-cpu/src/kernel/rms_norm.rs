@@ -40,6 +40,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rms_norm_op<T: Mul<Output = T> + BetweenF32 + Copy>(
     o: *mut u8,
     stride_o: usize,

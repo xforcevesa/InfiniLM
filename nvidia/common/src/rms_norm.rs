@@ -33,33 +33,35 @@ impl RmsNormalization {
             r#"{RMS_NORMALIZATION}
 
 extern "C" __global__ void {padding}(
-    {ty_arg}       *__restrict__ y,
+    {ty_arg}       *__restrict__ o,
+    unsigned int const    stride_o,
     {ty_arg} const *__restrict__ x,
+    unsigned int const    stride_x,
     {ty_arg} const *__restrict__ w,
-    float epsilon,
-    unsigned int const leading_dim
+    float epsilon
 ){{
     padding<{block_size}>
-    (y, x, w, epsilon, leading_dim);
+    (o, stride_o, x, stride_x, w, epsilon);
 }}
 
 extern "C" __global__ void {folding}(
-    {ty_arg}       *__restrict__ y,
+    {ty_arg}       *__restrict__ o,
+    unsigned int const    stride_o,
     {ty_arg} const *__restrict__ x,
+    unsigned int const    stride_x,
     {ty_arg} const *__restrict__ w,
     float epsilon,
-    unsigned int const leading_dim,
     unsigned int const items_size
 ){{
     folding<{block_size}, {items_per_thread}>
-    (y, x, w, epsilon, leading_dim, items_size);
+    (o, stride_o, x, stride_x, w, epsilon, items_size);
 }}
 "#
         );
 
         let (ptx, log) = Ptx::compile(code);
         if !log.is_empty() {
-            warn!("{log}");
+            println!("{log}");
         }
         Self {
             ptx: ptx.unwrap(),
@@ -73,7 +75,7 @@ extern "C" __global__ void {folding}(
     pub fn launch<T, U, V>(
         &self,
         module: &ModuleSpore,
-        y: &mut Tensor<T>,
+        o: &mut Tensor<T>,
         x: &Tensor<U>,
         w: &Tensor<V>,
         epsilon: f32,
@@ -83,31 +85,40 @@ extern "C" __global__ void {folding}(
         U: Deref<Target = [DevByte]>,
         V: Deref<Target = [DevByte]>,
     {
-        debug_assert_eq!(x.shape(), y.shape());
-        let &[row, col] = x.shape() else { panic!() };
-        debug_assert_eq!(&[col], w.shape());
+        let &[n, d] = o.shape() else { panic!() };
+        let dt = o.data_type();
 
-        let y_ptr = (y.physical().as_ptr() as isize + y.bytes_offset()) as CUdeviceptr;
+        assert_eq!(x.data_type(), dt);
+        assert_eq!(w.data_type(), dt);
+        assert_eq!(o.shape(), x.shape());
+        assert_eq!(w.shape(), &[d]);
+        assert!(o.contiguous_len() >= 1);
+        assert!(x.contiguous_len() >= 1);
+        assert!(w.is_contiguous());
+
+        let o_ptr = (o.physical().as_ptr() as isize + o.bytes_offset()) as CUdeviceptr;
         let x_ptr = (x.physical().as_ptr() as isize + x.bytes_offset()) as CUdeviceptr;
         let w_ptr = (w.physical().as_ptr() as isize + w.bytes_offset()) as CUdeviceptr;
-        let leading_dim = x.strides()[0] as udim;
-        let items_len = col as udim;
-        let params: [*const c_void; 6] = [
-            (&y_ptr) as *const _ as _,
+        let stride_o = o.strides()[0] as usize;
+        let stride_x = x.strides()[0] as usize;
+        let items_len = d as udim;
+        let params: [*const c_void; 7] = [
+            (&o_ptr) as *const _ as _,
+            (&stride_o) as *const _ as _,
             (&x_ptr) as *const _ as _,
+            (&stride_x) as *const _ as _,
             (&w_ptr) as *const _ as _,
             (&epsilon) as *const _ as _,
-            (&leading_dim) as *const _ as _,
             (&items_len) as *const _ as _,
         ];
         let module = unsafe { module.sprout(stream.ctx()) };
         if items_len <= self.block_size {
             let kernel = module.get_kernel(&self.padding);
-            kernel.launch(row, items_len, params.as_ptr(), 0, Some(stream));
+            kernel.launch(n, items_len, params.as_ptr(), 0, Some(stream));
         } else {
             let block_size = (items_len + self.items_per_thread - 1) / self.items_per_thread;
             let kernel = module.get_kernel(&self.folding);
-            kernel.launch(row, block_size, params.as_ptr(), 0, Some(stream));
+            kernel.launch(n, block_size, params.as_ptr(), 0, Some(stream));
         }
     }
 }

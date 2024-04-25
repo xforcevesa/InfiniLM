@@ -1,7 +1,7 @@
 mod kernel;
 
-use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleMeta};
-use common::{upos, utok, Blob};
+use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
+use common::{safe_tensors::SafeTensorsError, upos, utok, Blob};
 use gemm::f16;
 use itertools::izip;
 use kernel::CpuKernels;
@@ -11,22 +11,27 @@ use transformer::{Kernels, Llama2, Memory};
 
 pub struct Transformer(Memory);
 
+impl Model for Transformer {
+    type Meta = ();
+    type Error = SafeTensorsError;
+
+    #[inline]
+    fn load(model_dir: impl AsRef<Path>, _meta: Self::Meta) -> Result<Self, Self::Error> {
+        let memory = Memory::load_safetensors(model_dir)?;
+        if memory.data_type() == DataType::F16 {
+            Ok(Self(memory))
+        } else {
+            Ok(Self(Memory::cast(&memory, DataType::F16)))
+        }
+    }
+}
+
 impl CausalLM for Transformer {
     type Storage = Blob;
 
     #[inline]
     fn eos_token(&self) -> utok {
         self.0.eos_token_id()
-    }
-
-    #[inline]
-    fn load(model_dir: impl AsRef<Path>) -> Self {
-        let memory = Memory::load_safetensors(model_dir).unwrap();
-        if memory.data_type() == DataType::F16 {
-            Self(memory)
-        } else {
-            Self(Memory::cast(&memory, DataType::F16))
-        }
     }
 
     fn new_cache(&self) -> Tensor<Self::Storage> {
@@ -70,9 +75,9 @@ impl CausalLM for Transformer {
         let tokens = queries.into_iter().collect::<Vec<_>>();
         let nt = tokens.len() as udim;
 
-        let mut x0 = Tensor::alloc(dt, &[nt, d], Blob::new);
-        kernels.gather(&mut x0, &self.0.embed_tokens(), tokens);
-        x0
+        let mut x = Tensor::alloc(dt, &[nt, d], Blob::new);
+        kernels.gather(&mut x, &self.0.embed_tokens(), tokens);
+        x
     }
 
     fn forward<'a>(
@@ -298,7 +303,7 @@ fn test_infer() {
     println!("model_dir: {}", model_dir.display());
 
     let t0 = Instant::now();
-    let model = <Transformer as CausalLM>::load(model_dir);
+    let model = <Transformer as Model>::load(model_dir, ()).unwrap();
     let t1 = Instant::now();
     println!("load {:?}", t1 - t0);
 

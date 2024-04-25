@@ -2533,8 +2533,10 @@ dependencies = [
 name = "transformer-nv"
 version = "0.0.0"
 dependencies = [
+ "causal-lm",
  "common-nv",
  "half",
+ "itertools",
  "search-cuda-tools",
  "tokenizer",
  "transformer",
@@ -2931,6 +2933,7 @@ dependencies = [
  "tokio",
  "transformer",
  "transformer-cpu",
+ "transformer-nv",
  "web-api",
 ]
 

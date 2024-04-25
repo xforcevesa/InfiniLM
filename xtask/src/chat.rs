@@ -2,22 +2,50 @@
 use causal_lm::CausalLM;
 use colored::Colorize;
 use service::{Service, Session};
-use std::{collections::HashMap, io::Write};
+use std::{collections::HashMap, ffi::c_int, io::Write};
 
 impl InferenceArgs {
     pub async fn chat(self) {
         init_log(self.log.as_deref());
+        let nvidia = self
+            .nvidia
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<c_int>().unwrap())
+            .collect::<Vec<_>>();
 
-        let (service, _handle) = Service::<transformer_cpu::Transformer>::new(self.model);
-        let sessions = HashMap::from([(0, service.launch())]);
-        Chatting {
-            service,
-            current: 0,
-            next_id: 1,
-            sessions,
+        macro_rules! chat {
+            ($ty:ty; $meta:expr) => {
+                let (service, _handle) = Service::<$ty>::load(self.model, $meta);
+                Chatting {
+                    service,
+                    current: 0,
+                    next_id: 0,
+                    sessions: Default::default(),
+                }
+                .chat()
+                .await
+            };
         }
-        .chat()
-        .await;
+
+        match nvidia.as_slice() {
+            [] => {
+                use transformer_cpu::Transformer as M;
+                chat!(M; ());
+            }
+            #[cfg(feature = "nvidia")]
+            &[n] => {
+                use transformer_nv::{cuda, Transformer as M};
+                cuda::init();
+                chat!(M; cuda::Device::new(n));
+            }
+            #[cfg(feature = "nvidia")]
+            _distribute => todo!(),
+            #[cfg(not(feature = "nvidia"))]
+            _ => panic!("Set \"nvidia\" feature to enablel nvidia support."),
+        }
     }
 }
 
@@ -42,6 +70,7 @@ fn print_splitter() {
 fn print_help() {
     println!(
         "\
+/list           列出现存的会话及对话次数
 /create         新建会话session
 /switch [0-9+]  切换至指定会话
 /drop [0-9+]    丢弃指定会话
@@ -61,13 +90,28 @@ impl<M: CausalLM> Chatting<M> {
 # 欢迎使用九源推理框架-大模型单机对话demo #
 ###########################################"
         );
-        self.print_args();
+        println!("PID = {}", std::process::id());
         println!();
         print_help();
         print_splitter();
 
         let mut input = String::new();
         loop {
+            if !self.sessions.contains_key(&self.current) {
+                if let Some((&id, _)) = self.sessions.iter().next() {
+                    println!(
+                        "Current session {} is dropped, switched to {id}.",
+                        self.current
+                    );
+                    self.current = id;
+                } else {
+                    self.sessions.insert(self.current, self.service.launch());
+                    while self.sessions.contains_key(&self.next_id) {
+                        self.next_id += 1;
+                    }
+                    println!("Create new session {}.", self.current);
+                }
+            }
             self.print_session();
             input.clear();
             std::io::stdin()
@@ -100,6 +144,7 @@ impl<M: CausalLM> Chatting<M> {
     fn print_args(&self) {
         println!("PID = {}", std::process::id());
         println!("Current session = {}", self.current);
+        println!("dialog times = {}", self.session().dialog_pos() / 2);
         let args = &self.session().sample;
         println!("temperature = {}", args.temperature);
         println!("top-k = {}", args.top_k);
@@ -112,15 +157,21 @@ impl<M: CausalLM> Chatting<M> {
 
     fn execute_command(&mut self, command: &str) -> bool {
         match command.split_whitespace().collect::<Vec<_>>().as_slice() {
+            ["/list"] => {
+                for (id, session) in self.sessions.iter() {
+                    println!("session {}: times = {}", id, session.dialog_pos() / 2);
+                }
+            }
             ["/create"] => {
                 self.current = self.next_id;
                 self.next_id += 1;
                 self.sessions.insert(self.current, self.service.launch());
+                println!("Create new session {}.", self.current);
             }
             ["/switch", n] => match n.parse() {
                 Ok(target_id) => {
                     if target_id == self.current {
-                        println!("Already in session {}", target_id);
+                        println!("{target_id} is already current session.");
                     } else if self.sessions.contains_key(&target_id) {
                         self.current = target_id;
                     } else {
@@ -129,25 +180,15 @@ impl<M: CausalLM> Chatting<M> {
                 }
                 Err(_) => println!("Invalid drop command"),
             },
+            ["/drop"] => {
+                assert!(self.sessions.remove(&self.current).is_some());
+            }
             ["/drop", n] => match n.parse() {
                 Ok(target_id) => {
                     if self.sessions.remove(&target_id).is_none() {
                         println!("Invalid session ID.");
-                    } else {
+                    } else if target_id != self.current {
                         println!("Session {target_id} is dropped.");
-                        if target_id == self.current {
-                            if let Some((&id, _)) = self.sessions.iter().next() {
-                                self.current = id;
-                                println!("Current session is dropped, switched to {id}.");
-                            } else {
-                                self.current = self.next_id;
-                                self.next_id += 1;
-                                println!(
-                                    "Current session is dropped, switched to new session {}.",
-                                    self.current
-                                );
-                            }
-                        }
                     }
                 }
                 Err(_) => println!("Invalid drop command"),

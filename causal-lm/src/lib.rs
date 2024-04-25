@@ -12,12 +12,20 @@ use common::{upos, utok};
 use std::path::Path;
 use tensor::{udim, Tensor};
 
+/// 模型。
+pub trait Model: Sized {
+    /// 用于模型加载的元数据。
+    type Meta;
+    /// 模型加载中可能的错误。
+    type Error;
+    /// 从文件系统加载模型。
+    fn load(model_dir: impl AsRef<Path>, meta: Self::Meta) -> Result<Self, Self::Error>;
+}
+
 /// 因果语言模型。
-pub trait CausalLM {
+pub trait CausalLM: Model {
     /// 存储中间结果的类型。
     type Storage;
-    /// 从文件系统加载模型。
-    fn load(model_dir: impl AsRef<Path>) -> Self;
     /// 模型定义的句子结束符。
     fn eos_token(&self) -> utok;
     /// 创建一个新的缓存（`num_layers x 2 x num_kv_head x max_seq_len x head_dim`）。
