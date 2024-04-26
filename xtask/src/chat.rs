@@ -19,14 +19,14 @@ impl crate::InferenceArgs {
                 use transformer_cpu::Transformer as M;
                 chat!(M; ());
             }
-            #[cfg(feature = "nvidia")]
+            #[cfg(detected_cuda)]
             &[n] => {
                 use transformer_nv::{cuda, Transformer as M};
                 chat!(M; cuda::Device::new(n));
             }
-            #[cfg(feature = "nvidia")]
+            #[cfg(detected_nccl)]
             _distribute => todo!(),
-            #[cfg(not(feature = "nvidia"))]
+            #[cfg(not(all(detected_cuda, detected_nccl)))]
             _ => panic!("Set \"nvidia\" feature to enablel nvidia support."),
         }
     }

@@ -25,14 +25,14 @@ fn main() {
 
 #[inline]
 fn block_on(f: impl Future) {
-    #[cfg(feature = "nvidia")]
+    #[cfg(detected_cuda)]
     {
         transformer_nv::cuda::init();
     }
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(f);
     runtime.shutdown_background();
-    #[cfg(feature = "nvidia")]
+    #[cfg(detected_cuda)]
     {
         transformer_nv::synchronize();
     }

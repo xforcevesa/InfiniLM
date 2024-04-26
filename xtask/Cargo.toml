@@ -21,6 +21,9 @@ simple_logger = "4.3"
 colored = "2.1"
 clap = { version = "4.5", features = ["derive"] }
 
+[build-dependencies]
+search-cuda-tools.workspace = true
+
 [features]
 default = ["nvidia"]
 nvidia = ["transformer-nv"]
