@@ -13,6 +13,7 @@ causal-lm = { path = "../causal-lm" }
 transformer = { path = "../transformer" }
 transformer-cpu = { path = "../transformer-cpu" }
 transformer-nv = { path = "../nvidia/transformer", optional = true }
+distributed = { path = "../nvidia/distributed", optional = true }
 service = { path = "../service" }
 web-api = { path = "../web-api" }
 log.workspace = true
@@ -26,4 +27,4 @@ search-cuda-tools.workspace = true
 
 [features]
 default = ["nvidia"]
-nvidia = ["transformer-nv"]
+nvidia = ["transformer-nv", "distributed"]

@@ -1,35 +1,36 @@
-﻿use crate::print_now;
+﻿use crate::{print_now, InferenceArgs, Task};
 use causal_lm::CausalLM;
 use colored::Colorize;
 use service::{Service, Session};
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
-impl crate::InferenceArgs {
-    pub async fn chat(self) {
-        macro_rules! chat {
-            ($ty:ty; $meta:expr) => {
-                let (mut service, _handle) = Service::<$ty>::load(&self.model, $meta);
-                service.default_sample = self.sample_args();
-                Chatting::new(service).chat().await
-            };
-        }
+#[derive(Args, Default)]
+pub(crate) struct ChatArgs {
+    #[clap(flatten)]
+    pub inference: InferenceArgs,
+}
 
-        self.init_log();
-        match self.nvidia().as_slice() {
-            [] => {
-                use transformer_cpu::Transformer as M;
-                chat!(M; ());
-            }
-            #[cfg(detected_cuda)]
-            &[n] => {
-                use transformer_nv::{cuda, Transformer as M};
-                chat!(M; cuda::Device::new(n));
-            }
-            #[cfg(detected_nccl)]
-            _distribute => todo!(),
-            #[cfg(not(all(detected_cuda, detected_nccl)))]
-            _ => panic!("Set \"nvidia\" feature to enablel nvidia support."),
+impl Task for ChatArgs {
+    fn inference(&self) -> &InferenceArgs {
+        &self.inference
+    }
+
+    async fn typed<M>(self, meta: M::Meta)
+    where
+        M: CausalLM + Send + Sync + 'static,
+        M::Storage: Send,
+        M::Error: Debug,
+    {
+        let (mut service, _handle) = Service::<M>::load(&self.inference.model, meta);
+        service.default_sample = self.inference.sample_args();
+        Chatting {
+            service,
+            current: 0,
+            next_id: 0,
+            sessions: Default::default(),
         }
+        .chat()
+        .await
     }
 }
 
@@ -60,16 +61,6 @@ fn print_help() {
 }
 
 impl<M: CausalLM> Chatting<M> {
-    #[inline]
-    fn new(service: Service<M>) -> Self {
-        Chatting {
-            service,
-            current: 0,
-            next_id: 0,
-            sessions: Default::default(),
-        }
-    }
-
     async fn chat(mut self) {
         println!(
             "\

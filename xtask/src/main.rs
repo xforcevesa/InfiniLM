@@ -4,11 +4,11 @@ mod deploy;
 mod generate;
 mod service;
 
-use causal_lm::SampleArgs;
+use causal_lm::{CausalLM, SampleArgs};
 use clap::Parser;
 use deploy::DeployArgs;
 use service::ServiceArgs;
-use std::{ffi::c_int, future::Future};
+use std::{ffi::c_int, fmt};
 
 #[macro_use]
 extern crate clap;
@@ -18,24 +18,9 @@ fn main() {
     match Cli::parse().command {
         Deploy(deploy) => deploy.deploy(),
         Cast(cast) => cast.invode(),
-        Generate(args) => block_on(args.generate()),
-        Chat(chat) => block_on(chat.chat()),
-        Service(service) => block_on(service.serve()),
-    }
-}
-
-#[inline]
-fn block_on(f: impl Future) {
-    #[cfg(detected_cuda)]
-    {
-        transformer_nv::cuda::init();
-    }
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(f);
-    runtime.shutdown_background();
-    #[cfg(detected_cuda)]
-    {
-        transformer_nv::synchronize();
+        Generate(args) => args.run(),
+        Chat(chat) => chat.run(),
+        Service(service) => service.run(),
     }
 }
 
@@ -56,7 +41,7 @@ enum Commands {
     /// Generate following text
     Generate(generate::GenerateArgs),
     /// Chat locally
-    Chat(InferenceArgs),
+    Chat(chat::ChatArgs),
     /// Start the service
     Service(ServiceArgs),
 }
@@ -123,6 +108,51 @@ impl InferenceArgs {
             temperature: self.temperature.unwrap_or(0.),
             top_k: self.top_k.unwrap_or(usize::MAX),
             top_p: self.top_p.unwrap_or(1.),
+        }
+    }
+}
+
+trait Task: Sized {
+    fn inference(&self) -> &InferenceArgs;
+
+    async fn typed<M>(self, meta: M::Meta)
+    where
+        M: CausalLM + Send + Sync + 'static,
+        M::Storage: Send,
+        M::Error: fmt::Debug;
+
+    fn run(self) {
+        #[cfg(detected_cuda)]
+        {
+            transformer_nv::cuda::init();
+        }
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        self.inference().init_log();
+        match self.inference().nvidia().as_slice() {
+            [] => {
+                use transformer_cpu::Transformer as M;
+                runtime.block_on(self.typed::<M>(()));
+            }
+            #[cfg(detected_cuda)]
+            &[n] => {
+                use transformer_nv::{cuda, Transformer as M};
+                runtime.block_on(self.typed::<M>(cuda::Device::new(n)));
+            }
+            #[cfg(detected_nccl)]
+            distribute => {
+                use distributed::{cuda::Device, Transformer as M};
+                let meta = distribute.iter().copied().map(Device::new).collect();
+                runtime.block_on(self.typed::<M>(meta));
+            }
+            #[cfg(not(all(detected_cuda, detected_nccl)))]
+            _ => panic!("Set \"nvidia\" feature to enablel nvidia support."),
+        }
+
+        runtime.shutdown_background();
+        #[cfg(detected_cuda)]
+        {
+            transformer_nv::synchronize();
         }
     }
 }

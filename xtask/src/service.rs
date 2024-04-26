@@ -1,40 +1,31 @@
-﻿#[derive(Args, Default)]
+﻿use crate::{InferenceArgs, Task};
+use causal_lm::CausalLM;
+use service::Service;
+use std::fmt::Debug;
+use web_api::start_infer_service;
+
+#[derive(Args, Default)]
 pub struct ServiceArgs {
     #[clap(flatten)]
-    pub inference: crate::InferenceArgs,
+    pub inference: InferenceArgs,
     /// Port to bind the service to
     #[clap(short, long)]
     pub port: u16,
 }
 
-impl ServiceArgs {
-    pub async fn serve(self) {
-        use service::Service;
-        use web_api::start_infer_service;
+impl Task for ServiceArgs {
+    fn inference(&self) -> &InferenceArgs {
+        &self.inference
+    }
 
-        macro_rules! serve {
-            ($ty:ty; $meta:expr) => {
-                let (mut service, _handle) = Service::<$ty>::load(&self.inference.model, $meta);
-                service.default_sample = self.inference.sample_args();
-                start_infer_service(service, self.port).await.unwrap();
-            };
-        }
-
-        self.inference.init_log();
-        match self.inference.nvidia().as_slice() {
-            [] => {
-                use transformer_cpu::Transformer as M;
-                serve!(M; ());
-            }
-            #[cfg(detected_cuda)]
-            &[n] => {
-                use transformer_nv::{cuda, Transformer as M};
-                serve!(M; cuda::Device::new(n));
-            }
-            #[cfg(detected_nccl)]
-            _distribute => todo!(),
-            #[cfg(not(all(detected_cuda, detected_nccl)))]
-            _ => panic!("Set \"nvidia\" feature to enablel nvidia support."),
-        }
+    async fn typed<M>(self, meta: M::Meta)
+    where
+        M: CausalLM + Send + Sync + 'static,
+        M::Storage: Send,
+        M::Error: Debug,
+    {
+        let (mut service, _handle) = Service::<M>::load(&self.inference.model, meta);
+        service.default_sample = self.inference.sample_args();
+        start_infer_service(service, self.port).await.unwrap();
     }
 }

@@ -1,7 +1,7 @@
-﻿use crate::{print_now, InferenceArgs};
-use causal_lm::{CausalLM, SampleArgs};
+﻿use crate::{print_now, InferenceArgs, Task};
+use causal_lm::CausalLM;
 use service::Service;
-use std::{fmt::Debug, path::Path};
+use std::fmt::Debug;
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
@@ -11,68 +11,37 @@ pub(crate) struct GenerateArgs {
     #[clap(long, short)]
     pub prompt: String,
     /// Max number of steps to generate.
-    #[clap(long, short)]
+    #[clap(long)]
     pub max_steps: Option<usize>,
 }
 
-impl GenerateArgs {
-    pub async fn generate(self) {
-        macro_rules! generate {
-            ($ty:ty; $meta:expr) => {
-                generate::<$ty>(
-                    &self.inference.model,
-                    $meta,
-                    &self.prompt,
-                    self.max_steps.unwrap_or(usize::MAX),
-                    self.inference.sample_args(),
-                )
-                .await;
-            };
-        }
-
-        self.inference.init_log();
-        match self.inference.nvidia().as_slice() {
-            [] => {
-                use transformer_cpu::Transformer as M;
-                generate!(M; ());
-            }
-            #[cfg(detected_cuda)]
-            &[n] => {
-                use transformer_nv::{cuda, Transformer as M};
-                generate!(M; cuda::Device::new(n));
-            }
-            #[cfg(detected_nccl)]
-            _distribute => todo!(),
-            #[cfg(not(all(detected_cuda, detected_nccl)))]
-            _ => panic!("Set \"nvidia\" feature to enablel nvidia support."),
-        }
+impl Task for GenerateArgs {
+    fn inference(&self) -> &InferenceArgs {
+        &self.inference
     }
-}
 
-async fn generate<M>(
-    model_dir: impl AsRef<Path>,
-    meta: M::Meta,
-    prompt: impl AsRef<str>,
-    max_steps: usize,
-    sample: SampleArgs,
-) where
-    M: CausalLM + Send + Sync + 'static,
-    M::Storage: Send,
-    M::Error: Debug,
-{
-    let (mut service, _handle) = Service::<M>::load(model_dir, meta);
-    service.default_sample = sample;
-    let mut generator = service.generate(prompt, None);
-    let mut steps = 0;
-    while let Some(s) = generator.decode().await {
-        match &*s {
-            "\\n" => println!(),
-            _ => print_now!("{s}"),
+    async fn typed<M>(self, meta: M::Meta)
+    where
+        M: CausalLM + Send + Sync + 'static,
+        M::Storage: Send,
+        M::Error: Debug,
+    {
+        let (service, _handle) = Service::<M>::load(&self.inference.model, meta);
+
+        print_now!("{}", self.prompt);
+
+        let mut steps = self.max_steps.unwrap_or(usize::MAX);
+        let mut generator = service.generate(self.prompt, Some(self.inference.sample_args()));
+        while let Some(s) = generator.decode().await {
+            match &*s {
+                "\\n" => println!(),
+                _ => print_now!("{s}"),
+            }
+            steps -= 1;
+            if steps == 0 {
+                break;
+            }
         }
-        steps += 1;
-        if steps >= max_steps {
-            break;
-        }
+        println!();
     }
-    println!();
 }
