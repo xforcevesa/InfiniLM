@@ -25,16 +25,22 @@ impl DeployArgs {
             .unwrap();
 
         let exe = env::current_exe().unwrap();
-        let target = self
-            .target
-            .unwrap_or_else(|| workspace.join("deploy"))
-            .join(exe.file_name().unwrap());
-        println!("Deploy");
-        println!("    from: {}", exe.display());
-        println!("    to:   {}", target.display());
+        let target = self.target.unwrap_or_else(|| workspace.join("deploy"));
+        let target = if target.is_file() {
+            fs::remove_file(&target).unwrap();
+            target
+        } else if target.is_dir() {
+            target.join(exe.file_name().unwrap())
+        } else if !target.exists() {
+            fs::create_dir_all(&target).unwrap();
+            target.join(exe.file_name().unwrap())
+        } else {
+            panic!("Target already exists, but is not a file or directory.");
+        };
 
-        fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::remove_file(&target).unwrap();
+        println!("Deploy");
+        println!("    *- {}", exe.display());
+        println!("    -> {}", target.display());
         fs::copy(exe, target).unwrap();
     }
 }
