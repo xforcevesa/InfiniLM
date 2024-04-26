@@ -1,7 +1,7 @@
 //! All HttpResponses in this App.
 
 use crate::schemas;
-use actix_web::{web, Error, HttpResponse};
+use actix_web::{web, Error, HttpResponse, HttpResponseBuilder};
 use futures::Stream;
 use serde::Serialize;
 
@@ -18,28 +18,17 @@ pub fn text_stream(
 pub fn success(s: impl schemas::Success) -> HttpResponse {
     #[derive(Serialize)]
     struct SuccessResponse<'a> {
-        result: &'a str,
-        extra: Option<serde_json::Value>,
+        message: &'a str,
     }
 
     HttpResponse::Ok()
         .content_type("application/json")
-        .json(SuccessResponse {
-            result: s.msg(),
-            extra: s.extra(),
-        })
+        .json(SuccessResponse { message: s.msg() })
 }
 
 #[inline]
 pub fn error(e: schemas::Error) -> HttpResponse {
-    #[derive(Serialize)]
-    struct ErrorResponse {
-        error: String,
-    }
-
-    HttpResponse::Ok()
+    HttpResponseBuilder::new(e.status())
         .content_type("application/json")
-        .json(ErrorResponse {
-            error: e.msg().into(),
-        })
+        .json(e.body())
 }

@@ -61,7 +61,7 @@ where
                     if session.revert(dialog_pos).is_ok() {
                         Ok(e.get_mut().take().unwrap())
                     } else {
-                        Err(Error::InvalidDialogPos)
+                        Err(Error::InvalidDialogPos(session.dialog_pos()))
                     }
                 }
                 None => Err(Error::SessionBusy),

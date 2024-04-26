@@ -1,3 +1,5 @@
+use actix_web::http::StatusCode;
+
 #[derive(serde::Deserialize)]
 pub(crate) struct Infer {
     pub session_id: String,
@@ -50,18 +52,62 @@ pub(crate) enum Error {
     SessionDuplicate,
     SessionNotFound,
     EmptyInput,
-    InvalidDialogPos,
+    InvalidDialogPos(usize),
+}
+
+#[derive(serde::Serialize)]
+struct ErrorBody {
+    status: u16,
+    code: u16,
+    message: &'static str,
 }
 
 impl Error {
     #[inline]
-    pub fn msg(&self) -> &'static str {
+    pub const fn status(&self) -> StatusCode {
         match self {
-            Self::SessionBusy => "Session is busy",
-            Self::SessionDuplicate => "Session already exists",
-            Self::SessionNotFound => "Session histroy is lost",
-            Self::EmptyInput => "Input is empty",
-            Self::InvalidDialogPos => "Invalid dialog position",
+            Self::SessionNotFound => StatusCode::NOT_FOUND,
+            Self::SessionBusy => StatusCode::NOT_ACCEPTABLE,
+            Self::SessionDuplicate => StatusCode::CONFLICT,
+            Self::EmptyInput => StatusCode::BAD_REQUEST,
+            Self::InvalidDialogPos(_) => StatusCode::RANGE_NOT_SATISFIABLE,
+        }
+    }
+
+    #[inline]
+    pub fn body(&self) -> serde_json::Value {
+        macro_rules! error {
+            ($code:expr, $msg:expr) => {
+                ErrorBody {
+                    status: self.status().as_u16(),
+                    code: $code,
+                    message: $msg,
+                }
+            };
+        }
+
+        #[inline]
+        fn json(v: impl serde::Serialize) -> serde_json::Value {
+            serde_json::to_value(v).unwrap()
+        }
+
+        match self {
+            Self::SessionNotFound => json(error!(0, "Session not found")),
+            Self::SessionBusy => json(error!(0, "Session is busy")),
+            Self::SessionDuplicate => json(error!(0, "Session ID already exists")),
+            Self::EmptyInput => json(error!(0, "Input list is empty")),
+            &Self::InvalidDialogPos(current_dialog_pos) => {
+                #[derive(serde::Serialize)]
+                struct ErrorBodyExtra {
+                    #[serde(flatten)]
+                    common: ErrorBody,
+                    current_dialog_pos: usize,
+                }
+                json(ErrorBodyExtra {
+                    common: error!(0, "Dialog position out of range"),
+                    current_dialog_pos,
+                })
+            }
         }
     }
 }
