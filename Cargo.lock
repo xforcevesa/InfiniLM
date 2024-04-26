@@ -829,8 +829,10 @@ dependencies = [
 name = "distributed"
 version = "0.0.0"
 dependencies = [
+ "causal-lm",
  "common-nv",
  "half",
+ "itertools",
  "log",
  "nccl",
  "search-cuda-tools",
@@ -2546,8 +2548,8 @@ dependencies = [
  "common-nv",
  "half",
  "itertools",
+ "log",
  "search-cuda-tools",
- "tokenizer",
  "transformer",
 ]
 

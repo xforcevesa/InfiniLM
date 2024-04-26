@@ -9,12 +9,10 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 causal-lm = { path = "../../causal-lm" }
 transformer = { path = "../../transformer" }
-itertools = "0.12"
 common-nv = { path = "../common" }
+log.workspace = true
 half.workspace = true
-
-[dev-dependencies]
-tokenizer = { path = "../../tokenizer" }
+itertools.workspace = true
 
 [build-dependencies]
 search-cuda-tools.workspace = true

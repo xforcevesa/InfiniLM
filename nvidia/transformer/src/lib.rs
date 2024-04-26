@@ -2,6 +2,9 @@
 
 mod parameters;
 
+#[macro_use]
+extern crate log;
+
 use ::half::f16;
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common_nv::{
@@ -17,6 +20,7 @@ use std::{
     path::Path,
     slice::from_raw_parts,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 use transformer::{Kernels, Llama2, Memory};
 
@@ -39,10 +43,12 @@ impl Model for Transformer {
     #[inline]
     fn load(model_dir: impl AsRef<Path>, meta: Self::Meta) -> Result<Self, Self::Error> {
         let context = Arc::new(meta.retain_primary());
+        let time = Instant::now();
         let host = Memory::load_safetensors_realloc(
             model_dir,
             Some(|l| context.apply(|ctx| ctx.malloc_host::<u8>(l).sporulate())),
         )?;
+        info!("load host: {:?}", time.elapsed());
         let load_layers = host.num_hidden_layers();
 
         let (model, layers, kernels, transfer, compute) = context.apply(|ctx| {
