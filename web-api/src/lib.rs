@@ -26,7 +26,7 @@ struct AppState<M: CausalLM> {
 pub async fn start_infer_service<M>(service: service::Service<M>, port: u16) -> std::io::Result<()>
 where
     M: CausalLM + Send + Sync + 'static,
-    M::Storage: Send + Sync + 'static,
+    M::Storage: Send,
 {
     let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
     info!("start service at {addr}");
@@ -48,7 +48,7 @@ where
 async fn infer<M>(app_state: web::Data<AppState<M>>, request: web::Json<Infer>) -> HttpResponse
 where
     M: CausalLM + Send + Sync + 'static,
-    M::Storage: Send + Sync + 'static,
+    M::Storage: Send,
 {
     info!("Request from {}: infer", request.session_id);
     match app_state.service_manager.infer(request.into_inner()) {
@@ -60,7 +60,7 @@ where
 async fn fork<M>(app_state: web::Data<AppState<M>>, request: web::Json<Fork>) -> HttpResponse
 where
     M: CausalLM + Send + Sync + 'static,
-    M::Storage: Send + Sync + 'static,
+    M::Storage: Send,
 {
     info!("Request from {}: fork", request.session_id);
     match app_state.service_manager.fork(request.into_inner()) {
@@ -72,7 +72,7 @@ where
 async fn drop<M>(app_state: web::Data<AppState<M>>, request: web::Json<Drop>) -> HttpResponse
 where
     M: CausalLM + Send + Sync + 'static,
-    M::Storage: Send + Sync + 'static,
+    M::Storage: Send,
 {
     info!("Request from {}: drop", request.session_id);
     match app_state.service_manager.drop_(request.into_inner()) {

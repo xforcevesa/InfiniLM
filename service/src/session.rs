@@ -193,6 +193,60 @@ impl<M: CausalLM> Drop for BusySession<'_, M> {
     }
 }
 
+pub struct Generator<M: CausalLM> {
+    component: Arc<ServiceComponent<M>>,
+    receiver: Option<UnboundedReceiver<utok>>,
+    cache: Arc<Mutex<Option<Tensor<M::Storage>>>>,
+}
+
+impl<M: CausalLM> Generator<M> {
+    pub(crate) fn new(
+        component: Arc<ServiceComponent<M>>,
+        prompt: impl AsRef<str>,
+        sample: SampleArgs,
+    ) -> Self {
+        let prompt = component.template.normalize(prompt.as_ref());
+        let prompt = component.normalizer.encode(&prompt);
+        let tokens = component.tokenizer.encode(&prompt);
+        // 生成推理任务与会话的交互管道
+        let (sender, receiver) = unbounded_channel();
+        let cache = Arc::new(Mutex::new(Some(component.handle.model.new_cache())));
+        component.handle.batcher.enq(Task {
+            tokens,
+            pos: 0,
+            sample,
+            cache: cache.clone(),
+            sender,
+        });
+        Self {
+            component,
+            receiver: Some(receiver),
+            cache,
+        }
+    }
+
+    pub async fn decode(&mut self) -> Option<Cow<str>> {
+        self.receiver.as_mut().unwrap().recv().await.map(|token| {
+            // detokenize and denormalize the token
+            let ServiceComponent {
+                normalizer,
+                tokenizer,
+                ..
+            } = &*self.component;
+            normalizer.decode(tokenizer.decode(token))
+        })
+    }
+}
+
+impl<M: CausalLM> Drop for Generator<M> {
+    fn drop(&mut self) {
+        // 停止响应接收
+        let _ = self.receiver.take();
+        // 丢弃 cache
+        let _ = self.cache.lock().unwrap().take();
+    }
+}
+
 pub(crate) struct HandleComponent<M: CausalLM> {
     model: M,
     pub batcher: Batcher<Task<M::Storage>>,

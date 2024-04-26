@@ -1,6 +1,7 @@
 mod cast;
 mod chat;
 mod deploy;
+mod generate;
 mod service;
 
 use causal_lm::SampleArgs;
@@ -17,7 +18,7 @@ fn main() {
     match Cli::parse().command {
         Deploy(deploy) => deploy.deploy(),
         Cast(cast) => cast.invode(),
-        // Generate(args) => block_on(args.inference.generate(&args.prompt)),
+        Generate(args) => block_on(args.generate()),
         Chat(chat) => block_on(chat.chat()),
         Service(service) => block_on(service.serve()),
     }
@@ -52,8 +53,8 @@ enum Commands {
     Deploy(DeployArgs),
     /// Cast model
     Cast(cast::CastArgs),
-    // /// Generate following text
-    // Generate(generate::GenerateArgs),
+    /// Generate following text
+    Generate(generate::GenerateArgs),
     /// Chat locally
     Chat(InferenceArgs),
     /// Start the service
@@ -124,4 +125,14 @@ impl InferenceArgs {
             top_p: self.top_p.unwrap_or(1.),
         }
     }
+}
+
+#[macro_export]
+macro_rules! print_now {
+    ($($arg:tt)*) => {{
+        use std::io::Write;
+
+        print!($($arg)*);
+        std::io::stdout().flush().unwrap();
+    }};
 }

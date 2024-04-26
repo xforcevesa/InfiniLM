@@ -1,7 +1,8 @@
-﻿use causal_lm::CausalLM;
+﻿use crate::print_now;
+use causal_lm::CausalLM;
 use colored::Colorize;
 use service::{Service, Session};
-use std::{collections::HashMap, io::Write};
+use std::collections::HashMap;
 
 impl crate::InferenceArgs {
     pub async fn chat(self) {
@@ -37,13 +38,6 @@ struct Chatting<M: CausalLM> {
     current: usize,
     next_id: usize,
     sessions: HashMap<usize, Session<M>>,
-}
-
-macro_rules! print_now {
-    ($($arg:tt)*) => {{
-        print!($($arg)*);
-        std::io::stdout().flush().unwrap();
-    }};
 }
 
 fn print_splitter() {

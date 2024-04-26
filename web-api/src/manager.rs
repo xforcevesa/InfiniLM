@@ -35,7 +35,7 @@ impl<M: CausalLM> From<Service<M>> for ServiceManager<M> {
 impl<M> ServiceManager<M>
 where
     M: CausalLM + Send + Sync + 'static,
-    M::Storage: Send + Sync + 'static,
+    M::Storage: Send,
 {
     /// Get existing or create new infer session for a infer request.
     /// Return session or error.

@@ -5,7 +5,7 @@ mod session;
 mod template;
 
 use causal_lm::{CausalLM, SampleArgs};
-use session::HandleComponent;
+use session::{Generator, HandleComponent};
 use std::{fmt::Debug, path::Path, sync::Arc};
 use template::Template;
 use tokenizer::{BPECommonNormalizer, Normalizer, Tokenizer, VocabTxt, BPE};
@@ -67,6 +67,13 @@ impl<M: CausalLM> Service<M> {
         let mut session: Session<M> = self.component.clone().into();
         session.sample = self.default_sample.clone();
         session
+    }
+
+    /// 从对话服务启动一个文本生成器。
+    #[inline]
+    pub fn generate(&self, prompt: impl AsRef<str>, sample: Option<SampleArgs>) -> Generator<M> {
+        let sample = sample.unwrap_or_else(|| self.default_sample.clone());
+        Generator::new(self.component.clone(), prompt, sample)
     }
 }
 
