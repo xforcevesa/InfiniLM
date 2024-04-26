@@ -1,8 +1,7 @@
 ﻿use super::slice;
-use gemm::f16;
+use common::{f16, BetweenF32};
 use std::ops::DerefMut;
 use tensor::{expand_indices, idx_strides, DataType, Tensor};
-use transformer::BetweenF32;
 
 /// - x: [N0, N1, ... , N_, seq_len, att_len]
 pub fn softmax<T>(x: &mut Tensor<T>)

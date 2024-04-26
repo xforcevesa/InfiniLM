@@ -11,3 +11,4 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 memmap2 = "0.9"
 safetensors = "0.4"
+half = "2.4"

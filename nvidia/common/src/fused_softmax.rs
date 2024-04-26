@@ -116,8 +116,8 @@ extern "C" __global__ void {folding}(
 
 #[test]
 fn test_kernel() {
+    use common::f16;
     use cuda::{ContextResource, CudaDataType};
-    use half::f16;
 
     cuda::init();
     let Some(dev) = cuda::Device::fetch() else {

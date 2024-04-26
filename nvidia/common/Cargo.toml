@@ -13,7 +13,6 @@ transformer = { path = "../../transformer" }
 cuda.workspace = true
 cublas.workspace = true
 log.workspace = true
-half.workspace = true
 
 [build-dependencies]
 search-cuda-tools.workspace = true

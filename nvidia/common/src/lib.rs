@@ -13,6 +13,7 @@ mod rotary_embedding;
 mod swiglu;
 
 pub use common::{
+    f16,
     safe_tensors::{SafeTensors, SafeTensorsError},
     test_model, upos, utok,
 };
@@ -20,9 +21,8 @@ pub use tensor::{slice, split, udim, DataType, LocalSplitable, Tensor};
 
 use cublas::{Cublas, CublasSpore};
 use cuda::{
-    memcpy_d2h, ContextGuard, ContextResource, ContextSpore,
-    CudaDataType::{self, f16},
-    DevByte, ModuleSpore, Ptx, Stream,
+    memcpy_d2h, ContextGuard, ContextResource, ContextSpore, CudaDataType, DevByte, ModuleSpore,
+    Ptx, Stream,
 };
 use fused_softmax::FusedSoftmax;
 use reform::Reform;
@@ -50,15 +50,19 @@ impl NvidiaKernelsPtx {
         Self {
             epsilon: host.rms_norm_eps(),
             theta: host.rope_theta(),
-            rms_norm: Arc::new(RmsNormalization::new(f16, host.hidden_size(), block_size)),
+            rms_norm: Arc::new(RmsNormalization::new(
+                CudaDataType::f16,
+                host.hidden_size(),
+                block_size,
+            )),
             rotary_embedding: Arc::new(Rope::new(block_size)),
             reform: Arc::new(Reform::new(block_size, 32)),
             softmax: Arc::new(FusedSoftmax::new(
-                f16,
+                CudaDataType::f16,
                 host.max_position_embeddings(),
                 block_size,
             )),
-            swiglu: Arc::new(Swiglu::new(f16, block_size)),
+            swiglu: Arc::new(Swiglu::new(CudaDataType::f16, block_size)),
         }
     }
 }

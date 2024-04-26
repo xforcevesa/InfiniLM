@@ -11,10 +11,9 @@ use common_nv::{
     cuda::{
         memcpy_d2h, AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore,
     },
-    slice, split, udim, upos, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx,
+    f16, slice, split, udim, upos, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx,
     SafeTensorsError, Tensor,
 };
-use half::f16;
 use itertools::izip;
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;

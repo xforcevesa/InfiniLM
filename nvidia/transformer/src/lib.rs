@@ -5,11 +5,10 @@ mod parameters;
 #[macro_use]
 extern crate log;
 
-use ::half::f16;
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common_nv::{
     cuda::{memcpy_d2h, DevMemSpore},
-    slice, split, udim, upos, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx,
+    f16, slice, split, udim, upos, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx,
     SafeTensorsError, Tensor,
 };
 use cuda::{Context, ContextResource, ContextSpore, Device, StreamSpore};

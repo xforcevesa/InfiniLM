@@ -1,8 +1,7 @@
 ﻿use super::slice;
-use gemm::f16;
+use common::{f16, BetweenF32};
 use std::ops::{Deref, DerefMut};
 use tensor::{expand_indices, idx_strides, udim, DataType, Tensor};
-use transformer::BetweenF32;
 
 /// - t:   [num_token, num_head, head_dim]
 /// - pos: [num_token]

@@ -1,6 +1,6 @@
-﻿use cublas::{bindings::cublasOperation_t, cublas, Cublas};
+﻿use common::f16;
+use cublas::{bindings::cublasOperation_t, cublas, Cublas};
 use cuda::{AsRaw, DevByte};
-use half::f16;
 use std::{
     mem::swap,
     ops::{Deref, DerefMut},

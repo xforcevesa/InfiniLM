@@ -583,6 +583,7 @@ dependencies = [
 name = "common"
 version = "0.0.0"
 dependencies = [
+ "half",
  "memmap2",
  "safetensors",
  "serde",
@@ -596,7 +597,6 @@ dependencies = [
  "common",
  "cublas",
  "cuda",
- "half",
  "log",
  "search-cuda-tools",
  "tensor",
@@ -831,7 +831,6 @@ version = "0.0.0"
 dependencies = [
  "causal-lm",
  "common-nv",
- "half",
  "itertools",
  "log",
  "nccl",
@@ -2518,8 +2517,6 @@ name = "transformer"
 version = "0.0.0"
 dependencies = [
  "common",
- "half",
- "rand",
  "rayon",
  "serde",
  "serde_json",
@@ -2546,7 +2543,6 @@ version = "0.0.0"
 dependencies = [
  "causal-lm",
  "common-nv",
- "half",
  "itertools",
  "log",
  "search-cuda-tools",

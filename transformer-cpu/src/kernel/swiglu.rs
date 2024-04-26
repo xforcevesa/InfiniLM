@@ -1,7 +1,6 @@
-﻿use gemm::f16;
+﻿use common::{f16, BetweenF32};
 use std::ops::{Deref, DerefMut};
 use tensor::{idim, DVector, DataType, Tensor};
-use transformer::BetweenF32;
 
 pub fn swiglu<T, U>(gate: &mut Tensor<T>, up: &Tensor<U>)
 where

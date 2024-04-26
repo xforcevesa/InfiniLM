@@ -12,7 +12,6 @@ transformer = { path = "../../transformer" }
 common-nv = { path = "../common" }
 nccl.workspace = true
 log.workspace = true
-half.workspace = true
 itertools.workspace = true
 
 [dev-dependencies]

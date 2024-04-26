@@ -1,11 +1,10 @@
-﻿use gemm::f16;
+﻿use common::{f16, BetweenF32};
 use std::{
     iter::zip,
     ops::{Deref, DerefMut, Mul},
     slice::{from_raw_parts, from_raw_parts_mut},
 };
 use tensor::{DataType, Tensor};
-use transformer::BetweenF32;
 
 pub fn rms_norm<T, U, V>(o: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
 where

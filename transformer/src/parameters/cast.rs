@@ -1,6 +1,5 @@
 ﻿use super::{memory::Layer, ConfigJson, Llama2, Memory, Storage};
-use common::Blob;
-use half::{bf16, f16};
+use common::{bf16, f16, Blob};
 use std::sync::Arc;
 use tensor::{DataType, Tensor, Ty};
 

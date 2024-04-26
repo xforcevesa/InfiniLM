@@ -1,11 +1,12 @@
-﻿use gemm::{f16, gemm};
+﻿use common::{f16, BetweenF32};
+use gemm::gemm;
 use std::{
     ffi::{c_longlong, c_void},
     mem::swap,
     ops::{Deref, DerefMut},
 };
 use tensor::{DataType, Tensor};
-use transformer::{BetweenF32, Matrix};
+use transformer::Matrix;
 
 /// c = a x b
 ///
