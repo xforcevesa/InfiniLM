@@ -81,15 +81,31 @@ extern "C" __global__ void {name}(
         assert_eq!(dst.data_type(), src.data_type());
         assert_eq!(dst.shape(), src.shape());
 
-        let &[r, c, b] = dst.shape() else {
+        let [r @ .., c, b] = dst.shape() else {
             unreachable!()
         };
-        let &[rsa, csa, 1] = dst.strides() else {
+        let [rsa @ .., csa, 1] = dst.strides() else {
             unreachable!()
         };
-        let &[rsb, csb, 1] = src.strides() else {
+        let [rsb @ .., csb, 1] = src.strides() else {
             unreachable!()
         };
+
+        let r = match r {
+            [] => unreachable!(),
+            &[r] => r,
+            r => {
+                assert!(r
+                    .iter()
+                    .map(|r| *r as i32)
+                    .enumerate()
+                    .skip(1)
+                    .all(|(i, r)| r * rsa[i] == rsa[i - 1] && r * rsb[i] == rsb[i - 1]));
+                r.iter().product()
+            }
+        };
+        let rsa = rsa.last().unwrap();
+        let rsb = rsb.last().unwrap();
 
         let contiguous_bytes = b * dst.data_type().size() as udim;
         assert_eq!(contiguous_bytes % self.warp_size, 0);
@@ -97,11 +113,11 @@ extern "C" __global__ void {name}(
         assert!(bytes_per_thread <= 32 && bytes_per_thread.is_power_of_two());
 
         let dst_ptr = (dst.physical().as_ptr() as isize + dst.bytes_offset()) as CUdeviceptr;
-        let rsa = rsa as udim / b;
-        let csa = csa as udim / b;
+        let rsa = *rsa as udim / b;
+        let csa = *csa as udim / b;
         let src_ptr = (src.physical().as_ptr() as isize + src.bytes_offset()) as CUdeviceptr;
-        let rsb = rsb as udim / b;
-        let csb = csb as udim / b;
+        let rsb = *rsb as udim / b;
+        let csb = *csb as udim / b;
         let params: [*const c_void; 8] = [
             (&dst_ptr) as *const _ as _,
             (&rsa) as *const _ as _,

@@ -49,9 +49,10 @@ fn print_help() {
     println!(
         "\
 /list           列出现存的会话及对话次数
-/create         新建会话session
-/switch [0-9+]  切换至指定会话
-/drop [0-9+]    丢弃指定会话
+/create         新建会话
+/fork [id]      复制当前会话或指定会话
+/switch <id>    切换至指定会话
+/drop [id]      丢弃当前会话或指定会话
 /args           打印当前参数
 /args key value 设置指定参数
 /help           打印帮助信息
@@ -147,6 +148,27 @@ impl<M: CausalLM> Chatting<M> {
                 self.sessions.insert(self.current, self.service.launch());
                 println!("Create new session {}.", self.current);
             }
+            ["/fork"] => {
+                let new = self.session().fork();
+                self.current = self.next_id;
+                self.next_id += 1;
+                self.sessions.insert(self.current, new);
+                println!("Fork session to {}.", self.current);
+            }
+            ["/fork", n] => match n.parse() {
+                Ok(target_id) => {
+                    if let Some(s) = self.sessions.get(&target_id) {
+                        let new = s.fork();
+                        self.current = self.next_id;
+                        self.next_id += 1;
+                        self.sessions.insert(self.current, new);
+                        println!("Fork session {} to {}.", target_id, self.current);
+                    } else {
+                        println!("Invalid session ID.");
+                    }
+                }
+                Err(_) => println!("Invalid drop command"),
+            },
             ["/switch", n] => match n.parse() {
                 Ok(target_id) => {
                     if target_id == self.current {
