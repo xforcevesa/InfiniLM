@@ -84,3 +84,53 @@ pub fn pos<'a, S: 'a>(
     }
     Tensor::new(tensor::DataType::U32, &[ans.len() as _], ans)
 }
+
+/// 测试模型实现。
+pub fn test_impl<M>(meta: M::Meta, prompt: &[utok])
+where
+    M: CausalLM,
+    M::Error: std::fmt::Debug,
+{
+    use std::time::Instant;
+
+    let Some(model_dir) = common::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
+
+    let t0 = Instant::now();
+    let model = M::load(model_dir, meta).unwrap();
+    let t1 = Instant::now();
+    println!("load {:?}", t1 - t0);
+
+    let mut cache = model.new_cache();
+
+    let mut prompt = prompt.to_vec();
+    let mut pos = 0;
+
+    while prompt != &[model.eos_token()] {
+        let token_embedded = CausalLM::token_embed(&model, prompt.iter().copied());
+
+        let queries = [QueryContext {
+            cache: Some(&mut cache),
+            range: pos..pos + prompt.len() as upos,
+        }];
+        let hidden_state = CausalLM::forward(&model, queries, token_embedded);
+
+        let decoding = [DecodingMeta {
+            num_query: prompt.len(),
+            num_decode: 1,
+        }];
+        let logits = CausalLM::decode(&model, decoding, hidden_state);
+
+        let args = [SampleMeta {
+            num_decode: 1,
+            args: SampleArgs::default(),
+        }];
+        let tokens = CausalLM::sample(&model, args, logits);
+
+        println!("{:?}", tokens);
+        pos += prompt.len() as upos;
+        prompt = tokens;
+    }
+}

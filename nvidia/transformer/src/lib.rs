@@ -417,54 +417,14 @@ impl Drop for Cache {
 
 #[test]
 fn test_infer() {
-    use std::time::Instant;
-
-    let Some(model_dir) = common_nv::test_model::find() else {
-        return;
-    };
-    println!("model_dir: {}", model_dir.display());
-
     cuda::init();
-    let Some(device) = cuda::Device::fetch() else {
-        return;
+    if let Some(device) = cuda::Device::fetch() {
+        causal_lm::test_impl::<Transformer>(
+            device,
+            &[
+                29966, 29989, 1792, 29989, 29958, 13, 29903, 388, 376, 18567, 29908, 304, 592,
+                21106, 29879, 5299, 29989, 465, 22137, 29989, 29958, 13,
+            ],
+        );
     };
-
-    let t0 = Instant::now();
-    let model = <Transformer as Model>::load(model_dir, device).unwrap();
-    let t1 = Instant::now();
-    println!("load {:?}", t1 - t0);
-
-    let mut cache = model.new_cache();
-
-    let mut prompt: Vec<utok> = vec![
-        29966, 29989, 1792, 29989, 29958, 13, 29903, 388, 376, 18567, 29908, 304, 592, 21106,
-        29879, 5299, 29989, 465, 22137, 29989, 29958, 13,
-    ];
-    let mut pos = 0;
-
-    while prompt != &[model.eos_token()] {
-        let token_embedded = CausalLM::token_embed(&model, prompt.iter().copied());
-
-        let queries = [QueryContext {
-            cache: Some(&mut cache),
-            range: pos..pos + prompt.len() as upos,
-        }];
-        let hidden_state = CausalLM::forward(&model, queries, token_embedded);
-
-        let decoding = [DecodingMeta {
-            num_query: prompt.len(),
-            num_decode: 1,
-        }];
-        let logits = CausalLM::decode(&model, decoding, hidden_state);
-
-        let args = [SampleMeta {
-            num_decode: 1,
-            args: causal_lm::SampleArgs::default(),
-        }];
-        let tokens = CausalLM::sample(&model, args, logits);
-
-        println!("{:?}", tokens);
-        pos += prompt.len() as upos;
-        prompt = tokens;
-    }
 }

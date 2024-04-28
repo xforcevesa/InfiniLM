@@ -141,13 +141,9 @@ impl Layer<'_> {
 
 #[test]
 fn test_load() {
-    use common_nv::{
-        cuda::{self, Device},
-        SafeTensorsError,
-    };
+    use common_nv::cuda::{self, Device};
     use log::LevelFilter::Trace;
     use simple_logger::SimpleLogger;
-    use std::io::ErrorKind::NotFound;
     use transformer::Memory;
 
     let Some(model_dir) = common_nv::test_model::find() else {
@@ -165,14 +161,8 @@ fn test_load() {
     SimpleLogger::new().with_level(Trace).init().unwrap();
 
     let time = Instant::now();
-    let safetensors = Memory::load_safetensors(model_dir);
+    let model = Memory::load_safetensors(model_dir).unwrap();
     info!("mmap {:?}", time.elapsed());
-
-    let model = match safetensors {
-        Ok(m) => m,
-        Err(SafeTensorsError::Io(e)) if e.kind() == NotFound => return,
-        Err(e) => panic!("{e:?}"),
-    };
 
     let contexts = (0..N as _)
         .map(|i| Device::new(i).retain_primary())
