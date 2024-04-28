@@ -11,8 +11,8 @@ use common_nv::{
     cuda::{
         memcpy_d2h, AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore,
     },
-    f16, slice, split, udim, upos, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx,
-    SafeTensorsError, Tensor,
+    f16, slice, split, udim, upos, utok, DataType, Kernels, LocalSplitable, NvidiaKernels,
+    NvidiaKernelsPtx, SafeTensorsError, Tensor,
 };
 use itertools::izip;
 use nccl::CommunicatorGroup;
@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use transformer::{Kernels, Llama2, Memory};
+use transformer::{Llama2, Memory};
 
 pub use common_nv::cuda;
 

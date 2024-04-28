@@ -8,8 +8,8 @@ extern crate log;
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common_nv::{
     cuda::{memcpy_d2h, DevMemSpore},
-    f16, slice, split, udim, upos, utok, DataType, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx,
-    SafeTensorsError, Tensor,
+    f16, slice, split, udim, upos, utok, DataType, FileLoadError, Kernels, LocalSplitable,
+    NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use cuda::{Context, ContextResource, ContextSpore, Device, StreamSpore};
 use itertools::izip;
@@ -21,7 +21,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
-use transformer::{Kernels, Llama2, Memory};
+use transformer::{Llama2, Memory};
 
 pub use common_nv::{cuda, synchronize};
 
@@ -37,7 +37,7 @@ pub struct Transformer {
 
 impl Model for Transformer {
     type Meta = Device;
-    type Error = SafeTensorsError;
+    type Error = FileLoadError;
 
     #[inline]
     fn load(model_dir: impl AsRef<Path>, meta: Self::Meta) -> Result<Self, Self::Error> {

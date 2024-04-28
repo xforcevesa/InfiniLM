@@ -1,5 +1,6 @@
 ﻿//! safetensors 文件的加载和访问。
 
+use crate::FileLoadError::{self, Io, Json};
 use memmap2::Mmap;
 use std::{
     collections::{hash_map, HashMap},
@@ -11,7 +12,6 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use SafeTensorsError::{Io, Json};
 
 pub use safetensors::{tensor::TensorInfo, Dtype};
 
@@ -19,15 +19,6 @@ pub use safetensors::{tensor::TensorInfo, Dtype};
 pub struct SafeTensors {
     tensors: HashMap<String, (usize, TensorInfo)>, // name -> (file_index, tensor_info)
     files: Vec<(Mmap, String)>,                    // file_index -> (mmap, format)
-}
-
-/// 加载 safetensors 文件可能产生的错误。
-#[derive(Debug)]
-pub enum SafeTensorsError {
-    /// IO 错误。
-    Io(std::io::Error),
-    /// Json 解析错误。
-    Json(serde_json::Error),
 }
 
 /// safetensors 文件中的张量映射。
@@ -51,7 +42,7 @@ pub struct Iter<'a> {
 
 impl SafeTensors {
     /// 自动从路径中加载 safetensors 文件。
-    pub fn load_from_dir(path: impl AsRef<Path>) -> Result<Self, SafeTensorsError> {
+    pub fn load_from_dir(path: impl AsRef<Path>) -> Result<Self, FileLoadError> {
         // 先尝试加载单个文件
         let single_file = path.as_ref().join("model.safetensors");
         if single_file.is_file() {
@@ -70,7 +61,7 @@ impl SafeTensors {
     }
 
     /// 加载单个 `.safetensors` 文件。
-    pub fn single_file(path: impl AsRef<Path>) -> Result<Self, SafeTensorsError> {
+    pub fn single_file(path: impl AsRef<Path>) -> Result<Self, FileLoadError> {
         let file = File::open(path).map_err(Io)?;
         let file = unsafe { Mmap::map(&file) }.map_err(Io)?;
         let header = load_header(&file)?;
@@ -85,7 +76,7 @@ impl SafeTensors {
     }
 
     /// 加载 `.safetensors.index.json` 索引文件。
-    pub fn index_file(path: impl AsRef<Path>) -> Result<Self, SafeTensorsError> {
+    pub fn index_file(path: impl AsRef<Path>) -> Result<Self, FileLoadError> {
         use std::collections::hash_map::Entry;
         // 生成目录路径
         let dir = path
@@ -287,7 +278,7 @@ pub struct SafeTensorsHeaderMetadata {
     pub format: String,
 }
 
-fn load_header(file: &Mmap) -> Result<SafeTensorsHeader, SafeTensorsError> {
+fn load_header(file: &Mmap) -> Result<SafeTensorsHeader, FileLoadError> {
     let header_len = unsafe { *file.as_ptr().cast::<u64>() };
     let header = &file[size_of_val(&header_len)..][..header_len as _];
     serde_json::from_slice(header).map_err(Json)
@@ -300,7 +291,7 @@ fn test() {
     };
     let safetensors = match SafeTensors::load_from_dir(model_dir) {
         Ok(s) => s,
-        Err(SafeTensorsError::Io(e)) if e.kind() == NotFound => return,
+        Err(FileLoadError::Io(e)) if e.kind() == NotFound => return,
         Err(e) => panic!("{e:?}"),
     };
     println!(

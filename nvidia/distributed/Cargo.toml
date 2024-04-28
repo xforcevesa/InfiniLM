@@ -8,7 +8,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 
 [dependencies]
 causal-lm = { path = "../../causal-lm" }
-transformer = { path = "../../transformer" }
+transformer = { path = "../../models/llama-legacy" }
 common-nv = { path = "../common" }
 nccl.workspace = true
 log.workspace = true

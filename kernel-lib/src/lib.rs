@@ -1,6 +1,12 @@
-﻿use common::utok;
+#![deny(warnings)]
+
+mod blas;
+
+use common::utok;
 use std::ops::{Deref, DerefMut};
 use tensor::Tensor;
+
+pub use blas::Matrix;
 
 pub trait Kernels {
     type Storage: ?Sized;

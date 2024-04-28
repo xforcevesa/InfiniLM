@@ -1,13 +1,13 @@
 ﻿use common::f16;
 use cublas::{bindings::cublasOperation_t, cublas, Cublas};
 use cuda::{AsRaw, DevByte};
+use kernel_lib::Matrix;
 use std::{
     mem::swap,
     ops::{Deref, DerefMut},
     os::raw::c_void,
 };
 use tensor::{DataType, Tensor};
-use transformer::Matrix;
 
 pub fn mat_mul<T, U, V>(
     handle: &Cublas,

@@ -175,8 +175,7 @@ impl Llama2 for Memory {
 
 #[test]
 fn test_load() {
-    use common::safe_tensors::SafeTensorsError;
-    use std::{io::ErrorKind::NotFound, time::Instant};
+    use std::time::Instant;
 
     let Some(model_dir) = common::test_model::find() else {
         return;
@@ -184,18 +183,12 @@ fn test_load() {
     println!("model_dir: {}", model_dir.display());
 
     let t0 = Instant::now();
-    let safetensors = Memory::load_safetensors(model_dir);
+    let model = Memory::load_safetensors(model_dir).unwrap();
     let t1 = Instant::now();
     println!("mmap {:?}", t1 - t0);
 
-    let safetensors = match safetensors {
-        Ok(m) => m,
-        Err(SafeTensorsError::Io(e)) if e.kind() == NotFound => return,
-        Err(e) => panic!("{e:?}"),
-    };
-
     let t0 = Instant::now();
-    let _inside_memory = Memory::cast(&safetensors, DataType::F32);
+    let _inside_memory = Memory::cast(&model, DataType::F32);
     let t1 = Instant::now();
     println!("cast {:?}", t1 - t0);
 }

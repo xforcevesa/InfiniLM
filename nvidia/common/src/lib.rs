@@ -12,11 +12,8 @@ mod rms_norm;
 mod rotary_embedding;
 mod swiglu;
 
-pub use common::{
-    f16,
-    safe_tensors::{SafeTensors, SafeTensorsError},
-    test_model, upos, utok,
-};
+pub use common::{f16, safe_tensors::SafeTensors, test_model, upos, utok, FileLoadError};
+pub use kernel_lib::Kernels;
 pub use tensor::{slice, split, udim, DataType, LocalSplitable, Tensor};
 
 use cublas::{Cublas, CublasSpore};
@@ -33,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use swiglu::Swiglu;
-use transformer::{Kernels, Llama2};
+use transformer::Llama2;
 
 pub struct NvidiaKernelsPtx {
     epsilon: f32,

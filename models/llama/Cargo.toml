@@ -1,5 +1,5 @@
 [package]
-name = "common-nv"
+name = "llama"
 version = "0.0.0"
 edition = "2021"
 authors = ["YdrMaster <ydrml@hotmail.com>"]
@@ -9,11 +9,5 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../../common" }
 tensor = { path = "../../tensor" }
-kernel-lib = { path = "../../kernel-lib" }
-transformer = { path = "../../models/llama-legacy" }
-cuda.workspace = true
-cublas.workspace = true
-log.workspace = true
-
-[build-dependencies]
-search-cuda-tools.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

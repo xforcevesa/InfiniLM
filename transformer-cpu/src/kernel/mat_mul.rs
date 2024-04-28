@@ -1,12 +1,12 @@
 ﻿use common::{f16, BetweenF32};
 use gemm::gemm;
+use kernel_lib::Matrix;
 use std::{
     ffi::{c_longlong, c_void},
     mem::swap,
     ops::{Deref, DerefMut},
 };
 use tensor::{DataType, Tensor};
-use transformer::Matrix;
 
 /// c = a x b
 ///
@@ -134,9 +134,9 @@ fn gemm_as_blas<T: 'static + BetweenF32>(c: Matrix, beta: f32, alpha: f32, a: Ma
 #[cfg(detected_mkl)]
 mod mkl {
     use gemm::f16;
+    use kernel_lib::Matrix;
     use std::ffi::c_int;
     use tensor::DataType;
-    use transformer::Matrix;
     const COL_MAJOR: c_int = 102;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -284,8 +284,7 @@ impl DistributeScheme {
 #[test]
 fn test() {
     use super::Memory;
-    use common::safe_tensors::SafeTensorsError;
-    use std::{io::ErrorKind::NotFound, time::Instant};
+    use std::time::Instant;
 
     let Some(model_dir) = common::test_model::find() else {
         return;
@@ -293,14 +292,8 @@ fn test() {
     println!("model_dir: {}", model_dir.display());
 
     let time = Instant::now();
-    let safetensors = Memory::load_safetensors(model_dir);
+    let model = Memory::load_safetensors(model_dir).unwrap();
     println!("mmap {:?}", time.elapsed());
-
-    let model = match safetensors {
-        Ok(m) => m,
-        Err(SafeTensorsError::Io(e)) if e.kind() == NotFound => return,
-        Err(e) => panic!("{e:?}"),
-    };
 
     let distributer = Distributer::new(&model, 4, 512);
     let time = Instant::now();

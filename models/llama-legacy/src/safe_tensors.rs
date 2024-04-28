@@ -1,23 +1,21 @@
 ﻿use super::{memory::Layer, storage::HostMem, ConfigJson, Memory, Storage};
 use common::{
-    safe_tensors::{
-        Dtype, SafeTensors,
-        SafeTensorsError::{self, Io, Json},
-    },
+    safe_tensors::{Dtype, SafeTensors},
     Blob,
+    FileLoadError::{self, Io, Json},
 };
 use std::{fs::File, ops::DerefMut, path::Path, sync::Arc};
 use tensor::{udim, DataType, Shape, Tensor};
 
 impl Memory {
-    pub fn load_safetensors(model_dir: impl AsRef<Path>) -> Result<Self, SafeTensorsError> {
+    pub fn load_safetensors(model_dir: impl AsRef<Path>) -> Result<Self, FileLoadError> {
         Self::load_safetensors_realloc(model_dir, Some(Blob::new))
     }
 
     pub fn load_safetensors_realloc<T: HostMem + DerefMut<Target = [u8]>>(
         model_dir: impl AsRef<Path>,
         mut realloc: Option<impl FnMut(usize) -> T>,
-    ) -> Result<Self, SafeTensorsError> {
+    ) -> Result<Self, FileLoadError> {
         let config = File::open(model_dir.as_ref().join("config.json")).map_err(Io)?;
         let config: ConfigJson = serde_json::from_reader(&config).map_err(Json)?;
         let model = SafeTensors::load_from_dir(model_dir)?.share();

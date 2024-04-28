@@ -18,3 +18,12 @@ pub mod test_model;
 pub use between_f32::BetweenF32;
 pub use blob::Blob;
 pub use half::{bf16, f16};
+
+/// 加载 safetensors 文件可能产生的错误。
+#[derive(Debug)]
+pub enum FileLoadError {
+    /// IO 错误。
+    Io(std::io::Error),
+    /// Json 解析错误。
+    Json(serde_json::Error),
+}
