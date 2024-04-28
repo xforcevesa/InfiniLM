@@ -66,7 +66,7 @@ struct InferenceArgs {
     top_p: Option<f32>,
 
     #[cfg(feature = "nvidia")]
-    /// Use Nvidia GPU.
+    /// Use Nvidia GPU, specify device IDs separated by comma, e.g. `0` or `0,1`.
     #[clap(long)]
     nvidia: Option<String>,
 }

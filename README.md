@@ -1,5 +1,12 @@
 ﻿# 手写 transformer 模型
 
+![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/InfiniTensor/transformer-rs)
+![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr/InfiniTensor/transformer-rs)
+![GitHub repo size](https://img.shields.io/github/repo-size/InfiniTensor/transformer-rs)
+![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/InfiniTensor/transformer-rs)
+![GitHub contributors](https://img.shields.io/github/contributors/InfiniTensor/transformer-rs)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/m/InfiniTensor/transformer-rs)
+
 从 [YdrMaster/llama2.rs](https://github.com/YdrMaster/llama2.rs) 发展来的手写 transformer 模型项目。
 
 ## 使用
@@ -57,5 +64,3 @@ cargo generate --model <model> --prompt <prompt>
 - `prompt`: 生成文本的开头；
 
 其他参数参见 `cargo generate --help`。
-
-
