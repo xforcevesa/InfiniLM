@@ -51,14 +51,15 @@ impl Model for Transformer {
         let load_layers = host.num_hidden_layers();
 
         let (model, layers, kernels, transfer, compute) = context.apply(|ctx| {
-            let stream = ctx.stream();
+            let transfer = ctx.stream();
+            let compute = ctx.stream();
             let block_size = ctx.dev().max_block_dims().0;
             (
-                ModelParameters::new(&host, &stream),
-                Mutex::new(LayersParameters::new(load_layers, &host, &stream)),
+                ModelParameters::new(&host, &compute),
+                Mutex::new(LayersParameters::new(load_layers, &host, &transfer)),
                 NvidiaKernelsPtx::new(&host, block_size).load(ctx),
-                stream.sporulate(),
-                ctx.stream().sporulate(),
+                transfer.sporulate(),
+                compute.sporulate(),
             )
         });
 
@@ -278,6 +279,10 @@ impl CausalLM for Transformer {
                 kernels.swiglu(&mut gate, &up);
                 kernels.mat_mul(&mut x, 1., &gate, &params.mlp_down(ctx), 1.);
             }
+            pos.take_physical().drop_on(&compute);
+            state_buf.take_physical().drop_on(&compute);
+            q_buf.drop_on(&compute);
+            att_buf.drop_on(&compute);
         });
         x_
     }
