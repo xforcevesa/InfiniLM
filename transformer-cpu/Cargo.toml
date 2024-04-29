@@ -12,7 +12,6 @@ tensor = { path = "../tensor" }
 causal-lm = { path = "../causal-lm" }
 llama = { path = "../models/llama" }
 kernel-lib = { path = "../kernel-lib" }
-itertools.workspace = true
 gemm = "0.17"
 intel-mkl-src = { version = "0.8", features = ["mkl-dynamic-lp64-iomp"] }
 

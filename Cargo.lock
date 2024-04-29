@@ -598,10 +598,10 @@ dependencies = [
  "cublas",
  "cuda",
  "kernel-lib",
+ "llama",
  "log",
  "search-cuda-tools",
  "tensor",
- "transformer",
 ]
 
 [[package]]
@@ -831,13 +831,14 @@ name = "distributed"
 version = "0.0.0"
 dependencies = [
  "causal-lm",
+ "common",
  "common-nv",
  "itertools",
+ "llama",
  "log",
  "nccl",
  "search-cuda-tools",
  "simple_logger",
- "transformer",
 ]
 
 [[package]]
@@ -916,9 +917,9 @@ dependencies = [
 
 [[package]]
 name = "flate2"
-version = "1.0.29"
+version = "1.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4556222738635b7a3417ae6130d8f52201e45a0c4d1a907f0826383adb5f85e7"
+checksum = "5f54427cfd1c7829e2a139fcefea601bf088ebca651d2bf53ebc600eac295dae"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -1410,9 +1411,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.153"
+version = "0.2.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd"
+checksum = "ae743338b92ff9146ce83992f766a31066a91a8c84a45e0e9f21e7cf6de6d346"
 
 [[package]]
 name = "libloading"
@@ -1450,7 +1451,9 @@ checksum = "01cda141df6706de531b6c46c3a33ecca755538219bd484262fa09410c13539c"
 name = "llama"
 version = "0.0.0"
 dependencies = [
+ "causal-lm",
  "common",
+ "itertools",
  "rayon",
  "serde",
  "serde_json",
@@ -2273,9 +2276,9 @@ checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
 
 [[package]]
 name = "socket2"
-version = "0.5.6"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05ffd9c0a93b7543e062e759284fcf5f5e3b098501104bfbdde4d404db792871"
+checksum = "ce305eb0b4296696835b71df73eb912e0f1ffd2556a501fcede6e0c50349191c"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
@@ -2533,17 +2536,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "transformer"
-version = "0.0.0"
-dependencies = [
- "common",
- "rayon",
- "serde",
- "serde_json",
- "tensor",
-]
-
-[[package]]
 name = "transformer-cpu"
 version = "0.0.1"
 dependencies = [
@@ -2552,7 +2544,6 @@ dependencies = [
  "gemm",
  "intel-mkl-src",
  "intel-mkl-tool",
- "itertools",
  "kernel-lib",
  "llama",
  "tensor",
@@ -2563,11 +2554,12 @@ name = "transformer-nv"
 version = "0.0.0"
 dependencies = [
  "causal-lm",
+ "common",
  "common-nv",
  "itertools",
+ "llama",
  "log",
  "search-cuda-tools",
- "transformer",
 ]
 
 [[package]]
@@ -2761,9 +2753,9 @@ dependencies = [
 
 [[package]]
 name = "wide"
-version = "0.7.16"
+version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81a1851a719f11d1d2fea40e15c72f6c00de8c142d7ac47c1441cc7e4d0d5bc6"
+checksum = "0f0e39d2c603fdc0504b12b458cf1f34e0b937ed2f4f2dc20796e3e86f34e11f"
 dependencies = [
  "bytemuck",
  "safe_arch",

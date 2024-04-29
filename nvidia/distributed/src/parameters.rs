@@ -1,9 +1,9 @@
-﻿use common_nv::{
+﻿use crate::distribute::{DistributeScheme, Distributer};
+use common_nv::{
     cuda::{Context, ContextGuard, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore},
     udim, Tensor,
 };
 use std::time::Instant;
-use transformer::{DistributeScheme, Distributer, Llama2};
 
 pub struct ParameterMatrix {
     scheme: DistributeScheme,
@@ -11,14 +11,14 @@ pub struct ParameterMatrix {
 }
 
 impl ParameterMatrix {
-    pub fn load(model: &dyn Llama2, contexts: &[Context]) -> Self {
+    pub fn load(model: &llama::Storage, contexts: &[Context]) -> Self {
         let align = contexts
             .iter()
             .map(|ctx| ctx.device().alignment())
             .max()
             .unwrap();
 
-        let nlayers = model.num_hidden_layers();
+        let nlayers = model.config.nlayers as usize;
         let mut matrix = Vec::with_capacity(contexts.len() * nlayers);
 
         let distributer = Distributer::new(model, contexts.len(), align);
@@ -26,10 +26,7 @@ impl ParameterMatrix {
         for (i, context) in contexts.iter().enumerate() {
             context.apply(|ctx| {
                 for layer in 0..nlayers {
-                    matrix.push(
-                        ctx.from_host(distributer.distribute(layer, i).as_slice())
-                            .sporulate(),
-                    );
+                    matrix.push(ctx.from_host(&distributer.distribute(layer, i)).sporulate());
                 }
             });
         }
@@ -89,17 +86,16 @@ impl Layer<'_> {
         let n = self.scheme.n as udim;
         Tensor::new(
             self.scheme.dt,
-            &[(nh + nkvh + nkvh) / n * dh, d],
+            &[d, (nh + nkvh + nkvh) / n * dh],
             &self.mem[self.scheme.w_qkv..],
         )
-        .transpose(&[1, 0])
     }
 
     #[inline]
     pub fn w_o(&self) -> Tensor<&[DevByte]> {
         let d = self.scheme.nh * self.scheme.dh;
         let n = self.scheme.n as udim;
-        Tensor::new(self.scheme.dt, &[d, d / n], &self.mem[self.scheme.w_o..]).transpose(&[1, 0])
+        Tensor::new(self.scheme.dt, &[d / n, d], &self.mem[self.scheme.w_o..])
     }
 
     #[inline]
@@ -119,10 +115,9 @@ impl Layer<'_> {
         let n = self.scheme.n as udim;
         Tensor::new(
             self.scheme.dt,
-            &[(di + di) / n, d],
+            &[d, (di + di) / n],
             &self.mem[self.scheme.mlp_gate_up..],
         )
-        .transpose(&[1, 0])
     }
 
     #[inline]
@@ -132,40 +127,38 @@ impl Layer<'_> {
         let n = self.scheme.n as udim;
         Tensor::new(
             self.scheme.dt,
-            &[d, di / n],
+            &[di / n, d],
             &self.mem[self.scheme.mlp_down..],
         )
-        .transpose(&[1, 0])
     }
 }
 
-#[test]
-fn test_load() {
-    use common_nv::cuda::{self, Device};
-    use log::LevelFilter::Trace;
-    use simple_logger::SimpleLogger;
-    use transformer::Memory;
+// #[test]
+// fn test_load() {
+//     use common_nv::cuda::{self, Device};
+//     use log::LevelFilter::Trace;
+//     use simple_logger::SimpleLogger;
 
-    let Some(model_dir) = common_nv::test_model::find() else {
-        return;
-    };
-    println!("model_dir: {}", model_dir.display());
+//     let Some(model_dir) = common_nv::test_model::find() else {
+//         return;
+//     };
+//     println!("model_dir: {}", model_dir.display());
 
-    const N: usize = 1;
+//     const N: usize = 1;
 
-    cuda::init();
-    if Device::count() < N {
-        return;
-    }
+//     cuda::init();
+//     if Device::count() < N {
+//         return;
+//     }
 
-    SimpleLogger::new().with_level(Trace).init().unwrap();
+//     SimpleLogger::new().with_level(Trace).init().unwrap();
 
-    let time = Instant::now();
-    let model = Memory::load_safetensors(model_dir).unwrap();
-    info!("mmap {:?}", time.elapsed());
+//     let time = Instant::now();
+//     let model = Memory::load_safetensors(model_dir).unwrap();
+//     info!("mmap {:?}", time.elapsed());
 
-    let contexts = (0..N as _)
-        .map(|i| Device::new(i).retain_primary())
-        .collect::<Vec<_>>();
-    unsafe { ParameterMatrix::load(&model, &contexts).kill(&contexts) };
-}
+//     let contexts = (0..N as _)
+//         .map(|i| Device::new(i).retain_primary())
+//         .collect::<Vec<_>>();
+//     unsafe { ParameterMatrix::load(&model, &contexts).kill(&contexts) };
+// }

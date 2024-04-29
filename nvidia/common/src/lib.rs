@@ -12,16 +12,14 @@ mod rms_norm;
 mod rotary_embedding;
 mod swiglu;
 
-pub use common::{f16, safe_tensors::SafeTensors, test_model, upos, utok, FileLoadError};
-pub use kernel_lib::Kernels;
-pub use tensor::{slice, split, udim, DataType, LocalSplitable, Tensor};
-
+use common::utok;
 use cublas::{Cublas, CublasSpore};
 use cuda::{
     memcpy_d2h, ContextGuard, ContextResource, ContextSpore, CudaDataType, DevByte, ModuleSpore,
     Ptx, Stream,
 };
 use fused_softmax::FusedSoftmax;
+use llama::InferenceConfig;
 use reform::Reform;
 use rms_norm::RmsNormalization;
 use rotary_embedding::Rope;
@@ -30,7 +28,9 @@ use std::{
     sync::Arc,
 };
 use swiglu::Swiglu;
-use transformer::Llama2;
+
+pub use kernel_lib::Kernels;
+pub use tensor::{slice, split, udim, DataType, LocalSplitable, Tensor};
 
 pub struct NvidiaKernelsPtx {
     epsilon: f32,
@@ -43,20 +43,20 @@ pub struct NvidiaKernelsPtx {
 }
 
 impl NvidiaKernelsPtx {
-    pub fn new(host: &dyn Llama2, block_size: usize) -> Self {
+    pub fn new(config: &InferenceConfig, block_size: usize) -> Self {
         Self {
-            epsilon: host.rms_norm_eps(),
-            theta: host.rope_theta(),
+            epsilon: config.epsilon,
+            theta: config.theta,
             rms_norm: Arc::new(RmsNormalization::new(
                 CudaDataType::f16,
-                host.hidden_size(),
+                config.d as _,
                 block_size,
             )),
             rotary_embedding: Arc::new(Rope::new(block_size)),
             reform: Arc::new(Reform::new(block_size, 32)),
             softmax: Arc::new(FusedSoftmax::new(
                 CudaDataType::f16,
-                host.max_position_embeddings(),
+                config.max_seq_len as _,
                 block_size,
             )),
             swiglu: Arc::new(Swiglu::new(CudaDataType::f16, block_size)),

@@ -1,38 +1,42 @@
 #![cfg(detected_cuda)]
 
-mod parameters;
-
 #[macro_use]
 extern crate log;
 
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
+use common::{f16, upos, utok, FileLoadError};
 use common_nv::{
-    cuda::{memcpy_d2h, DevMemSpore},
-    f16, slice, split, udim, upos, utok, DataType, FileLoadError, Kernels, LocalSplitable,
-    NvidiaKernels, NvidiaKernelsPtx, Tensor,
+    cuda::{memcpy_d2h, DevByte, DevMem, DevMemSpore, EventSpore, HostMemSpore, Stream},
+    slice, udim, DataType, KernelRuntime, Kernels, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use cuda::{Context, ContextResource, ContextSpore, Device, StreamSpore};
-use itertools::izip;
-use parameters::{LayersParameters, ModelParameters};
+use llama::{InferenceConfig, LayerStorage, Weight};
 use std::{
+    cell::RefCell,
+    collections::VecDeque,
     iter::repeat,
+    ops::{Deref, DerefMut},
     path::Path,
+    rc::Rc,
     slice::from_raw_parts,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::Instant,
 };
-use transformer::{Llama2, Memory};
 
 pub use common_nv::{cuda, synchronize};
 
 pub struct Transformer {
-    host: Memory,
-    model: ModelParameters,
-    layers: Mutex<LayersParameters>,
+    config: InferenceConfig,
+
     context: Arc<Context>,
     transfer: StreamSpore,
     compute: StreamSpore,
     kernels: NvidiaKernels,
+    embed_tokens: Tensor<HostMemSpore>,
+    layers: Vec<LayerStorage<HostMemSpore>>,
+    lm_layernorm: Tensor<DevMemSpore>,
+    lm_head: Tensor<DevMemSpore>,
+    pool: Mutex<VecDeque<(LayerStorage<DevMemSpore>, EventSpore)>>,
 }
 
 impl Model for Transformer {
@@ -41,36 +45,53 @@ impl Model for Transformer {
 
     #[inline]
     fn load(model_dir: impl AsRef<Path>, meta: Self::Meta) -> Result<Self, Self::Error> {
-        let context = Arc::new(meta.retain_primary());
         let time = Instant::now();
-        let host = Memory::load_safetensors_realloc(
-            model_dir,
-            Some(|l| context.apply(|ctx| ctx.malloc_host::<u8>(l).sporulate())),
-        )?;
+        let host = llama::Storage::load_safetensors(model_dir)?;
         info!("load host: {:?}", time.elapsed());
-        let load_layers = host.num_hidden_layers();
+        let load_layers = host.config.nlayers;
 
-        let (model, layers, kernels, transfer, compute) = context.apply(|ctx| {
+        let context = Arc::new(meta.retain_primary());
+        context.apply(|ctx| {
             let transfer = ctx.stream();
             let compute = ctx.stream();
             let block_size = ctx.dev().max_block_dims().0;
-            (
-                ModelParameters::new(&host, &compute),
-                Mutex::new(LayersParameters::new(load_layers, &host, &transfer)),
-                NvidiaKernelsPtx::new(&host, block_size).load(ctx),
-                transfer.sporulate(),
-                compute.sporulate(),
-            )
-        });
 
-        Ok(Self {
-            host,
-            model,
-            layers,
-            context,
-            transfer,
-            compute,
-            kernels,
+            let page_lock = |u: &Weight| {
+                let mut host = ctx.malloc_host::<u8>(u.len());
+                host.copy_from_slice(&u);
+                host.sporulate()
+            };
+            let from_host = |u: &HostMemSpore| transfer.from_host(u).sporulate();
+
+            let layers = host
+                .layers
+                .iter()
+                .map(|l| l.map(page_lock))
+                .collect::<Vec<_>>();
+            let pool = layers
+                .iter()
+                .take(load_layers as usize)
+                .map(|l| (l.map(from_host), transfer.record().sporulate()))
+                .collect();
+
+            Ok(Self {
+                context: context.clone(),
+
+                kernels: NvidiaKernelsPtx::new(&host.config, block_size).load(ctx),
+                embed_tokens: host.embed_tokens.as_ref().map_physical(page_lock),
+                layers,
+                lm_layernorm: host
+                    .lm_layernorm
+                    .map_physical(|u| compute.from_host(&u).sporulate()),
+                lm_head: host
+                    .lm_head
+                    .map_physical(|u| compute.from_host(&u).sporulate()),
+                pool: Mutex::new(pool),
+
+                config: host.config,
+                transfer: transfer.sporulate(),
+                compute: compute.sporulate(),
+            })
         })
     }
 }
@@ -80,59 +101,39 @@ impl CausalLM for Transformer {
 
     #[inline]
     fn eos_token(&self) -> utok {
-        self.host.eos_token_id()
+        self.config.eos_token
     }
 
     fn new_cache(&self) -> Tensor<Self::Storage> {
-        let dt = self.host.data_type();
-        let nlayers = self.host.num_hidden_layers() as udim;
-        let nkvh = self.host.num_key_value_heads() as udim;
-        let max_seq_len = self.host.max_position_embeddings() as udim;
-        let d = self.host.hidden_size() as udim;
-        let nh = self.host.num_attention_heads() as udim;
-
-        Tensor::alloc(dt, &[nlayers, 2, nkvh, max_seq_len, d / nh], |len| Cache {
+        self.config.new_cache(|len| Cache {
             context: self.context.clone(),
             mem: self.context.apply(|ctx| ctx.malloc::<u8>(len).sporulate()),
         })
     }
 
     fn duplicate_cache(&self, cache: &Tensor<Self::Storage>, pos: upos) -> Tensor<Self::Storage> {
-        let &[_nlayers, 2, _nkvh, max_seq_len, _dh] = cache.shape() else {
-            panic!()
-        };
-        assert!(pos <= max_seq_len);
-        let slice = [
-            slice![=>],
-            slice![=>],
-            slice![=>],
-            slice![=>pos],
-            slice![=>],
-        ];
-
         self.context.apply(|ctx| {
             let stream = ctx.stream();
-            let mut ans = Tensor::alloc(cache.data_type(), cache.shape(), |len| {
-                stream.malloc::<u8>(len)
-            });
-            let kernels = self.kernels.on(&stream);
-            kernels.reform(
-                &mut ans.as_mut().slice(&slice).map_physical(|u| &mut **u),
-                &cache
-                    .as_ref()
-                    .slice(&slice)
-                    .map_physical(|u| unsafe { u.mem.sprout(ctx) }),
-            );
-            ans.map_physical(|u| Cache {
-                context: self.context.clone(),
-                mem: u.sporulate(),
-            })
+            self.config.duplicate_cache(
+                cache,
+                pos,
+                |len| Cache {
+                    context: self.context.clone(),
+                    mem: stream.malloc::<u8>(len).sporulate(),
+                },
+                |dst, src| {
+                    self.kernels.on(&stream).reform(
+                        &mut dst.map_physical(|u| unsafe { u.mem.sprout(ctx) }),
+                        &src.map_physical(|u| unsafe { u.mem.sprout(ctx) }),
+                    );
+                },
+            )
         })
     }
 
     fn token_embed(&self, queries: impl IntoIterator<Item = utok>) -> Tensor<Self::Storage> {
-        let dt = self.host.data_type();
-        let d = self.host.hidden_size() as udim;
+        let dt = self.config.dt;
+        let d = self.config.d;
         self.context.apply(|ctx| {
             let compute = unsafe { self.compute.sprout(ctx) };
             let kernels = self.kernels.on(&compute);
@@ -141,7 +142,7 @@ impl CausalLM for Transformer {
             let nt = tokens.len() as udim;
 
             let mut x = Tensor::alloc(dt, &[nt, d], |len| compute.malloc::<u8>(len));
-            kernels.gather(&mut x, &self.host.embed_tokens(), tokens);
+            kernels.gather(&mut x, &self.embed_tokens, tokens);
             x.map_physical(|u| Cache {
                 context: self.context.clone(),
                 mem: u.sporulate(),
@@ -157,134 +158,21 @@ impl CausalLM for Transformer {
     where
         Self: 'a,
     {
-        let mut queries = queries.into_iter().collect::<Vec<_>>();
-        let mut nt = 0;
-        let mut max_seq_len = 0;
-        let mut max_att_len = 0;
-        let seq_len = queries
-            .iter()
-            .map(|q| {
-                let seq = q.seq_len();
-                let att = q.att_len();
-                nt += seq;
-                max_seq_len = max_seq_len.max(seq);
-                max_att_len = max_att_len.max(att);
-                seq
-            })
-            .collect::<Vec<_>>();
-
-        let dt = self.host.data_type();
-        let d = self.host.hidden_size() as udim;
-        let nh = self.host.num_attention_heads() as udim;
-        let nkvh = self.host.num_key_value_heads() as udim;
-        let dh = d / nh;
-        let dkv = nkvh * dh;
-        let di = self.host.intermediate_size() as udim;
-        let head_group = nh / nkvh;
-        let head_div = (dh as f32).sqrt().recip();
-
-        let mut x_ = token_embedded;
         self.context.apply(|ctx| {
             let compute = unsafe { self.compute.sprout(ctx) };
-            let kernels = self.kernels.on(&compute);
-
-            let reusing = (d + dkv + dkv).max(di + di);
-            let mut state_buf = Tensor::alloc(dt, &[nt, d + reusing],|len| compute.malloc::<u8>(len));
-            macro_rules! state {
-                () => {
-                    split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing)
-                };
-            }
-
-            let mut q_buf = compute.malloc::<u8>((nh * max_seq_len * dh) as usize * dt.size());
-            let mut att_buf = compute.malloc::<u8>((nh * max_seq_len * max_att_len) as usize * dt.size());
-            let pos = causal_lm::pos(&queries, nt);
-            let pos = pos.as_ref().map_physical(|u| compute.from_host(u));
-
-            let mut x = x_.as_mut().map_physical(|u| unsafe { u.mem.sprout(ctx) });
             let transfer = unsafe { self.transfer.sprout(ctx) };
-            // 层参数滚动加载是有状态的，必须由一个控制流独占。其他逻辑无状态，可以多流并发
-            let mut layers = self.layers.lock().unwrap();
-            for layer in 0..self.host.num_hidden_layers() {
-                let params = {
-                    layers.load(layer, &self.host, &transfer);
-                    layers.sync(layer, &compute)
-                };
-
-                let (mut x1, qkv) = state!();
-                let mut qkv = qkv.slice(&[slice![=>], slice![=> d + dkv + dkv]]);
-
-                kernels.rms_norm(&mut x1, &x, &params.input_layernorm(ctx));
-                kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(ctx), 1.);
-
-                let (q, k, v) = split!(qkv; [1]: d, dkv, dkv);
-                let mut q = q.reshape(&[nt, nh, dh]);
-                let mut k = k.reshape(&[nt, nkvh, dh]);
-                let v = v.reshape(&[nt, nkvh, dh]);
-                let o = x1.reshape(&[nt, nh, dh]);
-
-                kernels.rotary_embedding(&mut q, &pos);
-                kernels.rotary_embedding(&mut k, &pos);
-
-                let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
-                let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
-                let v = v.transpose(&[1, 0, 2]).split(1, &seq_len);
-                let o = o.transpose(&[1, 0, 2]).split(1, &seq_len);
-
-                for (query, q, k, v, mut o) in izip!(&mut queries, q, k, v, o) {
-                    let pos = query.pos();
-                    let seq_len = query.seq_len();
-                    let att_len = query.att_len();
-                    let mut cache = query.cache.as_mut().map(|t|t.as_mut().map_physical(|u| unsafe { u.mem.sprout(ctx) }));
-                    let mut  query = QueryContext{ cache:cache.as_mut(), range: query.range.clone() };
-                    let Some((mut k_cache, mut v_cache)) = query.cache(layer) else {
-                        continue;
-                    };
-
-                    let slice_cat = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
-                    let slice_att = &[slice![=>], slice![      => att_len], slice![=>]];
-                    let shape_q0 = &[nkvh * head_group, seq_len, dh];
-                    let shape_q1 = &[nkvh, head_group * seq_len, dh];
-                    let shape_att0 = &[nkvh, head_group * seq_len, att_len];
-                    let shape_att1 = &[nkvh * head_group, seq_len, att_len];
-
-                    let mut q_att = Tensor::new(dt, shape_q0, &mut q_buf[..]);
-                    let mut k_cat = k_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                    let mut v_cat = v_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                    kernels.reform(&mut q_att, &q);
-                    kernels.reform(&mut k_cat, &k);
-                    kernels.reform(&mut v_cat, &v);
-
-                    let q_att = q_att.reshape(shape_q1);
-                    let k_att = k_cache.slice(slice_att).transpose(&[0, 2, 1]);
-                    let v_att = v_cache.slice(slice_att);
-
-                    let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
-                    kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
-                    let mut att = att.reshape(shape_att1);
-                    kernels.softmax(&mut att);
-                    let mut x2 = q_att;
-                    kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
-
-                    kernels.reform(&mut o, &x2.reshape(shape_q0));
-                }
-
-                let (mut x1, gate_up) = state!();
-                let mut gate_up = gate_up.slice(&[slice![=>], slice![=> di + di]]);
-
-                kernels.mat_mul(&mut x, 1., &x1, &params.w_o(ctx), 1.);
-                kernels.rms_norm(&mut x1, &x, &params.post_attention_layernorm(ctx));
-                kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(ctx), 1.);
-                let (mut gate, up) = split!(gate_up; [1]: di, di);
-                kernels.swiglu(&mut gate, &up);
-                kernels.mat_mul(&mut x, 1., &gate, &params.mlp_down(ctx), 1.);
-            }
-            pos.take_physical().drop_on(&compute);
-            state_buf.take_physical().drop_on(&compute);
-            q_buf.drop_on(&compute);
-            att_buf.drop_on(&compute);
-        });
-        x_
+            let stream = ComputeStream {
+                nh: self.config.nh,
+                nkvh: self.config.nkvh,
+                di: self.config.di,
+                kernels: self.kernels.on(&compute),
+                compute: &compute,
+                transfer: &transfer,
+                host: Rc::new(&*self.layers),
+                dev: Rc::new(RefCell::new(self.pool.lock().unwrap())),
+            };
+            <ComputeStream as llama::ComputeStream>::forward(&stream, queries, token_embedded)
+        })
     }
 
     fn decode(
@@ -292,9 +180,9 @@ impl CausalLM for Transformer {
         decoding: impl IntoIterator<Item = DecodingMeta>,
         mut hidden_state: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage> {
-        let dt = self.host.data_type();
-        let d = self.host.hidden_size();
-        let voc = self.host.vocab_size() as udim;
+        let dt = self.config.dt;
+        let d = self.config.d;
+        let voc = self.config.voc;
 
         self.context.apply(|ctx| {
             let mut x = hidden_state
@@ -303,7 +191,7 @@ impl CausalLM for Transformer {
             let compute = unsafe { self.compute.sprout(ctx) };
             let kernels = self.kernels.on(&compute);
 
-            let len = d * dt.size();
+            let len = d as usize * dt.size();
 
             let mut iter = decoding.into_iter();
             let mut begin = 0;
@@ -343,7 +231,7 @@ impl CausalLM for Transformer {
                 }
             }
 
-            if dst == begin {
+            if dst <= begin {
                 return Tensor::alloc(dt, &[0, d as _], |_| Cache {
                     context: self.context.clone(),
                     mem: compute.malloc::<u8>(0).sporulate(),
@@ -354,12 +242,19 @@ impl CausalLM for Transformer {
             let mut logits =
                 Tensor::alloc(dt, &[x.shape()[0], voc], |len| compute.malloc::<u8>(len));
 
-            let (model_norm, lm_head) = unsafe { self.model.release(&compute) };
+            let lm_layernorm = self
+                .lm_layernorm
+                .as_ref()
+                .map_physical(|u| unsafe { ctx.sprout(u) });
+            let lm_head = self
+                .lm_head
+                .as_ref()
+                .map_physical(|u| unsafe { ctx.sprout(u) });
             // 复制一个 x 以实现原地归一化
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-            kernels.rms_norm(&mut x, &x_, &model_norm);
+            kernels.rms_norm(&mut x, &x_, &lm_layernorm);
             kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
 
             logits.map_physical(|u| Cache {
@@ -394,8 +289,6 @@ impl Drop for Transformer {
     #[inline]
     fn drop(&mut self) {
         self.context.apply(|ctx| unsafe {
-            self.model.kill(ctx);
-            self.layers.lock().unwrap().kill(ctx);
             self.transfer.kill(ctx);
             self.compute.kill(ctx);
             self.kernels.kill(ctx);
@@ -412,6 +305,238 @@ impl Drop for Cache {
     #[inline]
     fn drop(&mut self) {
         self.context.apply(|ctx| unsafe { self.mem.kill(ctx) });
+    }
+}
+
+struct ComputeStream<'a> {
+    nh: udim,
+    nkvh: udim,
+    di: udim,
+    kernels: KernelRuntime<'a>,
+    compute: &'a Stream<'a>,
+    transfer: &'a Stream<'a>,
+    host: Rc<&'a [LayerStorage<HostMemSpore>]>,
+    dev: DevMemPool<'a>,
+}
+
+type DevMemPool<'a> =
+    Rc<RefCell<MutexGuard<'a, VecDeque<(LayerStorage<DevMemSpore>, EventSpore)>>>>;
+
+impl<'a> llama::ComputeStream for ComputeStream<'a> {
+    type Byte = DevByte;
+    type Storage = Cache;
+    type Buf<'m> = DevMem<'m>;
+    type Pos<'m> = DevMem<'m>;
+
+    fn malloc(&self, len: usize) -> Self::Buf<'_> {
+        self.compute.malloc::<u8>(len)
+    }
+    fn free(&self, mem: Self::Buf<'_>) {
+        mem.drop_on(self.compute);
+    }
+    fn map_pos<'b>(&self, pos: &'b [u32]) -> Self::Pos<'b>
+    where
+        Self: 'b,
+    {
+        self.compute.from_host(pos)
+    }
+    fn free_pos(&self, mem: Self::Pos<'_>) {
+        mem.drop_on(self.compute);
+    }
+    fn map_storage(&self, storage: &mut Self::Storage) -> impl DerefMut<Target = [Self::Byte]> {
+        unsafe { storage.mem.sprout(self.compute.ctx()) }
+    }
+    fn rms_norm<O, X, W>(&self, o: &mut Tensor<O>, x: &Tensor<X>, w: &Tensor<W>)
+    where
+        O: DerefMut<Target = [Self::Byte]>,
+        X: Deref<Target = [Self::Byte]>,
+        W: Deref<Target = [Self::Byte]>,
+    {
+        self.kernels.rms_norm(o, x, w);
+    }
+    fn mat_mul<O, A, B>(
+        &self,
+        o: &mut Tensor<O>,
+        beta: f32,
+        a: &Tensor<A>,
+        b: &Tensor<B>,
+        alpha: f32,
+    ) where
+        O: DerefMut<Target = [Self::Byte]>,
+        A: Deref<Target = [Self::Byte]>,
+        B: Deref<Target = [Self::Byte]>,
+    {
+        self.kernels.mat_mul(o, beta, a, b, alpha);
+    }
+    fn rotary_embedding<X>(&self, x: &mut Tensor<X>, pos: &Tensor<Self::Pos<'_>>)
+    where
+        X: DerefMut<Target = [Self::Byte]>,
+    {
+        self.kernels.rotary_embedding(x, pos);
+    }
+    fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
+    where
+        Y: DerefMut<Target = [Self::Byte]>,
+        X: Deref<Target = [Self::Byte]>,
+    {
+        self.kernels.reform(y, x);
+    }
+    fn softmax<X>(&self, x: &mut Tensor<X>)
+    where
+        X: DerefMut<Target = [Self::Byte]>,
+    {
+        self.kernels.softmax(x);
+    }
+    fn swiglu<A, B>(&self, a: &mut Tensor<A>, b: &Tensor<B>)
+    where
+        A: DerefMut<Target = [Self::Byte]>,
+        B: Deref<Target = [Self::Byte]>,
+    {
+        self.kernels.swiglu(a, b);
+    }
+    fn nh(&self) -> udim {
+        self.nh
+    }
+    fn nkvh(&self) -> udim {
+        self.nkvh
+    }
+    fn di(&self) -> udim {
+        self.di
+    }
+    fn layers(&self) -> impl Iterator<Item = impl llama::LLamaLayer<Byte = Self::Byte>> {
+        Iter::new(
+            self.host.clone(),
+            self.dev.clone(),
+            self.compute,
+            self.transfer,
+        )
+    }
+}
+
+struct Iter<'a> {
+    host: Rc<&'a [LayerStorage<HostMemSpore>]>,
+    pool: DevMemPool<'a>,
+    compute: &'a Stream<'a>,
+    transfer: &'a Stream<'a>,
+    layer: usize,
+}
+
+impl<'a> Iter<'a> {
+    pub fn new(
+        host: Rc<&'a [LayerStorage<HostMemSpore>]>,
+        pool: DevMemPool<'a>,
+        compute: &'a Stream,
+        transfer: &'a Stream,
+    ) -> Self {
+        Self {
+            host,
+            pool,
+            compute,
+            transfer,
+            layer: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = LayerLoader<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.layer >= self.host.len() {
+            return None;
+        }
+
+        let mut pool = self.pool.borrow_mut();
+        let load = if pool.len() < self.host.len() {
+            Some((self.layer + pool.len()) % self.host.len())
+        } else {
+            None
+        };
+        self.layer += 1;
+
+        let (lll, mut event) = pool.pop_front().unwrap();
+        let ctx = self.compute.ctx();
+        self.compute.wait_for(&unsafe { event.sprout(ctx) });
+        unsafe { ctx.kill(&mut event) };
+
+        Some(Self::Item {
+            host: self.host.clone(),
+            pool: self.pool.clone(),
+            load,
+            transfer: self.transfer,
+            storage: Some(lll),
+        })
+    }
+}
+
+struct LayerLoader<'a> {
+    host: Rc<&'a [LayerStorage<HostMemSpore>]>,
+    pool: DevMemPool<'a>,
+    load: Option<usize>,
+    transfer: &'a Stream<'a>,
+    storage: Option<LayerStorage<DevMemSpore>>,
+}
+
+macro_rules! access {
+    ($self:expr, $name:ident) => {
+        $self
+            .storage
+            .as_ref()
+            .unwrap()
+            .$name
+            .as_ref()
+            .map_physical(|u| unsafe { u.sprout($self.transfer.ctx()) })
+    };
+}
+impl<'a> llama::LLamaLayer for LayerLoader<'a> {
+    type Byte = DevByte;
+    type Storage<'m> = DevMem<'m> where Self: 'm;
+
+    fn att_layernorm(&self) -> Tensor<Self::Storage<'_>> {
+        access!(self, att_layernorm)
+    }
+    fn att_qkv(&self) -> Tensor<Self::Storage<'_>> {
+        access!(self, att_qkv)
+    }
+    fn att_o(&self) -> Tensor<Self::Storage<'_>> {
+        access!(self, att_o)
+    }
+    fn mlp_layernorm(&self) -> Tensor<Self::Storage<'_>> {
+        access!(self, mlp_layernorm)
+    }
+    fn mlp_gate_up(&self) -> Tensor<Self::Storage<'_>> {
+        access!(self, mlp_gate_up)
+    }
+    fn mlp_down(&self) -> Tensor<Self::Storage<'_>> {
+        access!(self, mlp_down)
+    }
+}
+
+impl Drop for LayerLoader<'_> {
+    fn drop(&mut self) {
+        let lll = self.storage.take().unwrap();
+        if let Some(load) = self.load {
+            macro_rules! exchange {
+                ($($name:ident)+) => {
+                    $(
+                        let host = self.host[load].$name.physical();
+                        let mut dev = unsafe { lll.$name.physical().sprout(self.transfer.ctx()) };
+                        self.transfer.memcpy_h2d(&mut dev, host);
+                    )+
+                };
+            }
+            exchange! {
+                att_layernorm
+                att_qkv
+                att_o
+                mlp_layernorm
+                mlp_gate_up
+                mlp_down
+            }
+        }
+        self.pool
+            .borrow_mut()
+            .push_back((lll, self.transfer.record().sporulate()));
     }
 }
 

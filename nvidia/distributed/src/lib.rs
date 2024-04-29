@@ -1,20 +1,23 @@
 #![cfg(detected_nccl)]
 
+mod distribute;
 mod parameters;
 
 #[macro_use]
 extern crate log;
 
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
+use common::{f16, upos, utok, FileLoadError};
 use common_nv::{
     cast_dt,
     cuda::{
-        memcpy_d2h, AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, StreamSpore,
+        memcpy_d2h, AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device,
+        HostMemSpore, StreamSpore,
     },
-    f16, slice, split, udim, upos, utok, DataType, FileLoadError, Kernels, LocalSplitable,
-    NvidiaKernels, NvidiaKernelsPtx, Tensor,
+    slice, split, udim, DataType, Kernels, LocalSplitable, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use itertools::izip;
+use llama::InferenceConfig;
 use nccl::CommunicatorGroup;
 use parameters::ParameterMatrix;
 use std::{
@@ -24,18 +27,20 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use transformer::{Llama2, Memory};
 
 pub use common_nv::cuda;
 
 pub struct Transformer {
-    host: Memory,
+    config: InferenceConfig,
+
     comms: CommunicatorGroup,
     streams: Vec<StreamSpore>,
     kernels: Vec<NvidiaKernels>,
-    model_norm: Tensor<DevMemSpore>,
-    lm_head: Tensor<DevMemSpore>,
+
+    embed_tokens: Tensor<HostMemSpore>,
     matrix: ParameterMatrix,
+    lm_layernorm: Tensor<DevMemSpore>,
+    lm_head: Tensor<DevMemSpore>,
 }
 
 impl Model for Transformer {
@@ -45,12 +50,12 @@ impl Model for Transformer {
     #[inline]
     fn load(model_dir: impl AsRef<Path>, meta: Self::Meta) -> Result<Self, Self::Error> {
         let time = Instant::now();
-        let host = Memory::load_safetensors(model_dir)?;
+        let host = llama::Storage::load_safetensors(model_dir)?;
         info!("load host: {:?}", time.elapsed());
 
         let block_size = meta.iter().map(|dev| dev.max_block_dims().0).min().unwrap();
         let contexts = meta.iter().map(Device::retain_primary).collect::<Vec<_>>();
-        let kernels = NvidiaKernelsPtx::new(&host, block_size);
+        let kernels = NvidiaKernelsPtx::new(&host.config, block_size);
 
         let comms = CommunicatorGroup::new(
             &meta
@@ -58,10 +63,17 @@ impl Model for Transformer {
                 .map(|dev| unsafe { dev.as_raw() })
                 .collect::<Vec<_>>(),
         );
-        let (model_norm, lm_head) = comms.contexts().next().unwrap().apply(|ctx| {
+        let matrix = ParameterMatrix::load(&host, &contexts);
+        let (embed_tokens, lm_layernorm, lm_head) = comms.contexts().next().unwrap().apply(|ctx| {
             (
-                ctx.from_host(host.model_norm().as_slice()).sporulate(),
-                ctx.from_host(host.lm_head().as_slice()).sporulate(),
+                host.embed_tokens.map_physical(|u| {
+                    let mut host = ctx.malloc_host::<u8>(u.len());
+                    host.clone_from_slice(&*u);
+                    host.sporulate()
+                }),
+                host.lm_layernorm
+                    .map_physical(|u| ctx.from_host(&u).sporulate()),
+                host.lm_head.map_physical(|u| ctx.from_host(&u).sporulate()),
             )
         });
         Ok(Self {
@@ -74,10 +86,13 @@ impl Model for Transformer {
                 .iter()
                 .map(|context| context.apply(|ctx| kernels.load(ctx)))
                 .collect(),
-            matrix: ParameterMatrix::load(&host, &contexts),
-            model_norm: host.model_norm().map_physical(|_| model_norm),
-            lm_head: host.lm_head().map_physical(|_| lm_head).transpose(&[1, 0]),
-            host,
+
+            embed_tokens,
+            matrix,
+            lm_layernorm,
+            lm_head,
+
+            config: host.config,
         })
     }
 }
@@ -87,16 +102,16 @@ impl CausalLM for Transformer {
 
     #[inline]
     fn eos_token(&self) -> utok {
-        self.host.eos_token_id()
+        self.config.eos_token
     }
 
     fn new_cache(&self) -> Tensor<Self::Storage> {
-        let dt = self.host.data_type();
-        let nlayers = self.host.num_hidden_layers() as udim;
-        let nkvh = self.host.num_key_value_heads() as udim;
-        let max_seq_len = self.host.max_position_embeddings() as udim;
-        let d = self.host.hidden_size() as udim;
-        let nh = self.host.num_attention_heads() as udim;
+        let dt = self.config.dt;
+        let nlayers = self.config.nlayers;
+        let nkvh = self.config.nkvh;
+        let max_seq_len = self.config.max_seq_len;
+        let d = self.config.d;
+        let nh = self.config.nh;
 
         let contexts = Arc::new(self.comms.contexts().collect::<Vec<_>>());
         let n = contexts.len() as udim;
@@ -155,15 +170,15 @@ impl CausalLM for Transformer {
         let nt = tokens.len() as udim;
 
         let contexts = Arc::new(self.comms.contexts().collect::<Vec<_>>());
-        let dt = self.host.data_type();
-        let d = self.host.hidden_size() as udim;
+        let dt = self.config.dt;
+        let d = self.config.d;
 
         let mut x = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, len));
         contexts[0].apply(|ctx| {
             let stream = unsafe { ctx.sprout(&self.streams[0]) };
             let kernels = self.kernels[0].on(&stream);
             let mut x = x.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[0]) });
-            kernels.gather(&mut x, &self.host.embed_tokens(), tokens);
+            kernels.gather(&mut x, &self.embed_tokens, tokens);
         });
         for (i, comm) in self.comms.call().iter().enumerate() {
             contexts[i].apply(|ctx| {
@@ -199,13 +214,13 @@ impl CausalLM for Transformer {
             })
             .collect::<Vec<_>>();
 
-        let dt = self.host.data_type();
-        let d = self.host.hidden_size() as udim;
-        let nh = self.host.num_attention_heads() as udim;
-        let nkvh = self.host.num_key_value_heads() as udim;
+        let dt = self.config.dt;
+        let d = self.config.d;
+        let nh = self.config.nh;
+        let nkvh = self.config.nkvh;
         let dh = d / nh;
         let dkv = nkvh * dh;
-        let di = self.host.intermediate_size() as udim;
+        let di = self.config.di;
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
 
@@ -242,7 +257,7 @@ impl CausalLM for Transformer {
         });
 
         let mut x = token_embedded;
-        for layer in 0..self.host.num_hidden_layers() {
+        for layer in 0..self.config.nlayers as usize {
             let (mut x1, qkv) = state!();
             let mut qkv = qkv.slice(&[slice![=>], slice![=> (d + dkv + dkv) / n]]);
 
@@ -372,7 +387,7 @@ impl CausalLM for Transformer {
                     comm.all_reduce(
                         x.physical_mut(),
                         None,
-                        cast_dt(self.host.data_type()),
+                        cast_dt(self.config.dt),
                         nccl::ReduceType::ncclSum,
                         &stream,
                     );
@@ -421,7 +436,7 @@ impl CausalLM for Transformer {
                     comm.all_reduce(
                         x.physical_mut(),
                         None,
-                        cast_dt(self.host.data_type()),
+                        cast_dt(self.config.dt),
                         nccl::ReduceType::ncclSum,
                         &stream,
                     );
@@ -447,9 +462,9 @@ impl CausalLM for Transformer {
         decoding: impl IntoIterator<Item = DecodingMeta>,
         mut hidden_state: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage> {
-        let dt = self.host.data_type();
-        let d = self.host.hidden_size();
-        let voc = self.host.vocab_size() as udim;
+        let dt = self.config.dt;
+        let d = self.config.d;
+        let voc = self.config.voc;
 
         let contexts = Arc::new(vec![self.comms.contexts().next().unwrap()]);
         contexts[0].apply(|ctx| {
@@ -459,7 +474,7 @@ impl CausalLM for Transformer {
             let stream = unsafe { self.streams[0].sprout(ctx) };
             let kernels = self.kernels[0].on(&stream);
 
-            let len = d * dt.size();
+            let len = d as usize * dt.size();
 
             let mut iter = decoding.into_iter();
             let mut begin = 0;
@@ -498,7 +513,7 @@ impl CausalLM for Transformer {
                 }
             }
 
-            if dst == begin {
+            if dst <= begin {
                 return Tensor::alloc(dt, &[0, d as _], |_| Cache {
                     contexts: contexts.clone(),
                     mem: vec![stream.malloc::<u8>(0).sporulate()],
@@ -510,7 +525,7 @@ impl CausalLM for Transformer {
                 Tensor::alloc(dt, &[x.shape()[0], voc], |len| stream.malloc::<u8>(len));
 
             let model_norm = self
-                .model_norm
+                .lm_layernorm
                 .as_ref()
                 .map_physical(|u| unsafe { u.sprout(ctx) });
             let lm_head = self
@@ -558,7 +573,8 @@ impl Drop for Transformer {
         let contexts = self.comms.contexts().collect::<Vec<_>>();
         unsafe {
             contexts[0].apply(|ctx| {
-                ctx.kill(self.model_norm.physical_mut());
+                ctx.kill(self.embed_tokens.physical_mut());
+                ctx.kill(self.lm_layernorm.physical_mut());
                 ctx.kill(self.lm_head.physical_mut());
             });
             self.matrix.kill(&contexts);

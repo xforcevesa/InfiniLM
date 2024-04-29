@@ -7,9 +7,10 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-causal-lm = { path = "../../causal-lm" }
-transformer = { path = "../../models/llama-legacy" }
+common = { path = "../../common" }
 common-nv = { path = "../common" }
+causal-lm = { path = "../../causal-lm" }
+llama = { path = "../../models/llama" }
 nccl.workspace = true
 log.workspace = true
 itertools.workspace = true

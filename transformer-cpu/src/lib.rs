@@ -3,14 +3,18 @@ mod kernel;
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{upos, utok, Blob, FileLoadError};
 use gemm::f16;
-use itertools::izip;
 use kernel::{
     fused_softmax::softmax, gather::gather, mat_mul::mat_mul, rms_norm::rms_norm,
     rotary_embedding::rotary_embedding, swiglu::swiglu,
 };
-use llama::Storage;
-use std::{iter::repeat, path::Path, slice::from_raw_parts};
-use tensor::{reslice, slice, split, udim, LocalSplitable, Tensor};
+use llama::{ComputeStream, LayerStorage, Storage, Weight};
+use std::{
+    iter::repeat,
+    ops::{Deref, DerefMut},
+    path::Path,
+    slice::from_raw_parts,
+};
+use tensor::{reslice, slice, udim, Tensor};
 
 pub struct Transformer(Storage);
 
@@ -24,6 +28,130 @@ impl Model for Transformer {
     }
 }
 
+impl ComputeStream for Transformer {
+    type Byte = u8;
+    type Storage = Blob;
+    type Buf<'m> = Blob;
+    type Pos<'m> = &'m [u8];
+
+    #[inline]
+    fn malloc(&self, len: usize) -> Self::Buf<'_> {
+        Blob::new(len)
+    }
+    #[inline]
+    fn map_pos<'p>(&self, pos: &'p [u32]) -> Self::Pos<'p>
+    where
+        Self: 'p,
+    {
+        reslice(pos)
+    }
+    fn map_storage(&self, storage: &mut Self::Storage) -> impl DerefMut<Target = [Self::Byte]> {
+        &mut **storage
+    }
+    #[inline]
+    fn rms_norm<O, X, W>(&self, o: &mut Tensor<O>, x: &Tensor<X>, w: &Tensor<W>)
+    where
+        O: DerefMut<Target = [Self::Byte]>,
+        X: Deref<Target = [Self::Byte]>,
+        W: Deref<Target = [Self::Byte]>,
+    {
+        rms_norm(o, x, w, self.0.config.epsilon);
+    }
+    #[inline]
+    fn mat_mul<O, A, B>(
+        &self,
+        o: &mut Tensor<O>,
+        beta: f32,
+        a: &Tensor<A>,
+        b: &Tensor<B>,
+        alpha: f32,
+    ) where
+        O: DerefMut<Target = [Self::Byte]>,
+        A: Deref<Target = [Self::Byte]>,
+        B: Deref<Target = [Self::Byte]>,
+    {
+        mat_mul(o, beta, a, b, alpha);
+    }
+    #[inline]
+    fn rotary_embedding<X>(&self, x: &mut Tensor<X>, pos: &Tensor<Self::Pos<'_>>)
+    where
+        X: DerefMut<Target = [Self::Byte]>,
+    {
+        rotary_embedding(x, pos, self.0.config.theta);
+    }
+    #[inline]
+    fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
+    where
+        Y: DerefMut<Target = [Self::Byte]>,
+        X: Deref<Target = [Self::Byte]>,
+    {
+        x.reform_to(y);
+    }
+    #[inline]
+    fn softmax<X>(&self, x: &mut Tensor<X>)
+    where
+        X: DerefMut<Target = [Self::Byte]>,
+    {
+        softmax(x);
+    }
+    #[inline]
+    fn swiglu<A, B>(&self, a: &mut Tensor<A>, b: &Tensor<B>)
+    where
+        A: DerefMut<Target = [Self::Byte]>,
+        B: Deref<Target = [Self::Byte]>,
+    {
+        swiglu(a, b);
+    }
+    #[inline]
+    fn nh(&self) -> udim {
+        self.0.config.nh
+    }
+    #[inline]
+    fn nkvh(&self) -> udim {
+        self.0.config.nkvh
+    }
+    #[inline]
+    fn di(&self) -> udim {
+        self.0.config.di
+    }
+    #[inline]
+    fn layers(&self) -> impl Iterator<Item = impl llama::LLamaLayer<Byte = Self::Byte>> {
+        self.0.layers.iter().map(|layer| LlamaLayer(&layer))
+    }
+}
+
+struct LlamaLayer<'a>(&'a LayerStorage<Weight>);
+
+impl<'a> llama::LLamaLayer for LlamaLayer<'a> {
+    type Byte = u8;
+    type Storage<'m> = Weight where Self: 'm;
+
+    #[inline]
+    fn att_layernorm(&self) -> Tensor<Self::Storage<'_>> {
+        self.0.att_layernorm.clone()
+    }
+    #[inline]
+    fn att_qkv(&self) -> Tensor<Self::Storage<'_>> {
+        self.0.att_qkv.clone()
+    }
+    #[inline]
+    fn att_o(&self) -> Tensor<Self::Storage<'_>> {
+        self.0.att_o.clone()
+    }
+    #[inline]
+    fn mlp_layernorm(&self) -> Tensor<Self::Storage<'_>> {
+        self.0.mlp_layernorm.clone()
+    }
+    #[inline]
+    fn mlp_gate_up(&self) -> Tensor<Self::Storage<'_>> {
+        self.0.mlp_gate_up.clone()
+    }
+    #[inline]
+    fn mlp_down(&self) -> Tensor<Self::Storage<'_>> {
+        self.0.mlp_down.clone()
+    }
+}
+
 impl CausalLM for Transformer {
     type Storage = Blob;
 
@@ -31,37 +159,18 @@ impl CausalLM for Transformer {
     fn eos_token(&self) -> utok {
         self.0.config.eos_token
     }
-
+    #[inline]
     fn new_cache(&self) -> Tensor<Self::Storage> {
-        let dt = self.0.config.dt;
-        let nlayers = self.0.config.nlayers;
-        let nkvh = self.0.config.nkvh;
-        let max_seq_len = self.0.config.max_seq_len;
-        let d = self.0.config.d;
-        let nh = self.0.config.nh;
-        Tensor::alloc(dt, &[nlayers, 2, nkvh, max_seq_len, d / nh], Blob::new)
+        self.0.config.new_cache(Blob::new)
     }
-
+    #[inline]
     fn duplicate_cache(&self, cache: &Tensor<Self::Storage>, pos: upos) -> Tensor<Self::Storage> {
-        let &[_nlayers, 2, _nkvh, max_seq_len, _dh] = cache.shape() else {
-            panic!()
-        };
-        assert!(pos <= max_seq_len);
-        let slice = [
-            slice![=>],
-            slice![=>],
-            slice![=>],
-            slice![=>pos],
-            slice![=>],
-        ];
-
-        let mut ans = Tensor::alloc(cache.data_type(), cache.shape(), Blob::new);
-        cache
-            .as_ref()
-            .slice(&slice)
-            .map_physical(|u| &**u)
-            .reform_to(&mut ans.as_mut().slice(&slice).map_physical(|u| &mut **u));
-        ans
+        self.0
+            .config
+            .duplicate_cache(cache, pos, Blob::new, |dst, src| {
+                src.map_physical(|u| &**u)
+                    .reform_to(&mut dst.map_physical(|u| &mut **u))
+            })
     }
 
     fn token_embed(&self, queries: impl IntoIterator<Item = utok>) -> Tensor<Self::Storage> {
@@ -80,119 +189,8 @@ impl CausalLM for Transformer {
         &self,
         queries: impl IntoIterator<Item = QueryContext<'a, Self::Storage>>,
         token_embedded: Tensor<Self::Storage>,
-    ) -> Tensor<Self::Storage>
-    where
-        Self: 'a,
-    {
-        let mut queries = queries.into_iter().collect::<Vec<_>>();
-        let mut nt = 0;
-        let mut max_seq_len = 0;
-        let mut max_att_len = 0;
-        let seq_len = queries
-            .iter()
-            .map(|q| {
-                let seq = q.seq_len();
-                let att = q.att_len();
-                nt += seq;
-                max_seq_len = max_seq_len.max(seq);
-                max_att_len = max_att_len.max(att);
-                seq
-            })
-            .collect::<Vec<_>>();
-
-        let dt = self.0.config.dt;
-        let d = self.0.config.d;
-        let nh = self.0.config.nh;
-        let nkvh = self.0.config.nkvh;
-        let dh = d / nh;
-        let dkv = nkvh * dh;
-        let di = self.0.config.di;
-        let head_group = nh / nkvh;
-        let head_div = (dh as f32).sqrt().recip();
-
-        let reusing = (d + dkv + dkv).max(di + di);
-        let mut state_buf = Tensor::alloc(dt, &[nt, d + reusing], Blob::new);
-        macro_rules! state {
-            () => {
-                split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing)
-            };
-        }
-
-        let mut q_buf = Blob::new((nh * max_seq_len * dh) as usize * dt.size());
-        let mut att_buf = Blob::new((nh * max_seq_len * max_att_len) as usize * dt.size());
-        let pos = causal_lm::pos(&queries, nt);
-        let pos = pos.as_ref().map_physical(|u| reslice(u));
-
-        let mut x = token_embedded;
-        for (layer, params) in self.0.layers.iter().enumerate() {
-            let (mut x1, qkv) = state!();
-            let mut qkv = qkv.slice(&[slice![=>], slice![=> d + dkv + dkv]]);
-
-            rms_norm(&mut x1, &x, &params.att_layernorm, self.0.config.epsilon);
-            mat_mul(&mut qkv, 0., &x1, &params.att_qkv, 1.);
-
-            let (q, k, v) = split!(qkv; [1]: d, dkv, dkv);
-            let mut q = q.reshape(&[nt, nh, dh]);
-            let mut k = k.reshape(&[nt, nkvh, dh]);
-            let v = v.reshape(&[nt, nkvh, dh]);
-            let o = x1.reshape(&[nt, nh, dh]);
-
-            rotary_embedding(&mut q, &pos, self.0.config.theta);
-            rotary_embedding(&mut k, &pos, self.0.config.theta);
-
-            let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
-            let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
-            let v = v.transpose(&[1, 0, 2]).split(1, &seq_len);
-            let o = o.transpose(&[1, 0, 2]).split(1, &seq_len);
-
-            for (query, q, k, v, mut o) in izip!(&mut queries, q, k, v, o) {
-                let pos = query.pos();
-                let seq_len = query.seq_len();
-                let att_len = query.att_len();
-                let Some((mut k_cache, mut v_cache)) = query.cache(layer as _) else {
-                    continue;
-                };
-
-                let slice_cat = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
-                let slice_att = &[slice![=>], slice![      => att_len], slice![=>]];
-                let shape_q0 = &[nkvh * head_group, seq_len, dh];
-                let shape_q1 = &[nkvh, head_group * seq_len, dh];
-                let shape_att0 = &[nkvh, head_group * seq_len, att_len];
-                let shape_att1 = &[nkvh * head_group, seq_len, att_len];
-
-                let mut q_att = Tensor::new(dt, shape_q0, &mut q_buf[..]);
-                let mut k_cat = k_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                let mut v_cat = v_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                q.reform_to(&mut q_att);
-                k.reform_to(&mut k_cat);
-                v.reform_to(&mut v_cat);
-
-                let q_att = q_att.reshape(shape_q1);
-                let k_att = k_cache.slice(slice_att).transpose(&[0, 2, 1]);
-                let v_att = v_cache.slice(slice_att);
-
-                let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
-                mat_mul(&mut att, 0., &q_att, &k_att, head_div);
-                let mut att = att.reshape(shape_att1);
-                softmax(&mut att);
-                let mut x2 = q_att;
-                mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
-
-                x2.reshape(shape_q0).reform_to(&mut o);
-            }
-
-            let (mut x1, gate_up) = state!();
-            let mut gate_up = gate_up.slice(&[slice![=>], slice![=> di + di]]);
-
-            mat_mul(&mut x, 1., &x1, &params.att_o, 1.);
-            rms_norm(&mut x1, &x, &params.mlp_layernorm, self.0.config.epsilon);
-            mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up, 1.);
-            let (mut gate, up) = split!(gate_up; [1]: di, di);
-            swiglu(&mut gate, &up);
-            mat_mul(&mut x, 1., &gate, &params.mlp_down, 1.);
-        }
-
-        x
+    ) -> Tensor<Self::Storage> {
+        <Self as ComputeStream>::forward(self, queries, token_embedded)
     }
 
     fn decode(
@@ -241,7 +239,7 @@ impl CausalLM for Transformer {
             }
         }
 
-        if dst == begin {
+        if dst <= begin {
             return Tensor::alloc(dt, &[0, d as _], Blob::new);
         }
 

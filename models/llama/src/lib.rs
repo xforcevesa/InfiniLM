@@ -1,28 +1,51 @@
 mod cast;
+mod compute;
 mod json;
 mod load;
 mod save;
 
-use common::{safe_tensors::SharedTensor, utok, Blob};
+use common::{safe_tensors::SharedTensor, upos, utok, Blob};
 use std::{ops::Deref, sync::Arc};
-use tensor::{udim, DataType, Tensor};
+use tensor::{slice, udim, DataType, Tensor};
+
+pub use compute::{ComputeStream, LLamaLayer};
 
 pub struct Storage {
     pub config: InferenceConfig,
 
     pub embed_tokens: Tensor<Weight>,
-    pub layers: Vec<LayerStorage>,
+    pub layers: Vec<LayerStorage<Weight>>,
     pub lm_layernorm: Tensor<Weight>,
     pub lm_head: Tensor<Weight>,
 }
 
-pub struct LayerStorage {
-    pub att_layernorm: Tensor<Weight>,
-    pub att_qkv: Tensor<Weight>,
-    pub att_o: Tensor<Weight>,
-    pub mlp_layernorm: Tensor<Weight>,
-    pub mlp_gate_up: Tensor<Weight>,
-    pub mlp_down: Tensor<Weight>,
+pub struct LayerStorage<T> {
+    pub att_layernorm: Tensor<T>,
+    pub att_qkv: Tensor<T>,
+    pub att_o: Tensor<T>,
+    pub mlp_layernorm: Tensor<T>,
+    pub mlp_gate_up: Tensor<T>,
+    pub mlp_down: Tensor<T>,
+}
+
+impl<T> LayerStorage<T> {
+    pub fn map<U>(&self, mut f: impl FnMut(&T) -> U) -> LayerStorage<U> {
+        macro_rules! map {
+            ($($ident:ident)+) => {
+                LayerStorage {$(
+                    $ident: self.$ident.as_ref().map_physical(&mut f),
+                )+}
+            };
+        }
+        map! {
+            att_layernorm
+            att_qkv
+            att_o
+            mlp_layernorm
+            mlp_gate_up
+            mlp_down
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +63,46 @@ pub struct InferenceConfig {
     pub eos_token: utok,
     pub epsilon: f32,
     pub theta: f32,
+}
+
+impl InferenceConfig {
+    pub fn new_cache<S>(&self, f: impl FnOnce(usize) -> S) -> Tensor<S> {
+        Tensor::alloc(
+            self.dt,
+            &[
+                self.nlayers,
+                2,
+                self.nkvh,
+                self.max_seq_len,
+                self.d / self.nh,
+            ],
+            f,
+        )
+    }
+
+    pub fn duplicate_cache<S>(
+        &self,
+        cache: &Tensor<S>,
+        pos: upos,
+        malloc: impl FnOnce(usize) -> S,
+        reform: impl FnOnce(Tensor<&mut S>, Tensor<&S>),
+    ) -> Tensor<S> {
+        let &[_nlayers, 2, _nkvh, max_seq_len, _dh] = cache.shape() else {
+            panic!()
+        };
+        assert!(pos <= max_seq_len);
+        let slice = [
+            slice![=>],
+            slice![=>],
+            slice![=>],
+            slice![=>pos],
+            slice![=>],
+        ];
+
+        let mut ans = Tensor::alloc(cache.data_type(), cache.shape(), malloc);
+        reform(ans.as_mut().slice(&slice), cache.as_ref().slice(&slice));
+        ans
+    }
 }
 
 #[derive(Clone)]

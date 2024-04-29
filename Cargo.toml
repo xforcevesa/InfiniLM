@@ -6,7 +6,6 @@ members = [
     "causal-lm",
     "kernel-lib",
     "models/llama",
-    "models/llama-legacy",
     "transformer-cpu",
     "nvidia/common",
     "nvidia/transformer",

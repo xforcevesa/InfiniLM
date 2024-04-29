@@ -9,8 +9,8 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../../common" }
 tensor = { path = "../../tensor" }
+llama = { path = "../../models/llama" }
 kernel-lib = { path = "../../kernel-lib" }
-transformer = { path = "../../models/llama-legacy" }
 cuda.workspace = true
 cublas.workspace = true
 log.workspace = true
