@@ -1,6 +1,5 @@
 ﻿use std::{fs, path::PathBuf, time::Instant};
 use tensor::DataType;
-use transformer::{save, Memory};
 
 #[derive(Args, Default)]
 pub(crate) struct CastArgs {
@@ -26,7 +25,7 @@ impl CastArgs {
         let model_dir = PathBuf::from(self.model);
 
         let time = Instant::now();
-        let model = Memory::load_safetensors(&model_dir).unwrap();
+        let model = llama::Storage::load_safetensors(&model_dir).unwrap();
         println!("load model ... {:?}", time.elapsed());
 
         let target = self.target.map(PathBuf::from).unwrap_or_else(|| {
@@ -38,11 +37,11 @@ impl CastArgs {
         fs::create_dir_all(&target).unwrap();
 
         let time = Instant::now();
-        let model = Memory::cast(&model, ty);
+        let model = model.cast(ty);
         println!("cast data type ... {:?}", time.elapsed());
 
         let time = Instant::now();
-        save(&model, &target).unwrap();
+        model.save(&target).unwrap();
         println!("save model ... {:?}", time.elapsed());
 
         let copy_file = |name: &str| {

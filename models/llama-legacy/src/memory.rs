@@ -172,23 +172,3 @@ impl Llama2 for Memory {
         self.lm_head.clone()
     }
 }
-
-#[test]
-fn test_load() {
-    use std::time::Instant;
-
-    let Some(model_dir) = common::test_model::find() else {
-        return;
-    };
-    println!("model_dir: {}", model_dir.display());
-
-    let t0 = Instant::now();
-    let model = Memory::load_safetensors(model_dir).unwrap();
-    let t1 = Instant::now();
-    println!("mmap {:?}", t1 - t0);
-
-    let t0 = Instant::now();
-    let _inside_memory = Memory::cast(&model, DataType::F32);
-    let t1 = Instant::now();
-    println!("cast {:?}", t1 - t0);
-}

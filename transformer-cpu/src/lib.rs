@@ -1,84 +1,18 @@
 mod kernel;
 
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
-use common::{safe_tensors::SafeTensors, upos, utok, Blob, FileLoadError};
+use common::{upos, utok, Blob, FileLoadError};
 use gemm::f16;
 use itertools::izip;
 use kernel::{
     fused_softmax::softmax, gather::gather, mat_mul::mat_mul, rms_norm::rms_norm,
     rotary_embedding::rotary_embedding, swiglu::swiglu,
 };
-use llama::ConfigJson;
+use llama::Storage;
 use std::{iter::repeat, path::Path, slice::from_raw_parts};
-use tensor::{reslice, slice, split, udim, DataType, LocalSplitable, Tensor};
+use tensor::{reslice, slice, split, udim, LocalSplitable, Tensor};
 
-pub struct Transformer {
-    eos_token: utok,
-    data_type: DataType,
-    nlayers: udim,
-    nh: udim,
-    nkvh: udim,
-    max_seq_len: udim,
-    d: udim,
-    di: udim,
-    epsilon: f32,
-    theta: f32,
-    safe_tensors: SafeTensors,
-}
-
-impl Transformer {
-    pub fn embed_tokens(&self) -> Tensor<&[u8]> {
-        convert(&self.safe_tensors, "model.embed_tokens.weight")
-    }
-
-    pub fn input_layernorm(&self, layer: udim) -> Tensor<&[u8]> {
-        convert(&self.safe_tensors, layer_name(layer, "input_layernorm"))
-    }
-
-    pub fn w_qkv(&self, layer: udim) -> Tensor<&[u8]> {
-        convert(&self.safe_tensors, layer_name(layer, "self_attn.qkv_proj"))
-    }
-
-    pub fn w_o(&self, layer: udim) -> Tensor<&[u8]> {
-        convert(&self.safe_tensors, layer_name(layer, "self_attn.o_proj"))
-    }
-
-    pub fn post_attention_layernorm(&self, layer: udim) -> Tensor<&[u8]> {
-        convert(
-            &self.safe_tensors,
-            layer_name(layer, "post_attention_layernorm"),
-        )
-    }
-
-    pub fn mlp_gate_up(&self, layer: udim) -> Tensor<&[u8]> {
-        convert(&self.safe_tensors, layer_name(layer, "mlp.gate_up_proj"))
-    }
-
-    pub fn mlp_down(&self, layer: udim) -> Tensor<&[u8]> {
-        convert(&self.safe_tensors, layer_name(layer, "mlp.down_proj"))
-    }
-
-    pub fn model_norm(&self) -> Tensor<&[u8]> {
-        convert(&self.safe_tensors, "model.norm.weight")
-    }
-
-    pub fn lm_head(&self) -> Tensor<&[u8]> {
-        convert(&self.safe_tensors, "lm_head.weight")
-    }
-}
-
-fn layer_name(layer: udim, name: &str) -> String {
-    format!("model.layers.{layer}.{name}.weight")
-}
-
-fn convert<'a>(tensors: &'a SafeTensors, name: impl AsRef<str>) -> Tensor<&'a [u8]> {
-    let tensor = tensors
-        .get(name.as_ref())
-        .expect(&format!("Tensor {} not found", name.as_ref()));
-    let data_type = llama::convert(tensor.dtype);
-    let shape = tensor.shape.iter().map(|&x| x as udim).collect::<Vec<_>>();
-    Tensor::new(data_type, &shape, tensor.data)
-}
+pub struct Transformer(Storage);
 
 impl Model for Transformer {
     type Meta = ();
@@ -86,20 +20,7 @@ impl Model for Transformer {
 
     #[inline]
     fn load(model_dir: impl AsRef<Path>, _meta: Self::Meta) -> Result<Self, Self::Error> {
-        let config = ConfigJson::load(&model_dir)?;
-        Ok(Self {
-            eos_token: config.eos_token_id,
-            data_type: config.torch_dtype,
-            nlayers: config.num_hidden_layers as _,
-            nh: config.num_attention_heads as _,
-            nkvh: config.num_key_value_heads as _,
-            max_seq_len: config.max_position_embeddings as _,
-            d: config.hidden_size as _,
-            di: config.intermediate_size as _,
-            epsilon: config.rms_norm_eps,
-            theta: config.rope_theta,
-            safe_tensors: SafeTensors::load_from_dir(model_dir)?,
-        })
+        Ok(Self(llama::Storage::load_safetensors(model_dir)?))
     }
 }
 
@@ -108,16 +29,16 @@ impl CausalLM for Transformer {
 
     #[inline]
     fn eos_token(&self) -> utok {
-        self.eos_token
+        self.0.config.eos_token
     }
 
     fn new_cache(&self) -> Tensor<Self::Storage> {
-        let dt = self.data_type;
-        let nlayers = self.nlayers;
-        let nkvh = self.nkvh;
-        let max_seq_len = self.max_seq_len;
-        let d = self.d;
-        let nh = self.nh;
+        let dt = self.0.config.dt;
+        let nlayers = self.0.config.nlayers;
+        let nkvh = self.0.config.nkvh;
+        let max_seq_len = self.0.config.max_seq_len;
+        let d = self.0.config.d;
+        let nh = self.0.config.nh;
         Tensor::alloc(dt, &[nlayers, 2, nkvh, max_seq_len, d / nh], Blob::new)
     }
 
@@ -144,14 +65,14 @@ impl CausalLM for Transformer {
     }
 
     fn token_embed(&self, queries: impl IntoIterator<Item = utok>) -> Tensor<Self::Storage> {
-        let dt = self.data_type;
-        let d = self.d;
+        let dt = self.0.config.dt;
+        let d = self.0.config.d;
 
         let tokens = queries.into_iter().collect::<Vec<_>>();
         let nt = tokens.len() as udim;
 
         let mut x = Tensor::alloc(dt, &[nt, d], Blob::new);
-        gather(&mut x, &self.embed_tokens(), tokens);
+        gather(&mut x, &self.0.embed_tokens, tokens);
         x
     }
 
@@ -179,13 +100,13 @@ impl CausalLM for Transformer {
             })
             .collect::<Vec<_>>();
 
-        let dt = self.data_type;
-        let d = self.d;
-        let nh = self.nh;
-        let nkvh = self.nkvh;
+        let dt = self.0.config.dt;
+        let d = self.0.config.d;
+        let nh = self.0.config.nh;
+        let nkvh = self.0.config.nkvh;
         let dh = d / nh;
         let dkv = nkvh * dh;
-        let di = self.di;
+        let di = self.0.config.di;
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
 
@@ -203,15 +124,12 @@ impl CausalLM for Transformer {
         let pos = pos.as_ref().map_physical(|u| reslice(u));
 
         let mut x = token_embedded;
-        for layer in 0..self.nlayers {
+        for (layer, params) in self.0.layers.iter().enumerate() {
             let (mut x1, qkv) = state!();
             let mut qkv = qkv.slice(&[slice![=>], slice![=> d + dkv + dkv]]);
 
-            let input_layernorm = self.input_layernorm(layer);
-            rms_norm(&mut x1, &x, &input_layernorm, self.epsilon);
-
-            let w_qkv = self.w_qkv(layer).transpose(&[1, 0]);
-            mat_mul(&mut qkv, 0., &x1, &w_qkv, 1.);
+            rms_norm(&mut x1, &x, &params.att_layernorm, self.0.config.epsilon);
+            mat_mul(&mut qkv, 0., &x1, &params.att_qkv, 1.);
 
             let (q, k, v) = split!(qkv; [1]: d, dkv, dkv);
             let mut q = q.reshape(&[nt, nh, dh]);
@@ -219,8 +137,8 @@ impl CausalLM for Transformer {
             let v = v.reshape(&[nt, nkvh, dh]);
             let o = x1.reshape(&[nt, nh, dh]);
 
-            rotary_embedding(&mut q, &pos, self.theta);
-            rotary_embedding(&mut k, &pos, self.theta);
+            rotary_embedding(&mut q, &pos, self.0.config.theta);
+            rotary_embedding(&mut k, &pos, self.0.config.theta);
 
             let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
             let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
@@ -266,20 +184,12 @@ impl CausalLM for Transformer {
             let (mut x1, gate_up) = state!();
             let mut gate_up = gate_up.slice(&[slice![=>], slice![=> di + di]]);
 
-            let wo = self.w_o(layer).transpose(&[1, 0]);
-            mat_mul(&mut x, 1., &x1, &wo, 1.);
-
-            let post_layernorm = self.post_attention_layernorm(layer);
-            rms_norm(&mut x1, &x, &post_layernorm, self.epsilon);
-
-            let w_gate_up = self.mlp_gate_up(layer).transpose(&[1, 0]);
-            mat_mul(&mut gate_up, 0., &x1, &w_gate_up, 1.);
-
+            mat_mul(&mut x, 1., &x1, &params.att_o, 1.);
+            rms_norm(&mut x1, &x, &params.mlp_layernorm, self.0.config.epsilon);
+            mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up, 1.);
             let (mut gate, up) = split!(gate_up; [1]: di, di);
             swiglu(&mut gate, &up);
-
-            let mlp_down = self.mlp_down(layer).transpose(&[1, 0]);
-            mat_mul(&mut x, 1., &gate, &mlp_down, 1.);
+            mat_mul(&mut x, 1., &gate, &params.mlp_down, 1.);
         }
 
         x
@@ -290,8 +200,8 @@ impl CausalLM for Transformer {
         decoding: impl IntoIterator<Item = DecodingMeta>,
         mut hidden_state: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage> {
-        let dt = self.data_type;
-        let d = self.d;
+        let dt = self.0.config.dt;
+        let d = self.0.config.d;
 
         let buf = hidden_state.as_mut_slice();
         let len = d as usize * dt.size();
@@ -335,7 +245,7 @@ impl CausalLM for Transformer {
             return Tensor::alloc(dt, &[0, d as _], Blob::new);
         }
 
-        let lm_head = self.lm_head().transpose(&[1, 0]);
+        let lm_head = &self.0.lm_head;
         let mut x = hidden_state.slice(&[slice![begin => dst], slice![=>]]);
         let mut logits = Tensor::alloc(dt, &[x.shape()[0], lm_head.shape()[1]], Blob::new);
 
@@ -343,8 +253,8 @@ impl CausalLM for Transformer {
         let x_ = x
             .as_ref()
             .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-        rms_norm(&mut x, &x_, &self.model_norm(), self.epsilon);
-        mat_mul(&mut logits, 0., &x, &lm_head, 1.);
+        rms_norm(&mut x, &x_, &self.0.lm_layernorm, self.0.config.epsilon);
+        mat_mul(&mut logits, 0., &x, lm_head, 1.);
 
         logits
     }

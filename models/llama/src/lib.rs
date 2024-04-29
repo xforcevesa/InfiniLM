@@ -1,58 +1,74 @@
-use common::{safe_tensors::Dtype, utok, FileLoadError};
-use std::{fs, path::Path};
-use tensor::DataType;
+mod cast;
+mod json;
+mod load;
+mod save;
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct ConfigJson {
-    pub bos_token_id: utok,
-    pub eos_token_id: utok,
-    pub hidden_size: usize,
-    pub intermediate_size: usize,
-    pub max_position_embeddings: usize,
-    pub num_attention_heads: usize,
-    pub num_hidden_layers: usize,
-    pub num_key_value_heads: usize,
-    pub vocab_size: usize,
-    #[serde(default = "default_rms_norm_eps")]
-    pub rms_norm_eps: f32,
-    #[serde(default = "default_rope_theta")]
-    pub rope_theta: f32,
-    pub torch_dtype: DataType,
+use common::{safe_tensors::SharedTensor, utok, Blob};
+use std::{ops::Deref, sync::Arc};
+use tensor::{udim, DataType, Tensor};
+
+pub struct Storage {
+    pub config: InferenceConfig,
+
+    pub embed_tokens: Tensor<Weight>,
+    pub layers: Vec<LayerStorage>,
+    pub lm_layernorm: Tensor<Weight>,
+    pub lm_head: Tensor<Weight>,
 }
 
-impl ConfigJson {
-    pub fn load(model_dir: impl AsRef<Path>) -> Result<Self, FileLoadError> {
-        let path = model_dir.as_ref().join("config.json");
-        let content = fs::read_to_string(path).map_err(FileLoadError::Io)?;
-        serde_json::from_str(&content).map_err(FileLoadError::Json)
+pub struct LayerStorage {
+    pub att_layernorm: Tensor<Weight>,
+    pub att_qkv: Tensor<Weight>,
+    pub att_o: Tensor<Weight>,
+    pub mlp_layernorm: Tensor<Weight>,
+    pub mlp_gate_up: Tensor<Weight>,
+    pub mlp_down: Tensor<Weight>,
+}
+
+#[derive(Clone, Debug)]
+pub struct InferenceConfig {
+    pub dt: DataType,
+    pub voc: udim,
+    pub nlayers: udim,
+    pub nh: udim,
+    pub nkvh: udim,
+    pub d: udim,
+    pub dkv: udim,
+    pub di: udim,
+    pub max_seq_len: udim,
+    pub bos_token: utok,
+    pub eos_token: utok,
+    pub epsilon: f32,
+    pub theta: f32,
+}
+
+#[derive(Clone)]
+pub enum Weight {
+    SafeTensor(SharedTensor),
+    Blob(Arc<Blob>),
+}
+
+impl From<SharedTensor> for Weight {
+    #[inline]
+    fn from(tensor: SharedTensor) -> Self {
+        Self::SafeTensor(tensor)
     }
 }
 
-#[inline(always)]
-const fn default_rms_norm_eps() -> f32 {
-    1e-5
+impl From<Blob> for Weight {
+    #[inline]
+    fn from(blob: Blob) -> Self {
+        Self::Blob(Arc::new(blob))
+    }
 }
 
-#[inline(always)]
-const fn default_rope_theta() -> f32 {
-    1e4
-}
-
-pub fn convert(dtype: Dtype) -> DataType {
-    match dtype {
-        Dtype::BOOL => DataType::Bool,
-        Dtype::I8 => DataType::I8,
-        Dtype::I16 => DataType::I16,
-        Dtype::I32 => DataType::I32,
-        Dtype::I64 => DataType::I64,
-        Dtype::U8 => DataType::U8,
-        Dtype::U16 => DataType::U16,
-        Dtype::U32 => DataType::U32,
-        Dtype::U64 => DataType::U64,
-        Dtype::F16 => DataType::F16,
-        Dtype::BF16 => DataType::BF16,
-        Dtype::F32 => DataType::F32,
-        Dtype::F64 => DataType::F64,
-        _ => unreachable!(),
+impl Deref for Weight {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::SafeTensor(tensor) => tensor,
+            Self::Blob(blob) => blob,
+        }
     }
 }
