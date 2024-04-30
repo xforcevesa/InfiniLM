@@ -92,11 +92,14 @@ pub struct NvidiaKernels {
 }
 
 impl NvidiaKernelsPtx {
-    pub fn load(&self, ctx: &ContextGuard) -> NvidiaKernels {
+    pub fn load(&self, stream: &Stream) -> NvidiaKernels {
+        let ctx = stream.ctx();
+        let cublas = Cublas::new(ctx);
+        cublas.set_stream(stream);
         NvidiaKernels {
             epsilon: self.epsilon,
             theta: self.theta,
-            cublas: Cublas::new(ctx).sporulate(),
+            cublas: cublas.sporulate(),
             rms_norm: self.rms_norm.clone().load(ctx),
             rotary_embedding: self.rotary_embedding.clone().load(ctx),
             reform: self.reform.clone().load(ctx),
@@ -172,7 +175,6 @@ impl Kernels for KernelRuntime<'_> {
         V: Deref<Target = Self::Storage>,
     {
         let cublas = unsafe { self.kernels.cublas.sprout(self.stream.ctx()) };
-        cublas.set_stream(self.stream);
         mat_mul::mat_mul(&cublas, c, beta, a, b, alpha)
     }
 

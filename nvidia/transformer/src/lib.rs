@@ -79,7 +79,7 @@ impl Model for Transformer {
             Ok(Self {
                 context: context.clone(),
 
-                kernels: NvidiaKernelsPtx::new(&host.config, block_size).load(ctx),
+                kernels: NvidiaKernelsPtx::new(&host.config, block_size).load(&compute),
                 embed_tokens: host.embed_tokens.as_ref().map_physical(page_lock),
                 layers,
                 lm_layernorm: host

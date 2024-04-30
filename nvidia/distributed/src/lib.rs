@@ -76,16 +76,19 @@ impl Model for Transformer {
                 host.lm_head.map_physical(|u| ctx.from_host(&u).sporulate()),
             )
         });
+        let streams = contexts
+            .iter()
+            .map(|context| context.apply(|ctx| ctx.stream().sporulate()))
+            .collect::<Vec<_>>();
+        let kernels = zip(&contexts, &streams)
+            .map(|(context, stream)| {
+                context.apply(|ctx| kernels.load(&unsafe { stream.sprout(ctx) }))
+            })
+            .collect();
         Ok(Self {
             comms,
-            streams: contexts
-                .iter()
-                .map(|context| context.apply(|ctx| ctx.stream().sporulate()))
-                .collect(),
-            kernels: contexts
-                .iter()
-                .map(|context| context.apply(|ctx| kernels.load(ctx)))
-                .collect(),
+            streams,
+            kernels,
 
             embed_tokens,
             matrix,
