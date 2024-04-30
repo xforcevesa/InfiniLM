@@ -45,6 +45,9 @@ where
             session_id,
             inputs,
             dialog_pos,
+            temperature,
+            top_k,
+            top_p,
         }: Infer,
     ) -> Result<Receiver<String>, Error> {
         if inputs.is_empty() {
@@ -71,6 +74,16 @@ where
             }
             Entry::Vacant(_) => Err(Error::SessionNotFound),
         }?;
+        if let Some(temperature) = temperature {
+            session.sample.temperature = temperature;
+        }
+        if let Some(top_k) = top_k {
+            session.sample.top_k = top_k;
+        }
+        if let Some(top_p) = top_p {
+            session.sample.top_p = top_p;
+        }
+
         let (mut sender, receiver) = mpsc::channel(4096);
 
         let self_ = self.clone();

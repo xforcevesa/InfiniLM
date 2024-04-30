@@ -11,7 +11,10 @@
                 "role": "String",
                 "content": "String"
             }],
-            "dialog_pos": "int"
+            "dialog_pos": "int",
+            "temperature": "float?",
+            "top-k": "int?",
+            "top-p": "float?",
         },
         "/fork": {
             "session_id": "String",
