@@ -32,10 +32,12 @@ pub struct Transformer {
     transfer: StreamSpore,
     compute: StreamSpore,
     kernels: NvidiaKernels,
+
     embed_tokens: Tensor<HostMemSpore>,
     layers: Vec<LayerStorage<HostMemSpore>>,
     lm_layernorm: Tensor<DevMemSpore>,
     lm_head: Tensor<DevMemSpore>,
+
     pool: Mutex<VecDeque<(LayerStorage<DevMemSpore>, EventSpore)>>,
 }
 
@@ -289,8 +291,29 @@ impl Drop for Transformer {
     #[inline]
     fn drop(&mut self) {
         self.context.apply(|ctx| unsafe {
-            self.transfer.kill(ctx);
-            self.compute.kill(ctx);
+            ctx.kill(&mut self.transfer);
+            ctx.kill(&mut self.compute);
+            ctx.kill(self.embed_tokens.physical_mut());
+            ctx.kill(self.lm_layernorm.physical_mut());
+            ctx.kill(self.lm_head.physical_mut());
+            for layer in self.layers.iter_mut() {
+                ctx.kill(layer.att_layernorm.physical_mut());
+                ctx.kill(layer.att_qkv.physical_mut());
+                ctx.kill(layer.att_o.physical_mut());
+                ctx.kill(layer.mlp_layernorm.physical_mut());
+                ctx.kill(layer.mlp_gate_up.physical_mut());
+                ctx.kill(layer.mlp_down.physical_mut());
+            }
+            let mut pool = self.pool.lock().unwrap();
+            while let Some((mut layer, mut event)) = pool.pop_front() {
+                ctx.kill(layer.att_layernorm.physical_mut());
+                ctx.kill(layer.att_qkv.physical_mut());
+                ctx.kill(layer.att_o.physical_mut());
+                ctx.kill(layer.mlp_layernorm.physical_mut());
+                ctx.kill(layer.mlp_gate_up.physical_mut());
+                ctx.kill(layer.mlp_down.physical_mut());
+                ctx.kill(&mut event);
+            }
             self.kernels.kill(ctx);
         });
     }

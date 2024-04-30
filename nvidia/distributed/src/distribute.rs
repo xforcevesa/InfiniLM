@@ -204,26 +204,25 @@ impl DistributeScheme {
     }
 }
 
-// #[test]
-// fn test() {
-//     use super::Memory;
-//     use std::time::Instant;
+#[test]
+fn test() {
+    use std::time::Instant;
 
-//     let Some(model_dir) = common::test_model::find() else {
-//         return;
-//     };
-//     println!("model_dir: {}", model_dir.display());
+    let Some(model_dir) = common::test_model::find() else {
+        return;
+    };
+    println!("model_dir: {}", model_dir.display());
 
-//     let time = Instant::now();
-//     let model = Memory::load_safetensors(model_dir).unwrap();
-//     println!("mmap {:?}", time.elapsed());
+    let time = Instant::now();
+    let model = llama::Storage::load_safetensors(model_dir).unwrap();
+    println!("mmap {:?}", time.elapsed());
 
-//     let distributer = Distributer::new(&model, 4, 512);
-//     let time = Instant::now();
-//     for layer in 0..model.num_hidden_layers() {
-//         for i in 0..4 {
-//             let _ = distributer.distribute(layer, i);
-//         }
-//     }
-//     println!("distribute {:?}", time.elapsed());
-// }
+    let distributer = Distributer::new(&model, 4, 512);
+    let time = Instant::now();
+    for layer in 0..model.config.nlayers as usize {
+        for i in 0..4 {
+            let _ = distributer.distribute(layer, i);
+        }
+    }
+    println!("distribute {:?}", time.elapsed());
+}
