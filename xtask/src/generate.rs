@@ -1,7 +1,7 @@
 ﻿use crate::{print_now, InferenceArgs, Task};
 use causal_lm::CausalLM;
 use service::Service;
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Instant};
 
 #[derive(Args, Default)]
 pub(crate) struct GenerateArgs {
@@ -30,18 +30,24 @@ impl Task for GenerateArgs {
 
         print_now!("{}", self.prompt);
 
-        let mut steps = self.max_steps.unwrap_or(usize::MAX);
+        let max_steps = self.max_steps.unwrap_or(usize::MAX);
+        let mut steps = 0;
         let mut generator = service.generate(self.prompt, Some(self.inference.sample_args()));
+
+        let time = Instant::now();
         while let Some(s) = generator.decode().await {
             match &*s {
                 "\\n" => println!(),
                 _ => print_now!("{s}"),
             }
-            steps -= 1;
-            if steps == 0 {
+            steps += 1;
+            if steps == max_steps {
                 break;
             }
         }
+        let time = time.elapsed();
+
         println!();
+        println!("Time elapsed: {:?}/tok", time.div_f32(steps as f32));
     }
 }
