@@ -184,65 +184,21 @@ impl CausalLM for Transformer {
     ) -> Tensor<Self::Storage> {
         let dt = self.config.dt;
         let d = self.config.d;
-        let voc = self.config.voc;
 
         self.context.apply(|ctx| {
+            let stream = unsafe { self.compute.sprout(ctx) };
+
             let mut x = hidden_state
                 .as_mut()
                 .map_physical(|u| unsafe { u.mem.sprout(ctx) });
-            let compute = unsafe { self.compute.sprout(ctx) };
-            let kernels = self.kernels.on(&compute);
-
-            let len = d as usize * dt.size();
-
-            let mut iter = decoding.into_iter();
-            let mut begin = 0;
-            let mut src = 0;
-            let mut dst = 0;
-            for DecodingMeta {
-                num_query,
-                num_decode,
-            } in iter.by_ref()
-            {
-                begin += num_query;
-                if num_decode > 0 {
-                    src = begin;
-                    dst = begin;
-                    begin -= num_decode;
-                    break;
-                }
-            }
-            let dst_ = &mut **x.physical_mut();
-            let src_ = unsafe { from_raw_parts(dst_.as_ptr(), dst_.len()) };
-            for DecodingMeta {
-                num_query,
-                num_decode,
-            } in iter
-            {
-                src += num_query - num_decode;
-                if src > dst {
-                    for _ in 0..num_decode {
-                        compute
-                            .memcpy_d2d(&mut dst_[dst * len..][..len], &src_[src * len..][..len]);
-                        src += 1;
-                        dst += 1;
-                    }
-                } else {
-                    src += num_decode;
-                    dst += num_decode;
-                }
-            }
-
-            if dst <= begin {
+            let range =
+                DecodingMeta::select(&mut x, decoding, |dst, src| stream.memcpy_d2d(dst, src));
+            if range.is_empty() {
                 return Tensor::alloc(dt, &[0, d as _], |_| Cache {
                     context: self.context.clone(),
-                    mem: compute.malloc::<u8>(0).sporulate(),
+                    mem: stream.malloc::<u8>(0).sporulate(),
                 });
             }
-
-            let mut x = x.slice(&[slice![begin => dst], slice![=>]]);
-            let mut logits =
-                Tensor::alloc(dt, &[x.shape()[0], voc], |len| compute.malloc::<u8>(len));
 
             let lm_layernorm = self
                 .lm_layernorm
@@ -252,10 +208,17 @@ impl CausalLM for Transformer {
                 .lm_head
                 .as_ref()
                 .map_physical(|u| unsafe { ctx.sprout(u) });
+
+            let mut x = x.slice(&[slice![range.start => range.end], slice![=>]]);
+            let mut logits = Tensor::alloc(dt, &[x.shape()[0], lm_head.shape()[1]], |len| {
+                stream.malloc::<u8>(len)
+            });
+
             // 复制一个 x 以实现原地归一化
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
+            let kernels = self.kernels.on(&stream);
             kernels.rms_norm(&mut x, &x_, &lm_layernorm);
             kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
 
@@ -320,8 +283,8 @@ impl Drop for Transformer {
 }
 
 pub struct Cache {
-    pub context: Arc<Context>,
-    pub mem: DevMemSpore,
+    context: Arc<Context>,
+    mem: DevMemSpore,
 }
 
 impl Drop for Cache {

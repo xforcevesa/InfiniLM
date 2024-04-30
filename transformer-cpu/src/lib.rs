@@ -196,62 +196,28 @@ impl CausalLM for Transformer {
     fn decode(
         &self,
         decoding: impl IntoIterator<Item = DecodingMeta>,
-        mut hidden_state: Tensor<Self::Storage>,
+        hidden_state: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage> {
         let dt = self.0.config.dt;
         let d = self.0.config.d;
 
-        let buf = hidden_state.as_mut_slice();
-        let len = d as usize * dt.size();
+        let mut x = hidden_state;
+        let range = DecodingMeta::select(&mut x, decoding, |dst, src| dst.copy_from_slice(src));
 
-        let mut iter = decoding.into_iter();
-        let mut begin = 0;
-        let mut src = 0;
-        let mut dst = 0;
-        for DecodingMeta {
-            num_query,
-            num_decode,
-        } in iter.by_ref()
-        {
-            begin += num_query;
-            if num_decode > 0 {
-                src = begin;
-                dst = begin;
-                begin -= num_decode;
-                break;
-            }
-        }
-        for DecodingMeta {
-            num_query,
-            num_decode,
-        } in iter
-        {
-            src += num_query - num_decode;
-            if src > dst {
-                for _ in 0..num_decode {
-                    buf.copy_within(src * len..(src + 1) * len, dst * len);
-                    src += 1;
-                    dst += 1;
-                }
-            } else {
-                src += num_decode;
-                dst += num_decode;
-            }
-        }
-
-        if dst <= begin {
+        if range.is_empty() {
             return Tensor::alloc(dt, &[0, d as _], Blob::new);
         }
 
+        let lm_layernorm = &self.0.lm_layernorm;
         let lm_head = &self.0.lm_head;
-        let mut x = hidden_state.slice(&[slice![begin => dst], slice![=>]]);
+        let mut x = x.slice(&[slice![range.start => range.end], slice![=>]]);
         let mut logits = Tensor::alloc(dt, &[x.shape()[0], lm_head.shape()[1]], Blob::new);
 
         // 复制一个 x 以实现原地归一化
         let x_ = x
             .as_ref()
             .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-        rms_norm(&mut x, &x_, &self.0.lm_layernorm, self.0.config.epsilon);
+        rms_norm(&mut x, &x_, lm_layernorm, self.0.config.epsilon);
         mat_mul(&mut logits, 0., &x, lm_head, 1.);
 
         logits

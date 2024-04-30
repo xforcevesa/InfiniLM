@@ -2,9 +2,11 @@
 
 #![deny(warnings, missing_docs)]
 
+mod decoding;
 mod query_context;
 mod sample;
 
+pub use decoding::DecodingMeta;
 pub use query_context::QueryContext;
 pub use sample::SampleArgs;
 
@@ -54,14 +56,6 @@ pub trait CausalLM: Model {
         args: impl IntoIterator<Item = SampleMeta>,
         logits: Tensor<Self::Storage>,
     ) -> Vec<utok>;
-}
-
-/// 解码的要求。
-pub struct DecodingMeta {
-    /// 查询的长度。
-    pub num_query: usize,
-    /// 解码的长度。
-    pub num_decode: usize,
 }
 
 /// 解码的要求。
