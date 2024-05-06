@@ -1,4 +1,4 @@
-﻿//!
+﻿//! 从环境变量中获得测试模型路径的函数。
 
 use std::{
     env::var_os,
@@ -8,7 +8,7 @@ use std::{
     str::from_utf8,
 };
 
-///
+/// 从环境变量中获得测试模型路径。
 pub fn find() -> Option<PathBuf> {
     let model = var_os("TEST_MODEL")?;
     if let Ok(path) = canonicalize(&model) {

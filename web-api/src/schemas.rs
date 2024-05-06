@@ -33,9 +33,6 @@ pub(crate) struct DropSuccess;
 
 pub(crate) trait Success {
     fn msg(&self) -> &str;
-    fn extra(&self) -> Option<serde_json::Value> {
-        None
-    }
 }
 
 impl Success for ForkSuccess {

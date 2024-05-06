@@ -116,7 +116,7 @@ impl ComputeStream for Transformer {
     }
     #[inline]
     fn layers(&self) -> impl Iterator<Item = impl llama::LLamaLayer<Byte = Self::Byte>> {
-        self.0.layers.iter().map(|layer| LlamaLayer(&layer))
+        self.0.layers.iter().map(LlamaLayer)
     }
 }
 

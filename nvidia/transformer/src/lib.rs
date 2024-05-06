@@ -60,7 +60,7 @@ impl Model for Transformer {
 
             let page_lock = |u: &Weight| {
                 let mut host = ctx.malloc_host::<u8>(u.len());
-                host.copy_from_slice(&u);
+                host.copy_from_slice(u);
                 host.sporulate()
             };
             let from_host = |u: &HostMemSpore| transfer.from_host(u).sporulate();
@@ -170,7 +170,7 @@ impl CausalLM for Transformer {
                 kernels: self.kernels.on(&compute),
                 compute: &compute,
                 transfer: &transfer,
-                host: Rc::new(&*self.layers),
+                host: &self.layers,
                 dev: Rc::new(RefCell::new(self.pool.lock().unwrap())),
             };
             <ComputeStream as llama::ComputeStream>::forward(&stream, queries, token_embedded)
@@ -301,7 +301,7 @@ struct ComputeStream<'a> {
     kernels: KernelRuntime<'a>,
     compute: &'a Stream<'a>,
     transfer: &'a Stream<'a>,
-    host: Rc<&'a [LayerStorage<HostMemSpore>]>,
+    host: &'a [LayerStorage<HostMemSpore>],
     dev: DevMemPool<'a>,
 }
 
@@ -390,17 +390,12 @@ impl<'a> llama::ComputeStream for ComputeStream<'a> {
         self.di
     }
     fn layers(&self) -> impl Iterator<Item = impl llama::LLamaLayer<Byte = Self::Byte>> {
-        Iter::new(
-            self.host.clone(),
-            self.dev.clone(),
-            self.compute,
-            self.transfer,
-        )
+        Iter::new(self.host, self.dev.clone(), self.compute, self.transfer)
     }
 }
 
 struct Iter<'a> {
-    host: Rc<&'a [LayerStorage<HostMemSpore>]>,
+    host: &'a [LayerStorage<HostMemSpore>],
     pool: DevMemPool<'a>,
     compute: &'a Stream<'a>,
     transfer: &'a Stream<'a>,
@@ -409,7 +404,7 @@ struct Iter<'a> {
 
 impl<'a> Iter<'a> {
     pub fn new(
-        host: Rc<&'a [LayerStorage<HostMemSpore>]>,
+        host: &'a [LayerStorage<HostMemSpore>],
         pool: DevMemPool<'a>,
         compute: &'a Stream,
         transfer: &'a Stream,
@@ -446,7 +441,7 @@ impl<'a> Iterator for Iter<'a> {
         unsafe { ctx.kill(&mut event) };
 
         Some(Self::Item {
-            host: self.host.clone(),
+            host: self.host,
             pool: self.pool.clone(),
             load,
             transfer: self.transfer,
@@ -456,7 +451,7 @@ impl<'a> Iterator for Iter<'a> {
 }
 
 struct LayerLoader<'a> {
-    host: Rc<&'a [LayerStorage<HostMemSpore>]>,
+    host: &'a [LayerStorage<HostMemSpore>],
     pool: DevMemPool<'a>,
     load: Option<usize>,
     transfer: &'a Stream<'a>,

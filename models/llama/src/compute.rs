@@ -103,7 +103,7 @@ pub trait ComputeStream {
         let pos = causal_lm::pos(&queries, nt);
         let pos = pos.as_ref().map_physical(|u| self.map_pos(u));
 
-        for (layer, params) in self.layers().into_iter().enumerate() {
+        for (layer, params) in self.layers().enumerate() {
             let (mut x1, qkv) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing);
             let mut qkv = qkv.slice(&[slice![=>], slice![=> d + dkv + dkv]]);
 

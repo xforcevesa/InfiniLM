@@ -102,7 +102,7 @@ where
     let mut prompt = prompt.to_vec();
     let mut pos = 0;
 
-    while prompt != &[model.eos_token()] {
+    while prompt != [model.eos_token()] {
         let token_embedded = CausalLM::token_embed(&model, prompt.iter().copied());
 
         let queries = [QueryContext {
