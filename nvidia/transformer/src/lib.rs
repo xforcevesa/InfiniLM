@@ -3,10 +3,12 @@
 #[macro_use]
 extern crate log;
 
+mod sample;
+
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
-use common::{f16, upos, utok, FileLoadError};
+use common::{upos, utok, FileLoadError};
 use common_nv::{
-    cuda::{memcpy_d2h, DevByte, DevMem, DevMemSpore, EventSpore, HostMemSpore, Stream},
+    cuda::{DevByte, DevMem, DevMemSpore, EventSpore, HostMemSpore, Stream},
     slice, udim, DataType, KernelRuntime, Kernels, NvidiaKernels, NvidiaKernelsPtx, Tensor,
 };
 use cuda::{Context, ContextResource, ContextSpore, Device, StreamSpore};
@@ -232,21 +234,24 @@ impl CausalLM for Transformer {
     fn sample(
         &self,
         args: impl IntoIterator<Item = SampleMeta>,
-        mut logits: Tensor<Self::Storage>,
+        logits: Tensor<Self::Storage>,
     ) -> Vec<utok> {
         assert_eq!(logits.data_type(), DataType::F16);
-        let &[_, voc] = logits.shape() else { panic!() };
+        let &[_nt, voc] = logits.shape() else {
+            panic!()
+        };
         let voc = voc as usize;
 
-        let mut host = vec![f16::ZERO; logits.size()];
-        let Cache { context, mem } = logits.physical_mut();
-        context.apply(|ctx| memcpy_d2h(&mut host, unsafe { &mem.sprout(ctx) }));
-
-        args.into_iter()
-            .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
-            .enumerate()
-            .map(|(i, args)| args.random(&host[i * voc..][..voc]))
-            .collect()
+        self.context.apply(|ctx| {
+            sample::sample_nv(
+                args.into_iter()
+                    .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
+                    .enumerate(),
+                &unsafe { logits.physical().mem.sprout(ctx) },
+                voc,
+                &unsafe { self.compute.sprout(ctx) },
+            )
+        })
     }
 }
 

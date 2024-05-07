@@ -13,6 +13,8 @@ causal-lm = { path = "../../causal-lm" }
 llama = { path = "../../models/llama" }
 log.workspace = true
 itertools.workspace = true
+rand = "0.8"
 
 [build-dependencies]
 search-cuda-tools.workspace = true
+cc = "1.0"

@@ -59,35 +59,43 @@ pub struct SliceDim {
 impl SliceDim {
     #[inline]
     pub fn normalize(&self, len: udim) -> Self {
-        match self.step.cmp(&0) {
-            Ordering::Greater => {
-                assert!(self.start < len);
-                Self {
-                    start: self.start,
-                    step: self.step,
-                    len: {
-                        let step = self.step as udim;
-                        ((len - self.start + step - 1) / step).min(self.len)
-                    },
-                }
+        if len == 0 {
+            Self {
+                start: 0,
+                step: 0,
+                len: 0,
             }
-            Ordering::Equal => {
-                assert!(self.start < len);
-                Self {
-                    start: self.start,
-                    step: self.step,
-                    len: self.len,
+        } else {
+            match self.step.cmp(&0) {
+                Ordering::Greater => {
+                    assert!(self.start < len, "{self:?}/{len}");
+                    Self {
+                        start: self.start,
+                        step: self.step,
+                        len: {
+                            let step = self.step as udim;
+                            ((len - self.start + step - 1) / step).min(self.len)
+                        },
+                    }
                 }
-            }
-            Ordering::Less => {
-                let start = self.start.min(len - 1);
-                Self {
-                    start,
-                    step: self.step,
-                    len: {
-                        let step = self.step.unsigned_abs();
-                        ((start + 1 + step - 1) / step).min(self.len)
-                    },
+                Ordering::Equal => {
+                    assert!(self.start < len, "{self:?}/{len}");
+                    Self {
+                        start: self.start,
+                        step: self.step,
+                        len: self.len,
+                    }
+                }
+                Ordering::Less => {
+                    let start = self.start.min(len - 1);
+                    Self {
+                        start,
+                        step: self.step,
+                        len: {
+                            let step = self.step.unsigned_abs();
+                            ((start + 1 + step - 1) / step).min(self.len)
+                        },
+                    }
                 }
             }
         }

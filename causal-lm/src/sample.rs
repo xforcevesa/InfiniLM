@@ -23,7 +23,7 @@ impl Default for SampleArgs {
 
 impl SampleArgs {
     #[inline]
-    fn is_argmax(&self) -> bool {
+    pub fn is_argmax(&self) -> bool {
         self.temperature <= 0. || self.top_k < 2 || self.top_p <= 0.
     }
 

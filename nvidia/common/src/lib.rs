@@ -30,7 +30,7 @@ use std::{
 use swiglu::Swiglu;
 
 pub use kernel_lib::Kernels;
-pub use tensor::{slice, split, udim, DataType, LocalSplitable, Tensor};
+pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
 
 pub struct NvidiaKernelsPtx {
     epsilon: f32,
