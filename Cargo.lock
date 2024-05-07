@@ -225,8 +225,7 @@ name = "causal-lm"
 version = "0.0.0"
 dependencies = [
  "common",
- "half",
- "rand",
+ "sample",
  "tensor",
 ]
 
@@ -347,12 +346,15 @@ dependencies = [
 name = "common-nv"
 version = "0.0.0"
 dependencies = [
+ "cc",
  "common",
  "cublas",
  "cuda",
  "kernel-lib",
  "llama",
  "log",
+ "rand",
+ "sample",
  "search-cuda-tools",
  "tensor",
 ]
@@ -1713,6 +1715,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample"
+version = "0.0.0"
+dependencies = [
+ "common",
+ "rand",
+]
+
+[[package]]
 name = "search-cuda-tools"
 version = "0.1.0"
 source = "git+https://github.com/YdrMaster/cuda-driver?rev=0716560#07165600d894bdbb6ce02d33579b79e420a012d5"
@@ -2082,13 +2092,11 @@ name = "transformer-nv"
 version = "0.0.0"
 dependencies = [
  "causal-lm",
- "cc",
  "common",
  "common-nv",
  "itertools",
  "llama",
  "log",
- "rand",
  "search-cuda-tools",
 ]
 

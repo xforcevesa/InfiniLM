@@ -4,6 +4,7 @@ members = [
     "tensor",
     "tokenizer",
     "causal-lm",
+    "sample",
     "kernel-lib",
     "models/llama",
     "transformer-cpu",

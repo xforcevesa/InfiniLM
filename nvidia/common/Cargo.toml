@@ -9,11 +9,14 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../../common" }
 tensor = { path = "../../tensor" }
+sample = { path = "../../sample" }
 llama = { path = "../../models/llama" }
 kernel-lib = { path = "../../kernel-lib" }
 cuda.workspace = true
 cublas.workspace = true
 log.workspace = true
+rand = "0.8"
 
 [build-dependencies]
 search-cuda-tools.workspace = true
+cc = "1.0"

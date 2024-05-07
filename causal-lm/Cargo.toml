@@ -9,5 +9,4 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
-half.workspace = true
-rand = "0.8"
+sample = { path = "../sample" }

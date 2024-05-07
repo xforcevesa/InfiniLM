@@ -10,6 +10,7 @@ mod mat_mul;
 mod reform;
 mod rms_norm;
 mod rotary_embedding;
+mod sample;
 mod swiglu;
 
 use common::utok;
@@ -30,6 +31,7 @@ use std::{
 use swiglu::Swiglu;
 
 pub use kernel_lib::Kernels;
+pub use sample::{sample_cpu, sample_nv};
 pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
 
 pub struct NvidiaKernelsPtx {

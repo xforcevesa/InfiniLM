@@ -1,18 +1,15 @@
-﻿use causal_lm::SampleArgs;
-use common::{f16, utok, Blob};
-use common_nv::{
-    cuda::{bindings::CUstream, memcpy_d2h, AsRaw, DevByte, DevMem, Stream},
-    reslice, reslice_mut,
-};
+﻿use common::{f16, utok, Blob};
+use cuda::{bindings::CUstream, memcpy_d2h, AsRaw, DevByte, DevMem, Stream};
+use sample::SampleArgs;
 use std::{
     collections::HashMap,
     ffi::{c_int, c_void},
     ptr::{null, null_mut},
     sync::{Mutex, OnceLock},
 };
+use tensor::{reslice, reslice_mut};
 
-#[allow(unused)]
-pub(crate) fn sample_cpu(
+pub fn sample_cpu(
     args: impl IntoIterator<Item = (usize, SampleArgs)>,
     logits: &[DevByte],
     voc: usize,
@@ -180,8 +177,7 @@ fn prealloc_inclusive_sum<'ctx>(stream: &Stream<'ctx>, len: usize) -> DevMem<'ct
     stream.malloc::<u8>(len)
 }
 
-#[allow(unused)]
-pub(crate) fn sample_nv(
+pub fn sample_nv(
     args: impl IntoIterator<Item = (usize, SampleArgs)>,
     logits: &[DevByte],
     voc: usize,
@@ -198,7 +194,7 @@ pub(crate) fn sample_nv(
         .iter_mut()
         .enumerate()
         .for_each(|(i, idx)| *idx = i as u32);
-    let mut indices_in = stream.from_host(&indices_host);
+    let indices_in = stream.from_host(&indices_host);
     let mut indices_out = stream.malloc::<u32>(voc);
 
     let mut temp_sum = prealloc_inclusive_sum(stream, voc);

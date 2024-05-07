@@ -4,15 +4,14 @@
 
 mod decoding;
 mod query_context;
-mod sample;
-
-pub use decoding::DecodingMeta;
-pub use query_context::QueryContext;
-pub use sample::SampleArgs;
 
 use common::{upos, utok};
 use std::path::Path;
 use tensor::{udim, Tensor};
+
+pub use decoding::DecodingMeta;
+pub use query_context::QueryContext;
+pub use sample::SampleArgs;
 
 /// 模型。
 pub trait Model: Sized {

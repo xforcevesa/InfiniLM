@@ -3,13 +3,12 @@
 #[macro_use]
 extern crate log;
 
-mod sample;
-
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{upos, utok, FileLoadError};
 use common_nv::{
     cuda::{DevByte, DevMem, DevMemSpore, EventSpore, HostMemSpore, Stream},
-    slice, udim, DataType, KernelRuntime, Kernels, NvidiaKernels, NvidiaKernelsPtx, Tensor,
+    sample_nv, slice, udim, DataType, KernelRuntime, Kernels, NvidiaKernels, NvidiaKernelsPtx,
+    Tensor,
 };
 use cuda::{Context, ContextResource, ContextSpore, Device, StreamSpore};
 use llama::{InferenceConfig, LayerStorage, Weight};
@@ -243,7 +242,7 @@ impl CausalLM for Transformer {
         let voc = voc as usize;
 
         self.context.apply(|ctx| {
-            sample::sample_nv(
+            sample_nv(
                 args.into_iter()
                     .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
                     .enumerate(),

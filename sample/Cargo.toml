@@ -1,0 +1,9 @@
+[package]
+name = "sample"
+version = "0.0.0"
+edition = "2021"
+authors = ["YdrMaster <ydrml@hotmail.com>"]
+
+[dependencies]
+common = { path = "../common" }
+rand = "0.8"

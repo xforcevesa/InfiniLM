@@ -1,27 +1,7 @@
-﻿#![allow(missing_docs)]
-
-use common::utok;
+﻿use common::{utok, BetweenF32};
 use std::{cmp::Ordering, collections::BinaryHeap, fmt::Debug};
 
-#[derive(Clone, PartialEq, Debug)]
-pub struct SampleArgs {
-    pub temperature: f32,
-    pub top_k: usize,
-    pub top_p: f32,
-}
-
-impl Default for SampleArgs {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            temperature: 0.,
-            top_k: usize::MAX,
-            top_p: 1.,
-        }
-    }
-}
-
-impl SampleArgs {
+impl crate::SampleArgs {
     #[inline]
     pub fn is_argmax(&self) -> bool {
         self.temperature <= 0. || self.top_k < 2 || self.top_p <= 0.
@@ -128,41 +108,5 @@ impl SampleArgs {
             })
             .unwrap_or(logits.last().unwrap())
             .tok
-    }
-}
-
-pub trait BetweenF32 {
-    fn zero() -> Self;
-    fn cast(f: f32) -> Self;
-    fn get(&self) -> f32;
-}
-
-impl BetweenF32 for f32 {
-    #[inline]
-    fn zero() -> Self {
-        0.
-    }
-    #[inline]
-    fn cast(f: f32) -> Self {
-        f
-    }
-    #[inline]
-    fn get(&self) -> f32 {
-        *self
-    }
-}
-
-impl BetweenF32 for half::f16 {
-    #[inline]
-    fn zero() -> Self {
-        Self::ZERO
-    }
-    #[inline]
-    fn cast(f: f32) -> Self {
-        Self::from_f32(f)
-    }
-    #[inline]
-    fn get(&self) -> f32 {
-        Self::to_f32(*self)
     }
 }
