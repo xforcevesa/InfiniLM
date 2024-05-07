@@ -6,12 +6,12 @@
 {
     "request": {
         "/infer": {
-            "session_id": "String",
+            "session_id": "String?",
             "inputs": [{
                 "role": "String",
                 "content": "String"
             }],
-            "dialog_pos": "int",
+            "dialog_pos": "int?",
             "temperature": "float?",
             "top-k": "int?",
             "top-p": "float?",

@@ -1,10 +1,10 @@
-use actix_web::http::StatusCode;
+use hyper::StatusCode;
 
 #[derive(serde::Deserialize)]
 pub(crate) struct Infer {
-    pub session_id: String,
     pub inputs: Vec<Sentence>,
-    pub dialog_pos: usize,
+    pub session_id: Option<String>,
+    pub dialog_pos: Option<usize>,
     pub temperature: Option<f32>,
     pub top_k: Option<usize>,
     pub top_p: Option<f32>,

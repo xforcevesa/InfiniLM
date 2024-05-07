@@ -110,7 +110,7 @@ extern "C" {
 fn prealloc_argmax<'ctx>(stream: &Stream<'ctx>, len: usize) -> DevMem<'ctx> {
     static MAP: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
     let len = *MAP
-        .get_or_init(|| Default::default())
+        .get_or_init(Default::default)
         .lock()
         .unwrap()
         .entry(len)
@@ -134,7 +134,7 @@ fn prealloc_argmax<'ctx>(stream: &Stream<'ctx>, len: usize) -> DevMem<'ctx> {
 fn prealloc_radix_sort<'ctx>(stream: &Stream<'ctx>, len: usize) -> DevMem<'ctx> {
     static MAP: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
     let len = *MAP
-        .get_or_init(|| Default::default())
+        .get_or_init(Default::default)
         .lock()
         .unwrap()
         .entry(len)
@@ -160,7 +160,7 @@ fn prealloc_radix_sort<'ctx>(stream: &Stream<'ctx>, len: usize) -> DevMem<'ctx> 
 fn prealloc_inclusive_sum<'ctx>(stream: &Stream<'ctx>, len: usize) -> DevMem<'ctx> {
     static MAP: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
     let len = *MAP
-        .get_or_init(|| Default::default())
+        .get_or_init(Default::default)
         .lock()
         .unwrap()
         .entry(len)
@@ -187,11 +187,11 @@ pub(crate) fn sample_nv(
     voc: usize,
     stream: &Stream,
 ) -> Vec<utok> {
-    let mut temp_argmax = prealloc_argmax(&stream, voc);
+    let mut temp_argmax = prealloc_argmax(stream, voc);
     let mut argmax_host = CubKeyValuePair::<c_int, f16>::default();
     let mut argmax_out = stream.malloc::<CubKeyValuePair<c_int, f16>>(1);
 
-    let mut temp_sort = prealloc_radix_sort(&stream, voc);
+    let mut temp_sort = prealloc_radix_sort(stream, voc);
     let mut sort_out = stream.malloc::<f16>(voc);
     let mut indices_host = stream.ctx().malloc_host::<u32>(voc);
     reslice_mut::<u8, u32>(&mut indices_host)
@@ -201,7 +201,7 @@ pub(crate) fn sample_nv(
     let mut indices_in = stream.from_host(&indices_host);
     let mut indices_out = stream.malloc::<u32>(voc);
 
-    let mut temp_sum = prealloc_inclusive_sum(&stream, voc);
+    let mut temp_sum = prealloc_inclusive_sum(stream, voc);
 
     let logits = logits.as_ptr().cast::<f16>();
     let ans = args
@@ -269,15 +269,15 @@ pub(crate) fn sample_nv(
         })
         .collect();
 
-    temp_argmax.drop_on(&stream);
-    argmax_out.drop_on(&stream);
+    temp_argmax.drop_on(stream);
+    argmax_out.drop_on(stream);
 
-    temp_sort.drop_on(&stream);
-    sort_out.drop_on(&stream);
-    indices_in.drop_on(&stream);
-    indices_out.drop_on(&stream);
+    temp_sort.drop_on(stream);
+    sort_out.drop_on(stream);
+    indices_in.drop_on(stream);
+    indices_out.drop_on(stream);
 
-    temp_sum.drop_on(&stream);
+    temp_sum.drop_on(stream);
 
     ans
 }
