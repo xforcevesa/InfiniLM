@@ -9,6 +9,6 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-memmap2 = "0.9"
+half.workspace = true
+memmap2.workspace = true
 safetensors = "0.4"
-half = "2.4"

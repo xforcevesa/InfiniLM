@@ -8,5 +8,5 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 
 [dependencies]
 common = { path = "../common" }
-memmap2 = "0.9"
+memmap2.workspace = true
 patricia_tree = "0.8"
