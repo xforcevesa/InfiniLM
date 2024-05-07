@@ -268,8 +268,15 @@ pub struct SafeTensorsIndexMetadata {
 pub struct SafeTensorsHeader {
     #[serde(flatten)]
     pub tensors: HashMap<String, TensorInfo>,
-    #[serde(rename = "__metadata__")]
+    #[serde(rename = "__metadata__", default = "default_metadata")]
     pub metadata: SafeTensorsHeaderMetadata,
+}
+
+#[inline]
+fn default_metadata() -> SafeTensorsHeaderMetadata {
+    SafeTensorsHeaderMetadata {
+        format: "pt".into(),
+    }
 }
 
 #[allow(missing_docs)]
