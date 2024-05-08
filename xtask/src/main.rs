@@ -66,7 +66,7 @@ struct InferenceArgs {
     #[clap(long)]
     top_p: Option<f32>,
 
-    #[cfg(feature = "nvidia")]
+    #[cfg(detected_cuda)]
     /// Use Nvidia GPU, specify device IDs separated by comma, e.g. `0` or `0,1`.
     #[clap(long)]
     nvidia: Option<String>,
@@ -93,14 +93,38 @@ impl InferenceArgs {
     }
 
     fn nvidia(&self) -> Vec<c_int> {
-        self.nvidia
-            .as_ref()
-            .map_or("", String::as_str)
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.parse::<c_int>().unwrap())
-            .collect()
+        if let Some(nv) = self.nvidia.as_ref() {
+            #[cfg(detected_cuda)]
+            {
+                if let Some((start, end)) = nv.split_once("..") {
+                    let start = start.trim();
+                    let end = end.trim();
+                    let start = if start.is_empty() {
+                        0
+                    } else {
+                        start.parse::<c_int>().unwrap()
+                    };
+                    let end = if end.is_empty() {
+                        llama_nv::cuda::Device::count() as _
+                    } else {
+                        end.parse::<c_int>().unwrap()
+                    };
+                    (start..end).collect()
+                } else {
+                    nv.split(',')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.parse::<c_int>().unwrap())
+                        .collect()
+                }
+            }
+            #[cfg(not(detected_cuda))]
+            {
+                panic!("Nvidia GPU not detected");
+            }
+        } else {
+            vec![]
+        }
     }
 
     #[inline]
@@ -148,7 +172,7 @@ trait Task: Sized {
                 runtime.block_on(self.typed::<M>(meta));
             }
             #[cfg(not(all(detected_cuda, detected_nccl)))]
-            _ => panic!("Set \"nvidia\" feature to enablel nvidia support."),
+            _ => panic!("Device not detected"),
         }
 
         runtime.shutdown_background();

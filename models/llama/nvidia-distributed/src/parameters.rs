@@ -26,6 +26,10 @@ impl ParameterMatrix {
         for (i, context) in contexts.iter().enumerate() {
             context.apply(|ctx| {
                 for layer in 0..nlayers {
+                    info!(
+                        "loading device {i}/{} : layer {layer}/{nlayers}",
+                        contexts.len()
+                    );
                     matrix.push(ctx.from_host(&distributer.distribute(layer, i)).sporulate());
                 }
             });
