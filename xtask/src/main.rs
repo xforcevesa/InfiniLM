@@ -7,6 +7,7 @@ mod service;
 use causal_lm::{CausalLM, SampleArgs};
 use clap::Parser;
 use deploy::DeployArgs;
+use llama_nv::ModelLoadMeta;
 use service::ServiceArgs;
 use std::{ffi::c_int, fmt};
 
@@ -136,8 +137,9 @@ trait Task: Sized {
             }
             #[cfg(detected_cuda)]
             &[n] => {
-                use llama_nv::{cuda, Transformer as M};
-                runtime.block_on(self.typed::<M>(cuda::Device::new(n)));
+                use llama_nv::Transformer as M;
+                let meta = ModelLoadMeta::load_all_to(n);
+                runtime.block_on(self.typed::<M>(meta));
             }
             #[cfg(detected_nccl)]
             distribute => {

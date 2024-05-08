@@ -42,18 +42,39 @@ pub struct Transformer {
     pool: Mutex<VecDeque<(LayerStorage<DevMemSpore>, EventSpore)>>,
 }
 
+pub struct ModelLoadMeta {
+    pub device: Device,
+    pub load_layers: usize,
+}
+
+impl ModelLoadMeta {
+    #[inline]
+    pub fn load_all_to(n: i32) -> Self {
+        Self {
+            device: Device::new(n),
+            load_layers: usize::MAX,
+        }
+    }
+}
+
 impl Model for Transformer {
-    type Meta = Device;
+    type Meta = ModelLoadMeta;
     type Error = FileLoadError;
 
     #[inline]
-    fn load(model_dir: impl AsRef<Path>, meta: Self::Meta) -> Result<Self, Self::Error> {
+    fn load(
+        model_dir: impl AsRef<Path>,
+        Self::Meta {
+            device,
+            load_layers,
+        }: Self::Meta,
+    ) -> Result<Self, Self::Error> {
         let time = Instant::now();
         let host = llama::Storage::load_safetensors(model_dir)?;
         info!("load host: {:?}", time.elapsed());
-        let load_layers = host.config.nlayers;
+        let load_layers = (load_layers as udim).min(host.config.nlayers);
 
-        let context = Arc::new(meta.retain_primary());
+        let context = Arc::new(device.retain_primary());
         context.apply(|ctx| {
             let transfer = ctx.stream();
             let compute = ctx.stream();
@@ -539,7 +560,10 @@ fn test_infer() {
     cuda::init();
     if let Some(device) = cuda::Device::fetch() {
         causal_lm::test_impl::<Transformer>(
-            device,
+            ModelLoadMeta {
+                device,
+                load_layers: 20,
+            },
             &[
                 29966, 29989, 1792, 29989, 29958, 13, 29903, 388, 376, 18567, 29908, 304, 592,
                 21106, 29879, 5299, 29989, 465, 22137, 29989, 29958, 13,
