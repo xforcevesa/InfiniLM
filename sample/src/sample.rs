@@ -1,5 +1,5 @@
 ﻿use common::{utok, BetweenF32};
-use std::{cmp::Ordering, collections::BinaryHeap, fmt::Debug};
+use std::{cmp::Ordering, mem::replace};
 
 impl crate::SampleArgs {
     #[inline]
@@ -35,7 +35,7 @@ impl crate::SampleArgs {
         impl Ord for Probability {
             #[inline]
             fn cmp(&self, other: &Self) -> Ordering {
-                match self.val.partial_cmp(&other.val).unwrap() {
+                match self.val.total_cmp(&other.val) {
                     Ordering::Equal => self.tok.cmp(&other.tok),
                     ord => ord.reverse(),
                 }
@@ -51,62 +51,23 @@ impl crate::SampleArgs {
             }
         }
 
-        // top-k & max
-        let logits = if self.top_k < logits.len() {
-            let mut buf = BinaryHeap::with_capacity(self.top_k + 1);
-            for it in logits.iter().enumerate() {
-                buf.push(Probability::from(it));
-                if buf.len() > self.top_k {
-                    buf.pop();
-                }
-            }
-            buf.into_vec()
-        } else {
-            let mut buf = logits
-                .iter()
-                .enumerate()
-                .map(Probability::from)
-                .collect::<Vec<_>>();
-            buf.sort_unstable();
-            buf
-        };
-        let max = logits[0].val;
-        // temperature & sum
-        let (logits, sum) = {
-            let mut logits = logits;
-            let mut sum = 0.;
-            for pi in logits.iter_mut() {
-                pi.val = ((pi.val - max) / self.temperature).exp();
-                sum += pi.val;
-            }
-            (logits, sum)
-        };
-        // top p
-        let logits = if self.top_p < 1. {
-            let i = logits
-                .iter()
-                .scan(self.top_p * sum, |top_p, pi| {
-                    if *top_p > 0. {
-                        *top_p -= pi.val;
-                        Some(())
-                    } else {
-                        None
-                    }
-                })
-                .count();
-            &logits[..i]
-        } else {
-            &logits[..]
-        };
-        // random
-        let mut rand = rand::random::<f32>() * sum;
-        logits
+        // sort
+        let mut logits = logits
             .iter()
-            .find(|pi| {
-                rand -= pi.val;
-                rand <= 0.
-            })
-            .unwrap_or(logits.last().unwrap())
-            .tok
+            .enumerate()
+            .map(Probability::from)
+            .collect::<Vec<_>>();
+        logits.sort_unstable();
+        let max = replace(&mut logits[0].val, 1.);
+        // softmax & sum
+        for i in 1..logits.len() {
+            logits[i].val = logits[i - 1].val + ((logits[i].val - max) / self.temperature).exp();
+        }
+        // topk & topp & random
+        let pk = logits[self.top_k.min(logits.len()) - 1].val;
+        let pp = logits[logits.len() - 1].val * self.top_p;
+        let plimit = rand::random::<f32>() * f32::min(pk, pp);
+        // sample
+        logits.iter().find(|p| p.val >= plimit).unwrap().tok
     }
 }

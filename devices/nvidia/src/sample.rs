@@ -98,8 +98,10 @@ extern "C" {
         data: *const f16,
         indices: *const u32,
         index: *mut u32,
-        probability: f32,
+        random: f32,
+        topp: f32,
         topk: c_int,
+        voc: c_int,
         stream: CUstream,
     ) -> c_int;
 }
@@ -236,7 +238,7 @@ pub fn sample_nv(
                     partial_softmax_half(
                         sort_out.as_mut_ptr().cast(),
                         args.temperature,
-                        topk,
+                        voc as _,
                         stream.as_raw(),
                     )
                 });
@@ -245,7 +247,7 @@ pub fn sample_nv(
                         temp_sum.as_mut_ptr().cast(),
                         &mut temp_sum.len(),
                         sort_out.as_mut_ptr().cast(),
-                        topk,
+                        voc as _,
                         stream.as_raw(),
                     )
                 });
@@ -255,8 +257,10 @@ pub fn sample_nv(
                         sort_out.as_ptr().cast(),
                         indices_out.as_ptr().cast(),
                         &mut index,
-                        rand::random::<f32>() * args.top_p,
+                        rand::random::<f32>(),
+                        args.top_p,
                         topk,
+                        voc as _,
                         stream.as_raw(),
                     )
                 });
