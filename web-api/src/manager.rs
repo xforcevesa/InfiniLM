@@ -53,17 +53,27 @@ where
                 Entry::Occupied(mut e) => match e.get_mut() {
                     Some(session) => {
                         if session.revert(dialog_pos).is_ok() {
+                            info!("Session {session_id} reverted to {dialog_pos}, inference ready");
                             Ok(e.get_mut().take().unwrap())
                         } else {
-                            Err(Error::InvalidDialogPos(session.dialog_pos()))
+                            let current = session.dialog_pos();
+                            warn!("Session {session_id} failed to revert from {current} to {dialog_pos}");
+                            Err(Error::InvalidDialogPos(current))
                         }
                     }
-                    None => Err(Error::SessionBusy),
+                    None => {
+                        warn!("Session {session_id} busy");
+                        Err(Error::SessionBusy)
+                    }
                 },
                 Entry::Vacant(e) if dialog_pos == 0 => {
+                    info!("Session {session_id} created, inference ready");
                     Ok(e.insert(Some(self.infer_service.launch())).take().unwrap())
                 }
-                Entry::Vacant(_) => Err(Error::SessionNotFound),
+                Entry::Vacant(_) => {
+                    warn!("Session {session_id} not found");
+                    Err(Error::SessionNotFound)
+                }
             }?;
             if let Some(temperature) = temperature {
                 session.sample.temperature = temperature;
@@ -91,7 +101,11 @@ where
                     container.get_or_insert(session);
                 }
             });
+        } else if dialog_pos != 0 {
+            warn!("Temporary session must be created with zero dialog position");
+            return Err(Error::InvalidDialogPos(0));
         } else {
+            info!("Temporary session created, inference ready");
             let mut session = self.infer_service.launch();
             if let Some(temperature) = temperature {
                 session.sample.temperature = temperature;
@@ -107,7 +121,7 @@ where
                 let mut busy = session.chat(inputs.iter().map(|s| s.content.as_str()));
                 while let Some(s) = busy.decode().await {
                     if let Err(e) = sender.send(s.into_owned()) {
-                        warn!("Failed to send piece to temp session with error \"{e}\"");
+                        warn!("Failed to send piece to temporary session with error \"{e}\"");
                         break;
                     }
                 }
@@ -124,26 +138,35 @@ where
         }: Fork,
     ) -> Result<ForkSuccess, Error> {
         let mut sessions = self.pending_sessions.lock().unwrap();
-        if sessions.contains_key(&new_session_id) {
-            warn!("Failed to fork because \"{new_session_id}\" already exists");
-            return Err(Error::SessionDuplicate);
+        if !sessions.contains_key(&new_session_id) {
+            let new = sessions
+                .get_mut(&session_id)
+                .ok_or(Error::SessionNotFound)?
+                .as_ref()
+                .ok_or(Error::SessionBusy)?
+                .fork();
+
+            info!("Session \"{new_session_id}\" is forked from \"{session_id}\"");
+            sessions.insert(new_session_id, Some(new));
+            Ok(ForkSuccess)
+        } else {
+            warn!("Session fork failed because \"{new_session_id}\" already exists");
+            Err(Error::SessionDuplicate)
         }
-        let new = sessions
-            .get_mut(&session_id)
-            .ok_or(Error::SessionNotFound)?
-            .as_ref()
-            .ok_or(Error::SessionBusy)?
-            .fork();
-        sessions.insert(new_session_id, Some(new));
-        Ok(ForkSuccess)
     }
 
     pub fn drop_(&self, Drop { session_id }: Drop) -> Result<DropSuccess, Error> {
-        self.pending_sessions
+        if self
+            .pending_sessions
             .lock()
             .unwrap()
             .remove(&session_id)
-            .map(|_| DropSuccess)
-            .ok_or(Error::SessionNotFound)
+            .is_some()
+        {
+            info!("Session \"{session_id}\" dropped");
+            Ok(DropSuccess)
+        } else {
+            Err(Error::SessionNotFound)
+        }
     }
 }

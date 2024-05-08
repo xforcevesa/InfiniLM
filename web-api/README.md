@@ -6,11 +6,11 @@
 {
     "request": {
         "/infer": {
-            "session_id": "String?",
             "inputs": [{
                 "role": "String",
                 "content": "String"
             }],
+            "session_id": "String?",
             "dialog_pos": "int?",
             "temperature": "float?",
             "top-k": "int?",
@@ -40,9 +40,14 @@
             "code": 0,
             "message": "Session ID already exists"
         },
-        "empty_input": {
+        "wrong_json": {
             "status": 400,
             "code": 0,
+            "message": "(Some json error)"
+        },
+        "empty_input": {
+            "status": 400,
+            "code": 1,
             "message": "Input list is empty"
         },
         "invalid_dialog_pos": {

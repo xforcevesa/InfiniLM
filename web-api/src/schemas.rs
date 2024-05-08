@@ -51,6 +51,7 @@ pub(crate) enum Error {
     SessionBusy,
     SessionDuplicate,
     SessionNotFound,
+    WrongJson(serde_json::Error),
     EmptyInput,
     InvalidDialogPos(usize),
 }
@@ -59,7 +60,7 @@ pub(crate) enum Error {
 struct ErrorBody {
     status: u16,
     code: u16,
-    message: &'static str,
+    message: String,
 }
 
 impl Error {
@@ -69,6 +70,7 @@ impl Error {
             Self::SessionNotFound => StatusCode::NOT_FOUND,
             Self::SessionBusy => StatusCode::NOT_ACCEPTABLE,
             Self::SessionDuplicate => StatusCode::CONFLICT,
+            Self::WrongJson(_) => StatusCode::BAD_REQUEST,
             Self::EmptyInput => StatusCode::BAD_REQUEST,
             Self::InvalidDialogPos(_) => StatusCode::RANGE_NOT_SATISFIABLE,
         }
@@ -81,7 +83,7 @@ impl Error {
                 ErrorBody {
                     status: self.status().as_u16(),
                     code: $code,
-                    message: $msg,
+                    message: $msg.into(),
                 }
             };
         }
@@ -95,7 +97,8 @@ impl Error {
             Self::SessionNotFound => json(error!(0, "Session not found")),
             Self::SessionBusy => json(error!(0, "Session is busy")),
             Self::SessionDuplicate => json(error!(0, "Session ID already exists")),
-            Self::EmptyInput => json(error!(0, "Input list is empty")),
+            Self::WrongJson(e) => json(error!(0, e.to_string())),
+            Self::EmptyInput => json(error!(1, "Input list is empty")),
             &Self::InvalidDialogPos(current_dialog_pos) => {
                 #[derive(serde::Serialize)]
                 struct ErrorBodyExtra {

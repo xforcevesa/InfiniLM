@@ -14,6 +14,7 @@ use hyper::{
 use hyper_util::rt::TokioIo;
 use manager::ServiceManager;
 use response::{error, success, text_stream};
+use serde::Deserialize;
 use std::{
     future::Future,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -80,32 +81,39 @@ where
 
     fn call(&self, req: Request<body::Incoming>) -> Self::Future {
         let manager = self.service_manager.clone();
+
+        fn parse_body<'a, S: Deserialize<'a>>(
+            whole_body: &'a Bytes,
+        ) -> Result<S, Response<BoxBody<Bytes, hyper::Error>>> {
+            serde_json::from_slice(&whole_body).map_err(|e| error(schemas::Error::WrongJson(e)))
+        }
+
         match (req.method(), req.uri().path()) {
             (&Method::POST, "/infer") => Box::pin(async move {
-                let whole_body = req.collect().await?.to_bytes();
-                let req = serde_json::from_slice(&whole_body).unwrap();
-                let ans = manager.infer(req);
-                Ok(match ans {
-                    Ok(recv) => text_stream(UnboundedReceiverStream::new(recv)),
-                    Err(e) => error(e),
+                Ok(match parse_body(&req.collect().await?.to_bytes()) {
+                    Ok(req) => match manager.infer(req) {
+                        Ok(recv) => text_stream(UnboundedReceiverStream::new(recv)),
+                        Err(e) => error(e),
+                    },
+                    Err(e) => e,
                 })
             }),
             (&Method::POST, "/fork") => Box::pin(async move {
-                let whole_body = req.collect().await?.to_bytes();
-                let req = serde_json::from_slice(&whole_body).unwrap();
-                let ans = manager.fork(req);
-                Ok(match ans {
-                    Ok(s) => success(s),
-                    Err(e) => error(e),
+                Ok(match parse_body(&req.collect().await?.to_bytes()) {
+                    Ok(req) => match manager.fork(req) {
+                        Ok(s) => success(s),
+                        Err(e) => error(e),
+                    },
+                    Err(e) => e,
                 })
             }),
             (&Method::POST, "/drop") => Box::pin(async move {
-                let whole_body = req.collect().await?.to_bytes();
-                let req = serde_json::from_slice(&whole_body).unwrap();
-                let ans = manager.drop_(req);
-                Ok(match ans {
-                    Ok(s) => success(s),
-                    Err(e) => error(e),
+                Ok(match parse_body(&req.collect().await?.to_bytes()) {
+                    Ok(req) => match manager.drop_(req) {
+                        Ok(s) => success(s),
+                        Err(e) => error(e),
+                    },
+                    Err(e) => e,
                 })
             }),
             // Return 404 Not Found for other routes.

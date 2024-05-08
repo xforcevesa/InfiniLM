@@ -1,6 +1,7 @@
 ﻿use crate::{batcher::Batcher, ServiceComponent};
 use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleArgs, SampleMeta};
 use common::{upos, utok};
+use log::info;
 use std::{
     borrow::Cow,
     cmp::Ordering::{Equal, Greater, Less},
@@ -175,6 +176,7 @@ impl<M: CausalLM> BusySession<'_, M> {
 
 impl<M: CausalLM> Drop for BusySession<'_, M> {
     fn drop(&mut self) {
+        info!("Drop busy session");
         let s = &mut *self.session;
         // 停止响应接收
         let _ = self.receiver.take();
