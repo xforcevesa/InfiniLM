@@ -80,7 +80,12 @@ impl Model for Transformer {
             Ok(Self {
                 context: context.clone(),
 
-                kernels: NvidiaKernelsPtx::new(&host.config, block_size).load(&compute),
+                kernels: NvidiaKernelsPtx::new(
+                    host.config.d as _,
+                    host.config.max_seq_len as _,
+                    block_size,
+                )
+                .load(&compute),
                 embed_tokens: host.embed_tokens.as_ref().map_physical(page_lock),
                 layers,
                 lm_layernorm: host
@@ -168,6 +173,8 @@ impl CausalLM for Transformer {
                 nh: self.config.nh,
                 nkvh: self.config.nkvh,
                 di: self.config.di,
+                epsilon: self.config.epsilon,
+                theta: self.config.theta,
                 kernels: self.kernels.on(&compute),
                 compute: &compute,
                 transfer: &transfer,
@@ -220,7 +227,7 @@ impl CausalLM for Transformer {
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
             let kernels = self.kernels.on(&stream);
-            kernels.rms_norm(&mut x, &x_, &lm_layernorm);
+            kernels.rms_norm(&mut x, &x_, &lm_layernorm, self.config.epsilon);
             kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
 
             logits.map_physical(|u| Cache {
@@ -302,6 +309,8 @@ struct ComputeStream<'a> {
     nh: udim,
     nkvh: udim,
     di: udim,
+    epsilon: f32,
+    theta: f32,
     kernels: KernelRuntime<'a>,
     compute: &'a Stream<'a>,
     transfer: &'a Stream<'a>,
@@ -342,7 +351,7 @@ impl<'a> llama::ComputeStream for ComputeStream<'a> {
         X: Deref<Target = [Self::Byte]>,
         W: Deref<Target = [Self::Byte]>,
     {
-        self.kernels.rms_norm(o, x, w);
+        self.kernels.rms_norm(o, x, w, self.epsilon);
     }
     fn mat_mul<O, A, B>(
         &self,
@@ -362,7 +371,7 @@ impl<'a> llama::ComputeStream for ComputeStream<'a> {
     where
         X: DerefMut<Target = [Self::Byte]>,
     {
-        self.kernels.rotary_embedding(x, pos);
+        self.kernels.rotary_embedding(x, pos, self.theta);
     }
     fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
     where

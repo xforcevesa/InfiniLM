@@ -20,7 +20,6 @@ use cuda::{
     Ptx, Stream,
 };
 use fused_softmax::FusedSoftmax;
-use llama::InferenceConfig;
 use reform::Reform;
 use rms_norm::RmsNormalization;
 use rotary_embedding::Rope;
@@ -35,8 +34,6 @@ pub use sample::{sample_cpu, sample_nv};
 pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
 
 pub struct NvidiaKernelsPtx {
-    epsilon: f32,
-    theta: f32,
     rms_norm: Arc<RmsNormalization>,
     rotary_embedding: Arc<Rope>,
     reform: Arc<Reform>,
@@ -45,20 +42,18 @@ pub struct NvidiaKernelsPtx {
 }
 
 impl NvidiaKernelsPtx {
-    pub fn new(config: &InferenceConfig, block_size: usize) -> Self {
+    pub fn new(rms_norm_max_size: usize, softmax_max_size: usize, block_size: usize) -> Self {
         Self {
-            epsilon: config.epsilon,
-            theta: config.theta,
             rms_norm: Arc::new(RmsNormalization::new(
                 CudaDataType::f16,
-                config.d as _,
+                rms_norm_max_size,
                 block_size,
             )),
             rotary_embedding: Arc::new(Rope::new(block_size)),
             reform: Arc::new(Reform::new(block_size, 32)),
             softmax: Arc::new(FusedSoftmax::new(
                 CudaDataType::f16,
-                config.max_seq_len as _,
+                softmax_max_size,
                 block_size,
             )),
             swiglu: Arc::new(Swiglu::new(CudaDataType::f16, block_size)),
@@ -83,8 +78,6 @@ struct ModuleWapper<T> {
 }
 
 pub struct NvidiaKernels {
-    epsilon: f32,
-    theta: f32,
     cublas: CublasSpore,
     rms_norm: ModuleWapper<RmsNormalization>,
     rotary_embedding: ModuleWapper<Rope>,
@@ -99,8 +92,6 @@ impl NvidiaKernelsPtx {
         let cublas = Cublas::new(ctx);
         cublas.set_stream(stream);
         NvidiaKernels {
-            epsilon: self.epsilon,
-            theta: self.theta,
             cublas: cublas.sporulate(),
             rms_norm: self.rms_norm.clone().load(ctx),
             rotary_embedding: self.rotary_embedding.clone().load(ctx),
@@ -153,14 +144,14 @@ impl Kernels for KernelRuntime<'_> {
     }
 
     #[inline]
-    fn rms_norm<T, U, V>(&self, y: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>)
+    fn rms_norm<T, U, V>(&self, y: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
     where
         T: DerefMut<Target = Self::Storage>,
         U: Deref<Target = Self::Storage>,
         V: Deref<Target = Self::Storage>,
     {
         let ModuleWapper { module, kernel } = &self.kernels.rms_norm;
-        kernel.launch(module, y, x, w, self.kernels.epsilon, self.stream);
+        kernel.launch(module, y, x, w, epsilon, self.stream);
     }
 
     #[inline]
@@ -181,13 +172,13 @@ impl Kernels for KernelRuntime<'_> {
     }
 
     #[inline]
-    fn rotary_embedding<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>)
+    fn rotary_embedding<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32)
     where
         T: DerefMut<Target = Self::Storage>,
         U: Deref<Target = Self::Storage>,
     {
         let ModuleWapper { module, kernel } = &self.kernels.rotary_embedding;
-        kernel.launch(module, t, pos, self.kernels.theta, self.stream);
+        kernel.launch(module, t, pos, theta, self.stream);
     }
 
     #[inline]

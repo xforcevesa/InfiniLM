@@ -10,7 +10,6 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 common = { path = "../../common" }
 tensor = { path = "../../tensor" }
 sample = { path = "../../sample" }
-llama = { path = "../../models/llama" }
 kernel-lib = { path = "../../kernel-lib" }
 cuda.workspace = true
 cublas.workspace = true

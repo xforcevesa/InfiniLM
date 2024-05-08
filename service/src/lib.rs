@@ -91,7 +91,7 @@ fn test() {
     let runtime = Builder::new_current_thread().build().unwrap();
     let _rt = runtime.enter();
 
-    let (service, _handle) = Service::<transformer_cpu::Transformer>::load(model_dir, ());
+    let (service, _handle) = Service::<llama_cpu::Transformer>::load(model_dir, ());
 
     let mut set = JoinSet::new();
     let tasks = vec![

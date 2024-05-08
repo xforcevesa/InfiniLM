@@ -1,5 +1,5 @@
 [package]
-name = "transformer-cpu"
+name = "llama-cpu"
 version = "0.0.1"
 edition = "2021"
 authors = ["YdrMaster <ydrml@hotmail.com>"]
@@ -7,11 +7,12 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-common = { path = "../common" }
-tensor = { path = "../tensor" }
-causal-lm = { path = "../causal-lm" }
-llama = { path = "../models/llama" }
-kernel-lib = { path = "../kernel-lib" }
+common = { path = "../../../common" }
+tensor = { path = "../../../tensor" }
+kernel-lib = { path = "../../../kernel-lib" }
+common-cpu = { path = "../../../devices/cpu" }
+causal-lm = { path = "../../../causal-lm" }
+llama = { path = "../common" }
 gemm = "0.17"
 intel-mkl-src = { version = "0.8", features = ["mkl-dynamic-lp64-iomp"] }
 

@@ -6,14 +6,17 @@ members = [
     "causal-lm",
     "sample",
     "kernel-lib",
-    "models/llama",
-    "transformer-cpu",
-    "nvidia/common",
-    "nvidia/transformer",
-    "nvidia/distributed",
     "service",
     "web-api",
     "xtask",
+
+    "devices/cpu",
+    "devices/nvidia",
+
+    "models/llama/common",
+    "models/llama/cpu",
+    "models/llama/nvidia",
+    "models/llama/nvidia-distributed",
 ]
 resolver = "2"
 

@@ -124,24 +124,24 @@ trait Task: Sized {
     fn run(self) {
         #[cfg(detected_cuda)]
         {
-            transformer_nv::cuda::init();
+            llama_nv::cuda::init();
         }
         let runtime = tokio::runtime::Runtime::new().unwrap();
 
         self.inference().init_log();
         match self.inference().nvidia().as_slice() {
             [] => {
-                use transformer_cpu::Transformer as M;
+                use llama_cpu::Transformer as M;
                 runtime.block_on(self.typed::<M>(()));
             }
             #[cfg(detected_cuda)]
             &[n] => {
-                use transformer_nv::{cuda, Transformer as M};
+                use llama_nv::{cuda, Transformer as M};
                 runtime.block_on(self.typed::<M>(cuda::Device::new(n)));
             }
             #[cfg(detected_nccl)]
             distribute => {
-                use distributed::{cuda::Device, Transformer as M};
+                use llama_nv_distributed::{cuda::Device, Transformer as M};
                 let meta = distribute.iter().copied().map(Device::new).collect();
                 runtime.block_on(self.typed::<M>(meta));
             }
@@ -152,7 +152,7 @@ trait Task: Sized {
         runtime.shutdown_background();
         #[cfg(detected_cuda)]
         {
-            transformer_nv::synchronize();
+            llama_nv::synchronize();
         }
     }
 }

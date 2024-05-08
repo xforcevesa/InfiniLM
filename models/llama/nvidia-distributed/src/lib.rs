@@ -56,7 +56,8 @@ impl Model for Transformer {
 
         let block_size = meta.iter().map(|dev| dev.max_block_dims().0).min().unwrap();
         let contexts = meta.iter().map(Device::retain_primary).collect::<Vec<_>>();
-        let kernels = NvidiaKernelsPtx::new(&host.config, block_size);
+        let kernels =
+            NvidiaKernelsPtx::new(host.config.d as _, host.config.max_seq_len as _, block_size);
 
         let comms = CommunicatorGroup::new(
             &meta
@@ -276,7 +277,7 @@ impl CausalLM for Transformer {
                         .map_physical(|u| unsafe { ctx.sprout(&u.mem[i]) });
                     let mut x1 = x1.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
                     let mut qkv = qkv.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
-                    kernels.rms_norm(&mut x1, &x, &params.input_layernorm());
+                    kernels.rms_norm(&mut x1, &x, &params.input_layernorm(), self.config.epsilon);
                     kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1.);
                 });
             }
@@ -296,8 +297,8 @@ impl CausalLM for Transformer {
                     let pos = pos.as_ref().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
                     let mut q = q.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
                     let mut k = k.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
-                    kernels.rotary_embedding(&mut q, &pos);
-                    kernels.rotary_embedding(&mut k, &pos);
+                    kernels.rotary_embedding(&mut q, &pos, self.config.theta);
+                    kernels.rotary_embedding(&mut k, &pos, self.config.theta);
                 });
             }
 
@@ -410,7 +411,12 @@ impl CausalLM for Transformer {
                     let mut gate_up =
                         unsafe { gate_up.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
 
-                    kernels.rms_norm(&mut x1, &x, &params.post_att_layernorm());
+                    kernels.rms_norm(
+                        &mut x1,
+                        &x,
+                        &params.post_att_layernorm(),
+                        self.config.epsilon,
+                    );
                     kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
                 });
             }
@@ -506,7 +512,7 @@ impl CausalLM for Transformer {
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
             let kernels = self.kernels[0].on(&stream);
-            kernels.rms_norm(&mut x, &x_, &model_norm);
+            kernels.rms_norm(&mut x, &x_, &model_norm, self.config.epsilon);
             kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
 
             logits.map_physical(|u| Cache {

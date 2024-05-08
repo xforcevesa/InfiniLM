@@ -10,12 +10,14 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 common = { path = "../common" }
 tensor = { path = "../tensor" }
 causal-lm = { path = "../causal-lm" }
-llama = { path = "../models/llama" }
-transformer-cpu = { path = "../transformer-cpu" }
-transformer-nv = { path = "../nvidia/transformer", optional = true }
-distributed = { path = "../nvidia/distributed", optional = true }
 service = { path = "../service" }
 web-api = { path = "../web-api" }
+
+llama = { path = "../models/llama/common" }
+llama-cpu = { path = "../models/llama/cpu" }
+llama-nv = { path = "../models/llama/nvidia", optional = true }
+llama-nv-distributed = { path = "../models/llama/nvidia-distributed", optional = true }
+
 log.workspace = true
 tokio.workspace = true
 simple_logger = "4.3"
@@ -27,4 +29,4 @@ search-cuda-tools.workspace = true
 
 [features]
 default = ["nvidia"]
-nvidia = ["transformer-nv", "distributed"]
+nvidia = ["llama-nv", "llama-nv-distributed"]

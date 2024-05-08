@@ -17,7 +17,7 @@ pub trait Kernels {
         U: Deref<Target = [u8]>,
         I: IntoIterator<Item = utok>;
 
-    fn rms_norm<T, U, V>(&self, y: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>)
+    fn rms_norm<T, U, V>(&self, y: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
     where
         T: DerefMut<Target = Self::Storage>,
         U: Deref<Target = Self::Storage>,
@@ -35,7 +35,7 @@ pub trait Kernels {
         U: Deref<Target = Self::Storage>,
         V: Deref<Target = Self::Storage>;
 
-    fn rotary_embedding<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>)
+    fn rotary_embedding<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32)
     where
         T: DerefMut<Target = Self::Storage>,
         U: Deref<Target = Self::Storage>;

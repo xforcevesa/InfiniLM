@@ -1,5 +1,5 @@
 [package]
-name = "transformer-nv"
+name = "llama-nv-distributed"
 version = "0.0.0"
 edition = "2021"
 authors = ["YdrMaster <ydrml@hotmail.com>"]
@@ -7,12 +7,16 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-common = { path = "../../common" }
-common-nv = { path = "../common" }
-causal-lm = { path = "../../causal-lm" }
-llama = { path = "../../models/llama" }
+common = { path = "../../../common" }
+common-nv = { path = "../../../devices/nvidia" }
+causal-lm = { path = "../../../causal-lm" }
+llama = { path = "../common" }
+nccl.workspace = true
 log.workspace = true
 itertools.workspace = true
+
+[dev-dependencies]
+simple_logger = "4.3"
 
 [build-dependencies]
 search-cuda-tools.workspace = true
