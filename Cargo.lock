@@ -438,7 +438,7 @@ dependencies = [
 [[package]]
 name = "cublas"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=9ca78ac#9ca78acafee51dd829db824bc3c4aa1345040082"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=c3e907f#c3e907f0ff7faf23363eb2f26ba7b5989641a230"
 dependencies = [
  "bindgen",
  "cuda",
@@ -448,10 +448,11 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=9ca78ac#9ca78acafee51dd829db824bc3c4aa1345040082"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=c3e907f#c3e907f0ff7faf23363eb2f26ba7b5989641a230"
 dependencies = [
  "bindgen",
  "half",
+ "log",
  "search-cuda-tools",
  "static_assertions",
 ]
@@ -1272,7 +1273,7 @@ dependencies = [
 [[package]]
 name = "nccl"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=9ca78ac#9ca78acafee51dd829db824bc3c4aa1345040082"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=c3e907f#c3e907f0ff7faf23363eb2f26ba7b5989641a230"
 dependencies = [
  "bindgen",
  "cuda",
@@ -1759,7 +1760,7 @@ dependencies = [
 [[package]]
 name = "search-cuda-tools"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=9ca78ac#9ca78acafee51dd829db824bc3c4aa1345040082"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=c3e907f#c3e907f0ff7faf23363eb2f26ba7b5989641a230"
 dependencies = [
  "find_cuda_helper",
 ]

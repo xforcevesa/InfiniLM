@@ -7,7 +7,6 @@ mod service;
 use causal_lm::{CausalLM, SampleArgs};
 use clap::Parser;
 use deploy::DeployArgs;
-use llama_nv::ModelLoadMeta;
 use service::ServiceArgs;
 use std::{ffi::c_int, fmt};
 
@@ -92,9 +91,9 @@ impl InferenceArgs {
         SimpleLogger::new().with_level(log).init().unwrap();
     }
 
+    #[cfg(detected_cuda)]
     fn nvidia(&self) -> Vec<c_int> {
         if let Some(nv) = self.nvidia.as_ref() {
-            #[cfg(detected_cuda)]
             {
                 if let Some((start, end)) = nv.split_once("..") {
                     let start = start.trim();
@@ -118,13 +117,14 @@ impl InferenceArgs {
                         .collect()
                 }
             }
-            #[cfg(not(detected_cuda))]
-            {
-                panic!("Nvidia GPU not detected");
-            }
         } else {
             vec![]
         }
+    }
+
+    #[cfg(not(detected_cuda))]
+    fn nvidia(&self) -> Vec<c_int> {
+        vec![]
     }
 
     #[inline]
@@ -161,7 +161,7 @@ trait Task: Sized {
             }
             #[cfg(detected_cuda)]
             &[n] => {
-                use llama_nv::Transformer as M;
+                use llama_nv::{ModelLoadMeta, Transformer as M};
                 let meta = ModelLoadMeta::load_all_to(n);
                 runtime.block_on(self.typed::<M>(meta));
             }
