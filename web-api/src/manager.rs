@@ -1,23 +1,32 @@
 use crate::schemas::{Drop, DropSuccess, Error, Fork, ForkSuccess, Infer};
 use causal_lm::CausalLM;
+use lru::LruCache;
 use service::{Service, Session};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    num::NonZeroUsize,
     sync::{Arc, Mutex},
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
-pub struct ServiceManager<M: CausalLM> {
-    infer_service: Service<M>,
-    pending_sessions: Mutex<HashMap<String, Option<Session<M>>>>,
+pub(crate) struct ServiceManager<M: CausalLM> {
+    service: Service<M>,
+    pending: Mutex<LruCache<String, Option<Session<M>>>>,
 }
 
-impl<M: CausalLM> From<Service<M>> for ServiceManager<M> {
+impl<M: CausalLM> ServiceManager<M> {
     #[inline]
-    fn from(infer_service: Service<M>) -> Self {
+    pub fn new(service: Service<M>, capacity: Option<usize>) -> Self {
         Self {
-            infer_service,
-            pending_sessions: Default::default(),
+            service,
+            pending: Mutex::new(
+                capacity
+                    .map(|capacity| {
+                        LruCache::new(
+                            NonZeroUsize::new(capacity).expect("Session capacity must be non-zero"),
+                        )
+                    })
+                    .unwrap_or_else(LruCache::unbounded),
+            ),
         }
     }
 }
@@ -43,49 +52,56 @@ where
         }
         let dialog_pos = dialog_pos.unwrap_or(0);
         let (sender, receiver) = mpsc::unbounded_channel();
+
+        macro_rules! set_sample {
+            ($session:expr) => {
+                if let Some(temperature) = temperature {
+                    $session.sample.temperature = temperature;
+                }
+                if let Some(top_k) = top_k {
+                    $session.sample.top_k = top_k;
+                }
+                if let Some(top_p) = top_p {
+                    $session.sample.top_p = top_p;
+                }
+            };
+        }
+
         if let Some(session_id) = session_id {
-            let mut session = match self
-                .pending_sessions
-                .lock()
-                .unwrap()
-                .entry(session_id.clone())
-            {
-                Entry::Occupied(mut e) => match e.get_mut() {
-                    Some(session) => {
+            let mut lru = self.pending.lock().unwrap();
+            let mut session = match lru.get_mut(&session_id) {
+                Some(option) => {
+                    if let Some(session) = option.as_mut() {
                         if session.revert(dialog_pos).is_ok() {
                             info!("Session {session_id} reverted to {dialog_pos}, inference ready");
-                            Ok(e.get_mut().take().unwrap())
+                            Ok(option.take().unwrap())
                         } else {
                             let current = session.dialog_pos();
-                            warn!("Session {session_id} failed to revert from {current} to {dialog_pos}");
+                            warn!(
+                                "Session {session_id} failed to revert from {current} to {dialog_pos}"
+                            );
                             Err(Error::InvalidDialogPos(current))
                         }
-                    }
-                    None => {
+                    } else {
                         warn!("Session {session_id} busy");
                         Err(Error::SessionBusy)
                     }
-                },
-                Entry::Vacant(e) if dialog_pos == 0 => {
-                    info!("Session {session_id} created, inference ready");
-                    Ok(e.insert(Some(self.infer_service.launch())).take().unwrap())
                 }
-                Entry::Vacant(_) => {
+                None if dialog_pos == 0 => {
+                    info!("Session {session_id} created, inference ready");
+                    if let Some((out, _)) = lru.push(session_id.clone(), None) {
+                        warn!("Session {out} dropped because LRU cache is full");
+                    }
+                    Ok(self.service.launch())
+                }
+                None => {
                     warn!("Session {session_id} not found");
                     Err(Error::SessionNotFound)
                 }
             }?;
-            if let Some(temperature) = temperature {
-                session.sample.temperature = temperature;
-            }
-            if let Some(top_k) = top_k {
-                session.sample.top_k = top_k;
-            }
-            if let Some(top_p) = top_p {
-                session.sample.top_p = top_p;
-            }
 
             let self_ = self.clone();
+            set_sample!(session);
             tokio::spawn(async move {
                 {
                     let mut busy = session.chat(inputs.iter().map(|s| s.content.as_str()));
@@ -96,8 +112,7 @@ where
                         }
                     }
                 }
-                if let Some(container) = self_.pending_sessions.lock().unwrap().get_mut(&session_id)
-                {
+                if let Some(container) = self_.pending.lock().unwrap().get_mut(&session_id) {
                     container.get_or_insert(session);
                 }
             });
@@ -106,17 +121,9 @@ where
             return Err(Error::InvalidDialogPos(0));
         } else {
             info!("Temporary session created, inference ready");
-            let mut session = self.infer_service.launch();
-            if let Some(temperature) = temperature {
-                session.sample.temperature = temperature;
-            }
-            if let Some(top_k) = top_k {
-                session.sample.top_k = top_k;
-            }
-            if let Some(top_p) = top_p {
-                session.sample.top_p = top_p;
-            }
+            let mut session = self.service.launch();
 
+            set_sample!(session);
             tokio::spawn(async move {
                 let mut busy = session.chat(inputs.iter().map(|s| s.content.as_str()));
                 while let Some(s) = busy.decode().await {
@@ -137,8 +144,8 @@ where
             new_session_id,
         }: Fork,
     ) -> Result<ForkSuccess, Error> {
-        let mut sessions = self.pending_sessions.lock().unwrap();
-        if !sessions.contains_key(&new_session_id) {
+        let mut sessions = self.pending.lock().unwrap();
+        if !sessions.contains(&new_session_id) {
             let new = sessions
                 .get_mut(&session_id)
                 .ok_or(Error::SessionNotFound)?
@@ -147,7 +154,9 @@ where
                 .fork();
 
             info!("Session \"{new_session_id}\" is forked from \"{session_id}\"");
-            sessions.insert(new_session_id, Some(new));
+            if let Some((out, _)) = sessions.push(new_session_id, Some(new)) {
+                warn!("Session {out} dropped because LRU cache is full");
+            }
             Ok(ForkSuccess)
         } else {
             warn!("Session fork failed because \"{new_session_id}\" already exists");
@@ -156,13 +165,7 @@ where
     }
 
     pub fn drop_(&self, Drop { session_id }: Drop) -> Result<DropSuccess, Error> {
-        if self
-            .pending_sessions
-            .lock()
-            .unwrap()
-            .remove(&session_id)
-            .is_some()
-        {
+        if self.pending.lock().unwrap().pop(&session_id).is_some() {
             info!("Session \"{session_id}\" dropped");
             Ok(DropSuccess)
         } else {

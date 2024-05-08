@@ -27,23 +27,11 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 #[macro_use]
 extern crate log;
 
-struct AppState<M: CausalLM> {
-    service_manager: Arc<ServiceManager<M>>,
-}
-
-impl<M> Clone for AppState<M>
-where
-    M: CausalLM + Send + Sync + 'static,
-    M::Storage: Send,
-{
-    fn clone(&self) -> Self {
-        Self {
-            service_manager: self.service_manager.clone(),
-        }
-    }
-}
-
-pub async fn start_infer_service<M>(service: service::Service<M>, port: u16) -> std::io::Result<()>
+pub async fn start_infer_service<M>(
+    service: service::Service<M>,
+    port: u16,
+    session_capacity: Option<usize>,
+) -> std::io::Result<()>
 where
     M: CausalLM + Send + Sync + 'static,
     M::Storage: Send,
@@ -51,10 +39,7 @@ where
     let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
     info!("start service at {addr}");
 
-    let app = AppState {
-        service_manager: Arc::new(service.into()),
-    };
-
+    let app = App(Arc::new(ServiceManager::new(service, session_capacity)));
     let listener = TcpListener::bind(addr).await?;
     loop {
         let app = app.clone();
@@ -70,7 +55,16 @@ where
     }
 }
 
-impl<M> hyper::service::Service<Request<body::Incoming>> for AppState<M>
+struct App<M: CausalLM>(Arc<ServiceManager<M>>);
+
+impl<M: CausalLM> Clone for App<M> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<M> hyper::service::Service<Request<body::Incoming>> for App<M>
 where
     M: CausalLM + Send + Sync + 'static,
     M::Storage: Send,
@@ -80,12 +74,12 @@ where
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: Request<body::Incoming>) -> Self::Future {
-        let manager = self.service_manager.clone();
+        let manager = self.0.clone();
 
         fn parse_body<'a, S: Deserialize<'a>>(
             whole_body: &'a Bytes,
         ) -> Result<S, Response<BoxBody<Bytes, hyper::Error>>> {
-            serde_json::from_slice(&whole_body).map_err(|e| error(schemas::Error::WrongJson(e)))
+            serde_json::from_slice(whole_body).map_err(|e| error(schemas::Error::WrongJson(e)))
         }
 
         match (req.method(), req.uri().path()) {

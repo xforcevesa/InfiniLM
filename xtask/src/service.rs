@@ -11,6 +11,9 @@ pub struct ServiceArgs {
     /// Port to bind the service to
     #[clap(short, long)]
     pub port: u16,
+    /// Maximum number of sessions to cache in memory.
+    #[clap(long)]
+    pub max_cache: Option<usize>,
 }
 
 impl Task for ServiceArgs {
@@ -26,6 +29,8 @@ impl Task for ServiceArgs {
     {
         let (mut service, _handle) = Service::<M>::load(&self.inference.model, meta);
         service.default_sample = self.inference.sample_args();
-        start_infer_service(service, self.port).await.unwrap();
+        start_infer_service(service, self.port, self.max_cache.filter(|&c| c < 256))
+            .await
+            .unwrap();
     }
 }
