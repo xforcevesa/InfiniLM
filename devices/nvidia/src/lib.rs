@@ -90,7 +90,6 @@ impl NvidiaKernelsPtx {
     pub fn load(&self, stream: &Stream) -> NvidiaKernels {
         let ctx = stream.ctx();
         let cublas = Cublas::new(ctx);
-        cublas.set_stream(stream);
         NvidiaKernels {
             cublas: cublas.sporulate(),
             rms_norm: self.rms_norm.clone().load(ctx),
@@ -123,6 +122,7 @@ pub struct KernelRuntime<'a> {
 impl NvidiaKernels {
     #[inline]
     pub fn on<'a>(&'a self, stream: &'a Stream) -> KernelRuntime<'a> {
+        unsafe { stream.ctx().sprout(&self.cublas).set_stream(stream) };
         KernelRuntime {
             kernels: self,
             stream,

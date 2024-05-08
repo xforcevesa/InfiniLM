@@ -31,7 +31,6 @@ pub struct Transformer {
 
     context: Arc<Context>,
     transfer: StreamSpore,
-    compute: StreamSpore,
     kernels: NvidiaKernels,
 
     embed_tokens: Tensor<HostMemSpore>,
@@ -77,7 +76,6 @@ impl Model for Transformer {
         let context = Arc::new(device.retain_primary());
         context.apply(|ctx| {
             let transfer = ctx.stream();
-            let compute = ctx.stream();
             let block_size = ctx.dev().max_block_dims().0;
 
             let page_lock = |u: &Weight| {
@@ -106,20 +104,19 @@ impl Model for Transformer {
                     host.config.max_seq_len as _,
                     block_size,
                 )
-                .load(&compute),
+                .load(&transfer),
                 embed_tokens: host.embed_tokens.as_ref().map_physical(page_lock),
                 layers,
                 lm_layernorm: host
                     .lm_layernorm
-                    .map_physical(|u| compute.from_host(&u).sporulate()),
+                    .map_physical(|u| transfer.from_host(&u).sporulate()),
                 lm_head: host
                     .lm_head
-                    .map_physical(|u| compute.from_host(&u).sporulate()),
+                    .map_physical(|u| transfer.from_host(&u).sporulate()),
                 pool: Mutex::new(pool),
 
                 config: host.config,
                 transfer: transfer.sporulate(),
-                compute: compute.sporulate(),
             })
         })
     }
@@ -136,6 +133,7 @@ impl CausalLM for Transformer {
     fn new_cache(&self) -> Tensor<Self::Storage> {
         self.config.new_cache(|len| Cache {
             context: self.context.clone(),
+            stream: None,
             mem: self.context.apply(|ctx| ctx.malloc::<u8>(len).sporulate()),
         })
     }
@@ -148,6 +146,7 @@ impl CausalLM for Transformer {
                 pos,
                 |len| Cache {
                     context: self.context.clone(),
+                    stream: None,
                     mem: stream.malloc::<u8>(len).sporulate(),
                 },
                 |dst, src| {
@@ -164,7 +163,7 @@ impl CausalLM for Transformer {
         let dt = self.config.dt;
         let d = self.config.d;
         self.context.apply(|ctx| {
-            let compute = unsafe { self.compute.sprout(ctx) };
+            let compute = ctx.stream();
             let kernels = self.kernels.on(&compute);
 
             let tokens = queries.into_iter().collect::<Vec<_>>();
@@ -174,6 +173,7 @@ impl CausalLM for Transformer {
             kernels.gather(&mut x, &self.embed_tokens, tokens);
             x.map_physical(|u| Cache {
                 context: self.context.clone(),
+                stream: Some(compute.sporulate()),
                 mem: u.sporulate(),
             })
         })
@@ -188,7 +188,14 @@ impl CausalLM for Transformer {
         Self: 'a,
     {
         self.context.apply(|ctx| {
-            let compute = unsafe { self.compute.sprout(ctx) };
+            let compute = unsafe {
+                token_embedded
+                    .physical()
+                    .stream
+                    .as_ref()
+                    .unwrap()
+                    .sprout(ctx)
+            };
             let transfer = unsafe { self.transfer.sprout(ctx) };
             let stream = ComputeStream {
                 nh: self.config.nh,
@@ -215,7 +222,8 @@ impl CausalLM for Transformer {
         let d = self.config.d;
 
         self.context.apply(|ctx| {
-            let stream = unsafe { self.compute.sprout(ctx) };
+            let stream_spore = hidden_state.physical_mut().stream.take().unwrap();
+            let stream = unsafe { stream_spore.sprout(ctx) };
 
             let mut x = hidden_state
                 .as_mut()
@@ -225,6 +233,7 @@ impl CausalLM for Transformer {
             if range.is_empty() {
                 return Tensor::alloc(dt, &[0, d as _], |_| Cache {
                     context: self.context.clone(),
+                    stream: Some(stream_spore),
                     mem: stream.malloc::<u8>(0).sporulate(),
                 });
             }
@@ -253,6 +262,7 @@ impl CausalLM for Transformer {
 
             logits.map_physical(|u| Cache {
                 context: self.context.clone(),
+                stream: Some(stream_spore),
                 mem: u.sporulate(),
             })
         })
@@ -269,14 +279,19 @@ impl CausalLM for Transformer {
         };
         let voc = voc as usize;
 
-        self.context.apply(|ctx| {
+        let Cache {
+            context,
+            stream,
+            mem,
+        } = logits.physical();
+        context.apply(|ctx| {
             sample_nv(
                 args.into_iter()
                     .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
                     .enumerate(),
-                &unsafe { logits.physical().mem.sprout(ctx) },
+                &unsafe { mem.sprout(ctx) },
                 voc,
-                &unsafe { self.compute.sprout(ctx) },
+                &unsafe { stream.as_ref().unwrap().sprout(ctx) },
             )
         })
     }
@@ -287,7 +302,6 @@ impl Drop for Transformer {
     fn drop(&mut self) {
         self.context.apply(|ctx| unsafe {
             ctx.kill(&mut self.transfer);
-            ctx.kill(&mut self.compute);
             ctx.kill(self.embed_tokens.physical_mut());
             ctx.kill(self.lm_layernorm.physical_mut());
             ctx.kill(self.lm_head.physical_mut());
@@ -316,13 +330,19 @@ impl Drop for Transformer {
 
 pub struct Cache {
     context: Arc<Context>,
+    stream: Option<StreamSpore>,
     mem: DevMemSpore,
 }
 
 impl Drop for Cache {
     #[inline]
     fn drop(&mut self) {
-        self.context.apply(|ctx| unsafe { self.mem.kill(ctx) });
+        self.context.apply(|ctx| unsafe {
+            if let Some(mut stream) = self.stream.take() {
+                ctx.kill(&mut stream);
+            }
+            ctx.kill(&mut self.mem);
+        });
     }
 }
 
@@ -469,7 +489,7 @@ impl<'a> Iterator for Iter<'a> {
         };
         self.layer += 1;
 
-        let (lll, mut event) = pool.pop_front().unwrap();
+        let (s, mut event) = pool.pop_front().unwrap();
         let ctx = self.compute.ctx();
         self.compute.wait_for(&unsafe { event.sprout(ctx) });
         unsafe { ctx.kill(&mut event) };
@@ -479,7 +499,7 @@ impl<'a> Iterator for Iter<'a> {
             pool: self.pool.clone(),
             load,
             transfer: self.transfer,
-            storage: Some(lll),
+            storage: Some(s),
         })
     }
 }
