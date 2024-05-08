@@ -345,6 +345,14 @@ dependencies = [
 [[package]]
 name = "common-cpu"
 version = "0.0.0"
+dependencies = [
+ "common",
+ "gemm",
+ "intel-mkl-src",
+ "intel-mkl-tool",
+ "kernel-lib",
+ "tensor",
+]
 
 [[package]]
 name = "common-nv"
@@ -1145,10 +1153,6 @@ dependencies = [
  "causal-lm",
  "common",
  "common-cpu",
- "gemm",
- "intel-mkl-src",
- "intel-mkl-tool",
- "kernel-lib",
  "llama",
  "tensor",
 ]

@@ -1,14 +1,20 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+#[macro_export]
+macro_rules! slice {
+    ($blob:expr; $width:expr; [$line:expr]) => {
+        $blob[$line as usize * $width as usize..][..$width as usize]
+    };
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod fused_softmax;
+mod gather;
+mod mat_mul;
+mod rms_norm;
+mod rotary_embedding;
+mod swiglu;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use fused_softmax::softmax;
+pub use gather::gather;
+pub use mat_mul::mat_mul;
+pub use rms_norm::rms_norm;
+pub use rotary_embedding::rotary_embedding;
+pub use swiglu::swiglu;

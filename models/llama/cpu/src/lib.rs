@@ -1,12 +1,6 @@
-mod kernel;
-
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
-use common::{upos, utok, Blob, FileLoadError};
-use gemm::f16;
-use kernel::{
-    fused_softmax::softmax, gather::gather, mat_mul::mat_mul, rms_norm::rms_norm,
-    rotary_embedding::rotary_embedding, swiglu::swiglu,
-};
+use common::{f16, upos, utok, Blob, FileLoadError};
+use common_cpu::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
 use llama::{ComputeStream, LayerStorage, Storage, Weight};
 use std::{
     iter::repeat,
@@ -233,7 +227,7 @@ impl CausalLM for Transformer {
         args.into_iter()
             .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
             .enumerate()
-            .map(|(i, args)| args.random(&kernel::slice!(logits; voc; [i])))
+            .map(|(i, args)| args.random(&common_cpu::slice!(logits; voc; [i])))
             .collect()
     }
 }
