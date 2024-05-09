@@ -30,7 +30,7 @@ memmap2 = "0.9"
 rayon = "1.10"
 tokio = { version = "1.37", features = ["rt-multi-thread", "sync"] }
 
-cuda = { git = "https://github.com/YdrMaster/cuda-driver", rev = "c3e907f" }
-cublas = { git = "https://github.com/YdrMaster/cuda-driver", rev = "c3e907f" }
-nccl = { git = "https://github.com/YdrMaster/cuda-driver", rev = "c3e907f" }
-search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "c3e907f" }
+cuda = { git = "https://github.com/YdrMaster/cuda-driver", rev = "13c037e" }
+cublas = { git = "https://github.com/YdrMaster/cuda-driver", rev = "13c037e" }
+nccl = { git = "https://github.com/YdrMaster/cuda-driver", rev = "13c037e" }
+search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "13c037e" }

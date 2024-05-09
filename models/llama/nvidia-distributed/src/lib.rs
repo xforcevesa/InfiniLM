@@ -55,7 +55,13 @@ impl Model for Transformer {
         info!("load host: {:?}", time.elapsed());
 
         let block_size = meta.iter().map(|dev| dev.max_block_dims().0).min().unwrap();
-        let contexts = meta.iter().map(Device::retain_primary).collect::<Vec<_>>();
+        let contexts = meta
+            .iter()
+            .map(|dev| {
+                dev.set_mempool_threshold(u64::MAX);
+                dev.retain_primary()
+            })
+            .collect::<Vec<_>>();
         let kernels =
             NvidiaKernelsPtx::new(host.config.d as _, host.config.max_seq_len as _, block_size);
 
@@ -457,10 +463,11 @@ impl CausalLM for Transformer {
         // kill
         for (i, context) in contexts.iter().enumerate() {
             context.apply(|ctx| unsafe {
-                ctx.kill(&mut state_buf.physical_mut()[i]);
-                ctx.kill(&mut q_buf[i]);
-                ctx.kill(&mut att_buf[i]);
-                ctx.kill(&mut pos.physical_mut()[i]);
+                let stream = self.streams[i].sprout(ctx);
+                state_buf.physical_mut()[i].kill_on(&stream);
+                pos.physical_mut()[i].kill_on(&stream);
+                q_buf[i].kill_on(&stream);
+                att_buf[i].kill_on(&stream);
             });
         }
 

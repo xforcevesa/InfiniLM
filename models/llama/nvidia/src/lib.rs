@@ -73,6 +73,7 @@ impl Model for Transformer {
         info!("load host: {:?}", time.elapsed());
         let load_layers = (load_layers as udim).min(host.config.nlayers);
 
+        device.set_mempool_threshold(u64::MAX);
         let context = Arc::new(device.retain_primary());
         context.apply(|ctx| {
             let transfer = ctx.stream();
@@ -339,9 +340,11 @@ impl Drop for Cache {
     fn drop(&mut self) {
         self.context.apply(|ctx| unsafe {
             if let Some(mut stream) = self.stream.take() {
+                self.mem.kill_on(&ctx.sprout(&stream));
                 ctx.kill(&mut stream);
+            } else {
+                ctx.kill(&mut self.mem);
             }
-            ctx.kill(&mut self.mem);
         });
     }
 }
