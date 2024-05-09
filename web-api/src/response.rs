@@ -1,7 +1,5 @@
 //! All HttpResponses in this App.
 
-use std::convert::Infallible;
-
 use crate::schemas;
 use http_body_util::{combinators::BoxBody, BodyExt, Full, StreamBody};
 use hyper::{
@@ -18,7 +16,7 @@ pub fn text_stream(
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "text/event-stream")
-        .body(stream(s))
+        .body(StreamBody::new(s.map(|s| Ok(Frame::data(s.into())))).boxed())
         .unwrap()
 }
 
@@ -47,18 +45,7 @@ pub fn error(e: schemas::Error) -> Response<BoxBody<Bytes, hyper::Error>> {
 }
 
 #[inline]
-fn stream<T>(chunk: T) -> BoxBody<Bytes, hyper::Error>
-where
-    T: Stream<Item = String> + Send + Sync + 'static,
-{
-    StreamBody::new(
-        chunk.map(|s| Ok(Frame::data(s.into())).map_err(|_: Infallible| unreachable!())),
-    )
-    .boxed()
-}
-
-#[inline]
-fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
+fn full(chunk: impl Into<Bytes>) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed()

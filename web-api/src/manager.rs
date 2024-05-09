@@ -16,17 +16,11 @@ pub(crate) struct ServiceManager<M: CausalLM> {
 impl<M: CausalLM> ServiceManager<M> {
     #[inline]
     pub fn new(service: Service<M>, capacity: Option<usize>) -> Self {
+        let cap =
+            capacity.map(|c| NonZeroUsize::new(c).expect("Session capacity must be non-zero"));
         Self {
             service,
-            pending: Mutex::new(
-                capacity
-                    .map(|capacity| {
-                        LruCache::new(
-                            NonZeroUsize::new(capacity).expect("Session capacity must be non-zero"),
-                        )
-                    })
-                    .unwrap_or_else(LruCache::unbounded),
-            ),
+            pending: Mutex::new(cap.map(LruCache::new).unwrap_or_else(LruCache::unbounded)),
         }
     }
 }

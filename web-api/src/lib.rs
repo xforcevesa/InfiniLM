@@ -7,14 +7,14 @@ mod schemas;
 use causal_lm::CausalLM;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::{
-    body::{self, Bytes},
+    body::{Bytes, Incoming},
     server::conn::http1,
+    service::Service as HyperService,
     Method, Request, Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
 use manager::ServiceManager;
 use response::{error, success, text_stream};
-use serde::Deserialize;
 use std::{
     future::Future,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -64,7 +64,7 @@ impl<M: CausalLM> Clone for App<M> {
     }
 }
 
-impl<M> hyper::service::Service<Request<body::Incoming>> for App<M>
+impl<M> HyperService<Request<Incoming>> for App<M>
 where
     M: CausalLM + Send + Sync + 'static,
     M::Storage: Send,
@@ -73,45 +73,33 @@ where
     type Error = hyper::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn call(&self, req: Request<body::Incoming>) -> Self::Future {
+    fn call(&self, req: Request<Incoming>) -> Self::Future {
         let manager = self.0.clone();
 
-        fn parse_body<'a, S: Deserialize<'a>>(
-            whole_body: &'a Bytes,
-        ) -> Result<S, Response<BoxBody<Bytes, hyper::Error>>> {
-            serde_json::from_slice(whole_body).map_err(|e| error(schemas::Error::WrongJson(e)))
+        macro_rules! response {
+            ($method:ident; $f:expr) => {
+                Box::pin(async move {
+                    let whole_body = req.collect().await?.to_bytes();
+                    let req = serde_json::from_slice(&whole_body);
+                    Ok(match req {
+                        Ok(req) => match manager.$method(req) {
+                            Ok(ret) => $f(ret),
+                            Err(e) => error(e),
+                        },
+                        Err(e) => error(schemas::Error::WrongJson(e)),
+                    })
+                })
+            };
         }
 
         match (req.method(), req.uri().path()) {
-            (&Method::POST, "/infer") => Box::pin(async move {
-                Ok(match parse_body(&req.collect().await?.to_bytes()) {
-                    Ok(req) => match manager.infer(req) {
-                        Ok(recv) => text_stream(UnboundedReceiverStream::new(recv)),
-                        Err(e) => error(e),
-                    },
-                    Err(e) => e,
-                })
-            }),
-            (&Method::POST, "/fork") => Box::pin(async move {
-                Ok(match parse_body(&req.collect().await?.to_bytes()) {
-                    Ok(req) => match manager.fork(req) {
-                        Ok(s) => success(s),
-                        Err(e) => error(e),
-                    },
-                    Err(e) => e,
-                })
-            }),
-            (&Method::POST, "/drop") => Box::pin(async move {
-                Ok(match parse_body(&req.collect().await?.to_bytes()) {
-                    Ok(req) => match manager.drop_(req) {
-                        Ok(s) => success(s),
-                        Err(e) => error(e),
-                    },
-                    Err(e) => e,
-                })
-            }),
+            (&Method::POST, "/infer") => {
+                response!(infer; |ret| text_stream(UnboundedReceiverStream::new(ret)))
+            }
+            (&Method::POST, "/fork") => response!(fork ; success),
+            (&Method::POST, "/drop") => response!(drop_; success),
             // Return 404 Not Found for other routes.
-            _ => Box::pin(async {
+            _ => Box::pin(async move {
                 Ok(Response::builder()
                     .status(StatusCode::NOT_FOUND)
                     .body(
