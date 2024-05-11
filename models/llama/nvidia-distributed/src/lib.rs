@@ -209,7 +209,7 @@ impl CausalLM for Transformer {
     where
         Self: 'a,
     {
-        let mut queries = queries.into_iter().collect::<Vec<_>>();
+        let queries = queries.into_iter().collect::<Vec<_>>();
         let mut nt = 0;
         let mut max_seq_len = 0;
         let mut max_att_len = 0;
@@ -224,6 +224,7 @@ impl CausalLM for Transformer {
                 seq
             })
             .collect::<Vec<_>>();
+        let seq_len = &seq_len;
 
         let dt = self.config.dt;
         let d = self.config.d;
@@ -235,243 +236,178 @@ impl CausalLM for Transformer {
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
 
-        let contexts = self.comms.contexts().collect::<Vec<_>>();
-        let n = contexts.len() as udim;
-
+        let n = self.comms.len() as udim;
         let reusing = (d + dkv + dkv).max(di + di);
-        let mut state_buf =
-            Tensor::alloc(dt, &[nt, d + reusing / n], |len| malloc_all(&contexts, len));
-        macro_rules! state {
-            () => {
-                split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n)
-            };
-        }
-
-        let mut q_buf = malloc_all(&contexts, (nh / n * max_seq_len * dh) as usize * dt.size());
-        let mut att_buf = malloc_all(
-            &contexts,
-            (nh / n * max_seq_len * max_att_len) as usize * dt.size(),
-        );
         let pos = causal_lm::pos(&queries, nt);
-        let mut pos = pos.as_ref().map_physical(|u| {
-            contexts
+        let pos = &pos;
+
+        std::thread::scope(|s| {
+            let _ = self
+                .comms
                 .iter()
                 .enumerate()
-                .map(|(i, context)| {
-                    context.apply(|ctx| {
-                        unsafe { ctx.sprout(&self.streams[i]) }
-                            .from_host(u)
-                            .sporulate()
+                .map(|(i, comm)| {
+                    let queries = queries
+                        .iter()
+                        .map(|q| {
+                            (
+                                q.cache
+                                    .as_ref()
+                                    .map(|t| t.as_ref().map_physical(|u| &u.mem[i])),
+                                q.range.clone(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let x = token_embedded.as_ref().map_physical(|u| &u.mem[i]);
+
+                    s.spawn(move || {
+                        comm.device().retain_primary().apply(|ctx| {
+                            let stream = unsafe { ctx.sprout(&self.streams[i]) };
+                            let kernels = self.kernels[i].on(&stream);
+                            let mut queries = queries
+                                .into_iter()
+                                .map(|(cache, range)| {
+                                    (
+                                        cache.map(|t| t.map_physical(|u| unsafe { ctx.sprout(u) })),
+                                        range,
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+                            let mut queries = queries
+                                .iter_mut()
+                                .map(|(cache, range)| QueryContext {
+                                    cache: cache.as_mut(),
+                                    range: range.clone(),
+                                })
+                                .collect::<Vec<_>>();
+                            let mut x = x.map_physical(|u| unsafe { ctx.sprout(u) });
+
+                            let mut state_buf = Tensor::alloc(dt, &[nt, d + reusing / n], |len| {
+                                ctx.malloc::<u8>(len)
+                            });
+
+                            let mut q_buf =
+                                ctx.malloc::<u8>((nh / n * max_seq_len * dh) as usize * dt.size());
+                            let mut att_buf = ctx.malloc::<u8>(
+                                (nh / n * max_seq_len * max_att_len) as usize * dt.size(),
+                            );
+                            let pos = pos.as_ref().map_physical(|u| stream.from_host(u));
+
+                            for layer in 0..self.config.nlayers as usize {
+                                let params = self.matrix.get(layer, i, ctx);
+
+                                let (mut x1, qkv) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
+                                let mut qkv =
+                                    qkv.slice(&[slice![=>], slice![=> (d + dkv + dkv) / n]]);
+
+                                kernels.rms_norm(&mut x1, &x, &params.input_layernorm(), self.config.epsilon);
+                                kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1.);
+
+                                let (q, k, v) = split!(qkv; [1]: d / n, dkv / n, dkv / n);
+                                let mut q = q.reshape(&[nt, nh / n, dh]);
+                                let mut k = k.reshape(&[nt, nkvh / n, dh]);
+                                let v = v.reshape(&[nt, nkvh / n, dh]);
+                                let o = x1.reshape(&[nt, nh, dh]);
+                                let o = o.slice(&[slice![=>], slice![=> nh / n], slice![=>]]);
+
+                                kernels.rotary_embedding(&mut q, &pos, self.config.theta);
+                                kernels.rotary_embedding(&mut k, &pos, self.config.theta);
+
+                                let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
+                                let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
+                                let v = v.transpose(&[1, 0, 2]).split(1, &seq_len);
+                                let o = o.transpose(&[1, 0, 2]).split(1, &seq_len);
+
+                                for (query, q, k, v, mut o) in izip!(&mut queries, q, k, v, o) {
+                                    let pos = query.pos();
+                                    let seq_len = query.seq_len();
+                                    let att_len = query.att_len();
+                                    let Some((mut k_cache, mut v_cache)) = query.cache(layer as _) else {
+                                        continue;
+                                    };
+
+                                    let slice_cat = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
+                                    let slice_att = &[slice![=>], slice![      => att_len], slice![=>]];
+                                    let shape_q0 = &[nkvh / n * head_group, seq_len, dh];
+                                    let shape_q1 = &[nkvh / n, head_group * seq_len, dh];
+                                    let shape_att0 = &[nkvh / n, head_group * seq_len, att_len];
+                                    let shape_att1 = &[nkvh / n * head_group, seq_len, att_len];
+
+                                    let mut q_att = Tensor::new(dt, shape_q0, &mut q_buf[..]);
+                                    let mut k_cat = k_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
+                                    let mut v_cat = v_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
+                                    kernels.reform(&mut q_att, &q);
+                                    kernels.reform(&mut k_cat, &k);
+                                    kernels.reform(&mut v_cat, &v);
+
+                                    let q_att = q_att.reshape(shape_q1);
+                                    let k_att = k_cache.slice(slice_att).transpose(&[0, 2, 1]);
+                                    let v_att = v_cache.slice(slice_att);
+
+                                    let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
+                                    kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
+                                    let mut att = att.reshape(shape_att1);
+                                    kernels.softmax(&mut att);
+                                    let mut x2 = q_att;
+                                    kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
+
+                                    kernels.reform(&mut o, &x2.reshape(shape_q0));
+                                }
+
+                                let (mut x1, gate_up) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
+                                let mut gate_up = gate_up.slice(&[slice![=>], slice![=> (di + di) / n]]);
+
+                                let o = x1.as_ref().slice(&[slice![=>], slice![=> d/n as udim]]);
+                                let o = o.map_physical(|u| &**u) ;
+                                kernels.mat_mul(&mut x, if i == 0 { 1. } else { 0. }, &o, &params.w_o(), 1.);
+                                comm.all_reduce(
+                                    x.physical_mut(),
+                                    None,
+                                    cast_dt(self.config.dt),
+                                    nccl::ReduceType::ncclSum,
+                                    &stream,
+                                );
+
+                                kernels.rms_norm(
+                                    &mut x1,
+                                    &x,
+                                    &params.post_att_layernorm(),
+                                    self.config.epsilon,
+                                );
+                                kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
+
+                                let (mut gate, up) = split!(gate_up; [1]: di / n, di / n);
+
+                                kernels.swiglu(&mut gate, &up);
+                                kernels.mat_mul(
+                                    &mut x,
+                                    if i == 0 { 1. } else { 0. },
+                                    &gate,
+                                    &params.mlp_down(),
+                                    1.,
+                                );
+                                comm.all_reduce(
+                                    x.physical_mut(),
+                                    None,
+                                    cast_dt(self.config.dt),
+                                    nccl::ReduceType::ncclSum,
+                                    &stream,
+                                );
+                            }
+
+                            state_buf.take_physical().drop_on(&stream);
+                            pos.take_physical().drop_on(&stream);
+                            q_buf.drop_on(&stream);
+                            att_buf.drop_on(&stream);
+                        });
                     })
                 })
                 .collect::<Vec<_>>()
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .collect::<Vec<_>>();
         });
-
-        let mut x = token_embedded;
-        for layer in 0..self.config.nlayers as usize {
-            let (mut x1, qkv) = state!();
-            let mut qkv = qkv.slice(&[slice![=>], slice![=> (d + dkv + dkv) / n]]);
-
-            for (i, context) in contexts.iter().enumerate() {
-                context.apply(|ctx| {
-                    let stream = unsafe { ctx.sprout(&self.streams[i]) };
-                    let kernels = self.kernels[i].on(&stream);
-                    let params = self.matrix.get(layer, i, ctx);
-
-                    let x = x
-                        .as_ref()
-                        .map_physical(|u| unsafe { ctx.sprout(&u.mem[i]) });
-                    let mut x1 = x1.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
-                    let mut qkv = qkv.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
-                    kernels.rms_norm(&mut x1, &x, &params.input_layernorm(), self.config.epsilon);
-                    kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1.);
-                });
-            }
-
-            let (q, k, v) = split!(qkv; [1]: d / n, dkv / n, dkv / n);
-            let mut q = q.reshape(&[nt, nh / n, dh]);
-            let mut k = k.reshape(&[nt, nkvh / n, dh]);
-            let v = v.reshape(&[nt, nkvh / n, dh]);
-            let o = x1.reshape(&[nt, nh, dh]);
-            let o = o.slice(&[slice![=>], slice![=> nh / n], slice![=>]]);
-
-            for (i, context) in contexts.iter().enumerate() {
-                context.apply(|ctx| {
-                    let stream = unsafe { ctx.sprout(&self.streams[i]) };
-                    let kernels = self.kernels[i].on(&stream);
-
-                    let pos = pos.as_ref().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
-                    let mut q = q.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
-                    let mut k = k.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[i]) });
-                    kernels.rotary_embedding(&mut q, &pos, self.config.theta);
-                    kernels.rotary_embedding(&mut k, &pos, self.config.theta);
-                });
-            }
-
-            let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
-            let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
-            let v = v.transpose(&[1, 0, 2]).split(1, &seq_len);
-            let o = o.transpose(&[1, 0, 2]).split(1, &seq_len);
-
-            for (query, q, k, v, mut o) in izip!(&mut queries, q, k, v, o) {
-                let pos = query.pos();
-                let seq_len = query.seq_len();
-                let att_len = query.att_len();
-                let mut cache = query
-                    .cache
-                    .as_mut()
-                    .map(|t| t.as_mut().map_physical(|u| &mut *u.mem));
-                let mut query = QueryContext {
-                    cache: cache.as_mut(),
-                    range: query.range.clone(),
-                };
-                let Some((mut k_cache, mut v_cache)) = query.cache(layer) else {
-                    continue;
-                };
-
-                let slice_cat = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
-                let slice_att = &[slice![=>], slice![      => att_len], slice![=>]];
-                let shape_q0 = &[nkvh / n * head_group, seq_len, dh];
-                let shape_q1 = &[nkvh / n, head_group * seq_len, dh];
-                let shape_att0 = &[nkvh / n, head_group * seq_len, att_len];
-                let shape_att1 = &[nkvh / n * head_group, seq_len, att_len];
-
-                let mut q_att = Tensor::new(dt, shape_q0, &mut q_buf[..]);
-                let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
-
-                for (i, context) in contexts.iter().enumerate() {
-                    context.apply(|ctx| {
-                        let stream = unsafe { ctx.sprout(&self.streams[i]) };
-                        let kernels = self.kernels[i].on(&stream);
-
-                        let q = unsafe { q.as_ref().map_physical(|u| ctx.sprout(&u[i])) };
-                        let k = unsafe { k.as_ref().map_physical(|u| ctx.sprout(&u[i])) };
-                        let v = unsafe { v.as_ref().map_physical(|u| ctx.sprout(&u[i])) };
-                        let mut o = unsafe { o.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                        let mut q_att =
-                            unsafe { q_att.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                        let mut k_cache =
-                            unsafe { k_cache.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                        let mut v_cache =
-                            unsafe { v_cache.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                        let mut att = unsafe { att.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-
-                        let mut k_cat =
-                            k_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                        let mut v_cat =
-                            v_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                        kernels.reform(&mut q_att, &q);
-                        kernels.reform(&mut k_cat, &k);
-                        kernels.reform(&mut v_cat, &v);
-
-                        let q_att = q_att.reshape(shape_q1);
-                        let k_att = k_cache.slice(slice_att).transpose(&[0, 2, 1]);
-                        let v_att = v_cache.slice(slice_att);
-
-                        kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
-                        let mut att = att.reshape(shape_att1);
-                        kernels.softmax(&mut att);
-                        let mut x2 = q_att;
-                        let att = att.reshape(shape_att0);
-                        kernels.mat_mul(&mut x2, 0., &att, &v_att, 1.);
-
-                        kernels.reform(&mut o, &x2.reshape(shape_q0));
-                    });
-                }
-            }
-
-            let (mut x1, gate_up) = state!();
-            let mut gate_up = gate_up.slice(&[slice![=>], slice![=> (di + di) / n]]);
-
-            for (i, comm) in self.comms.call().iter().enumerate() {
-                contexts[i].apply(|ctx| {
-                    let stream = unsafe { ctx.sprout(&self.streams[i]) };
-                    let kernels = self.kernels[i].on(&stream);
-                    let params = self.matrix.get(layer, i, ctx);
-
-                    let mut x = x
-                        .as_ref()
-                        .map_physical(|u| unsafe { ctx.sprout(&u.mem[i]) });
-                    let o = x1.as_ref().slice(&[slice![=>], slice![=> d/n as udim]]);
-                    let o = unsafe { o.map_physical(|u| ctx.sprout(&u[i])) };
-                    kernels.mat_mul(&mut x, if i == 0 { 1. } else { 0. }, &o, &params.w_o(), 1.);
-                    comm.all_reduce(
-                        x.physical_mut(),
-                        None,
-                        cast_dt(self.config.dt),
-                        nccl::ReduceType::ncclSum,
-                        &stream,
-                    );
-                });
-            }
-            for (i, context) in contexts.iter().enumerate() {
-                context.apply(|ctx| {
-                    let stream = unsafe { ctx.sprout(&self.streams[i]) };
-                    let kernels = self.kernels[i].on(&stream);
-                    let params = self.matrix.get(layer, i, ctx);
-
-                    let x = x
-                        .as_ref()
-                        .map_physical(|u| unsafe { ctx.sprout(&u.mem[i]) });
-                    let mut x1 = unsafe { x1.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                    let mut gate_up =
-                        unsafe { gate_up.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-
-                    kernels.rms_norm(
-                        &mut x1,
-                        &x,
-                        &params.post_att_layernorm(),
-                        self.config.epsilon,
-                    );
-                    kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
-                });
-            }
-
-            let (mut gate, up) = split!(gate_up; [1]: di / n, di / n);
-
-            for (i, comm) in self.comms.call().iter().enumerate() {
-                contexts[i].apply(|ctx| {
-                    let stream = unsafe { ctx.sprout(&self.streams[i]) };
-                    let kernels = self.kernels[i].on(&stream);
-                    let params = self.matrix.get(layer, i, ctx);
-
-                    let mut gate = unsafe { gate.as_mut().map_physical(|u| ctx.sprout(&u[i])) };
-                    let up = unsafe { up.as_ref().map_physical(|u| ctx.sprout(&u[i])) };
-                    let mut x = x
-                        .as_mut()
-                        .map_physical(|u| unsafe { ctx.sprout(&u.mem[i]) });
-
-                    kernels.swiglu(&mut gate, &up);
-                    kernels.mat_mul(
-                        &mut x,
-                        if i == 0 { 1. } else { 0. },
-                        &gate,
-                        &params.mlp_down(),
-                        1.,
-                    );
-                    comm.all_reduce(
-                        x.physical_mut(),
-                        None,
-                        cast_dt(self.config.dt),
-                        nccl::ReduceType::ncclSum,
-                        &stream,
-                    );
-                });
-            }
-        }
-
-        // kill
-        for (i, context) in contexts.iter().enumerate() {
-            context.apply(|ctx| unsafe {
-                let stream = self.streams[i].sprout(ctx);
-                state_buf.physical_mut()[i].kill_on(&stream);
-                pos.physical_mut()[i].kill_on(&stream);
-                q_buf[i].kill_on(&stream);
-                att_buf[i].kill_on(&stream);
-            });
-        }
-
-        x
+        token_embedded
     }
 
     fn decode(
