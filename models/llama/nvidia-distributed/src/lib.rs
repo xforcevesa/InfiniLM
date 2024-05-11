@@ -11,16 +11,16 @@ use common::{upos, utok, FileLoadError};
 use common_nv::{
     cast_dt,
     cuda::{
-        AsRaw, Context, ContextResource, ContextSpore, DevMemSpore, Device, HostMemSpore,
+        AsRaw, Context, ContextResource, ContextSpore, DevMem, DevMemSpore, Device, HostMemSpore,
         StreamSpore,
     },
-    sample_nv, slice, split, udim, DataType, Kernels, LocalSplitable, NvidiaKernels,
+    sample_nv, slice, split, udim, DataType, KernelRuntime, Kernels, LocalSplitable, NvidiaKernels,
     NvidiaKernelsPtx, Tensor,
 };
 use itertools::izip;
 use llama::InferenceConfig;
 use nccl::CommunicatorGroup;
-use parameters::ParameterMatrix;
+use parameters::{Layer, ParameterMatrix};
 use std::{
     iter::{repeat, zip},
     path::Path,
@@ -76,7 +76,7 @@ impl Model for Transformer {
             (
                 host.embed_tokens.map_physical(|u| {
                     let mut host = ctx.malloc_host::<u8>(u.len());
-                    host.clone_from_slice(&*u);
+                    host.clone_from_slice(&u);
                     host.sporulate()
                 }),
                 host.lm_layernorm
@@ -233,8 +233,6 @@ impl CausalLM for Transformer {
         let dh = d / nh;
         let dkv = nkvh * dh;
         let di = self.config.di;
-        let head_group = nh / nkvh;
-        let head_div = (dh as f32).sqrt().recip();
 
         let n = self.comms.len() as udim;
         let reusing = (d + dkv + dkv).max(di + di);
@@ -296,70 +294,20 @@ impl CausalLM for Transformer {
                             for layer in 0..self.config.nlayers as usize {
                                 let params = self.matrix.get(layer, i, ctx);
 
-                                let (mut x1, qkv) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
-                                let mut qkv =
-                                    qkv.slice(&[slice![=>], slice![=> (d + dkv + dkv) / n]]);
-
-                                kernels.rms_norm(&mut x1, &x, &params.input_layernorm(), self.config.epsilon);
-                                kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1.);
-
-                                let (q, k, v) = split!(qkv; [1]: d / n, dkv / n, dkv / n);
-                                let mut q = q.reshape(&[nt, nh / n, dh]);
-                                let mut k = k.reshape(&[nt, nkvh / n, dh]);
-                                let v = v.reshape(&[nt, nkvh / n, dh]);
-                                let o = x1.reshape(&[nt, nh, dh]);
-                                let o = o.slice(&[slice![=>], slice![=> nh / n], slice![=>]]);
-
-                                kernels.rotary_embedding(&mut q, &pos, self.config.theta);
-                                kernels.rotary_embedding(&mut k, &pos, self.config.theta);
-
-                                let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
-                                let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
-                                let v = v.transpose(&[1, 0, 2]).split(1, &seq_len);
-                                let o = o.transpose(&[1, 0, 2]).split(1, &seq_len);
-
-                                for (query, q, k, v, mut o) in izip!(&mut queries, q, k, v, o) {
-                                    let pos = query.pos();
-                                    let seq_len = query.seq_len();
-                                    let att_len = query.att_len();
-                                    let Some((mut k_cache, mut v_cache)) = query.cache(layer as _) else {
-                                        continue;
-                                    };
-
-                                    let slice_cat = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
-                                    let slice_att = &[slice![=>], slice![      => att_len], slice![=>]];
-                                    let shape_q0 = &[nkvh / n * head_group, seq_len, dh];
-                                    let shape_q1 = &[nkvh / n, head_group * seq_len, dh];
-                                    let shape_att0 = &[nkvh / n, head_group * seq_len, att_len];
-                                    let shape_att1 = &[nkvh / n * head_group, seq_len, att_len];
-
-                                    let mut q_att = Tensor::new(dt, shape_q0, &mut q_buf[..]);
-                                    let mut k_cat = k_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                                    let mut v_cat = v_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                                    kernels.reform(&mut q_att, &q);
-                                    kernels.reform(&mut k_cat, &k);
-                                    kernels.reform(&mut v_cat, &v);
-
-                                    let q_att = q_att.reshape(shape_q1);
-                                    let k_att = k_cache.slice(slice_att).transpose(&[0, 2, 1]);
-                                    let v_att = v_cache.slice(slice_att);
-
-                                    let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
-                                    kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
-                                    let mut att = att.reshape(shape_att1);
-                                    kernels.softmax(&mut att);
-                                    let mut x2 = q_att;
-                                    kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
-
-                                    kernels.reform(&mut o, &x2.reshape(shape_q0));
-                                }
-
-                                let (mut x1, gate_up) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
-                                let mut gate_up = gate_up.slice(&[slice![=>], slice![=> (di + di) / n]]);
-
-                                let o = x1.as_ref().slice(&[slice![=>], slice![=> d/n as udim]]);
-                                let o = o.map_physical(|u| &**u) ;
-                                kernels.mat_mul(&mut x, if i == 0 { 1. } else { 0. }, &o, &params.w_o(), 1.);
+                                self.self_att(
+                                    &kernels,
+                                    &mut queries,
+                                    seq_len,
+                                    &params,
+                                    &mut x,
+                                    &mut state_buf,
+                                    &pos,
+                                    &mut q_buf,
+                                    &mut att_buf,
+                                    i,
+                                    layer,
+                                    nt,
+                                );
                                 comm.all_reduce(
                                     x.physical_mut(),
                                     None,
@@ -368,24 +316,7 @@ impl CausalLM for Transformer {
                                     &stream,
                                 );
 
-                                kernels.rms_norm(
-                                    &mut x1,
-                                    &x,
-                                    &params.post_att_layernorm(),
-                                    self.config.epsilon,
-                                );
-                                kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
-
-                                let (mut gate, up) = split!(gate_up; [1]: di / n, di / n);
-
-                                kernels.swiglu(&mut gate, &up);
-                                kernels.mat_mul(
-                                    &mut x,
-                                    if i == 0 { 1. } else { 0. },
-                                    &gate,
-                                    &params.mlp_down(),
-                                    1.,
-                                );
+                                self.mlp(&kernels, &params, &mut x, &mut state_buf, i);
                                 comm.all_reduce(
                                     x.physical_mut(),
                                     None,
@@ -487,6 +418,139 @@ impl CausalLM for Transformer {
                 &unsafe { self.streams[0].sprout(ctx) },
             )
         })
+    }
+}
+
+impl Transformer {
+    fn self_att(
+        &self,
+        kernels: &KernelRuntime,
+        queries: &mut [QueryContext<DevMem>],
+        seq_len: &[udim],
+        params: &Layer,
+        x: &mut Tensor<DevMem>,
+        state_buf: &mut Tensor<DevMem>,
+        pos: &Tensor<DevMem>,
+        q_buf: &mut DevMem,
+        att_buf: &mut DevMem,
+        i: usize,
+        layer: usize,
+        nt: udim,
+    ) {
+        let dt = self.config.dt;
+        let d = self.config.d;
+        let nh = self.config.nh;
+        let nkvh = self.config.nkvh;
+        let dh = d / nh;
+        let dkv = nkvh * dh;
+        let di = self.config.di;
+        let head_group = nh / nkvh;
+        let head_div = (dh as f32).sqrt().recip();
+        let theta = self.config.theta;
+        let epsilon = self.config.epsilon;
+
+        let n = self.comms.len() as udim;
+        let reusing = (d + dkv + dkv).max(di + di);
+
+        let (mut x1, qkv) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
+        let mut qkv = qkv.slice(&[slice![=>], slice![=> (d + dkv + dkv) / n]]);
+
+        kernels.rms_norm(&mut x1, x, &params.input_layernorm(), epsilon);
+        kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1.);
+
+        let (q, k, v) = split!(qkv; [1]: d / n, dkv / n, dkv / n);
+        let mut q = q.reshape(&[nt, nh / n, dh]);
+        let mut k = k.reshape(&[nt, nkvh / n, dh]);
+        let v = v.reshape(&[nt, nkvh / n, dh]);
+        let o = x1.reshape(&[nt, nh, dh]);
+        let o = o.slice(&[slice![=>], slice![=> nh / n], slice![=>]]);
+
+        kernels.rotary_embedding(&mut q, pos, theta);
+        kernels.rotary_embedding(&mut k, pos, theta);
+
+        let q = q.transpose(&[1, 0, 2]).split(1, seq_len);
+        let k = k.transpose(&[1, 0, 2]).split(1, seq_len);
+        let v = v.transpose(&[1, 0, 2]).split(1, seq_len);
+        let o = o.transpose(&[1, 0, 2]).split(1, seq_len);
+
+        for (query, q, k, v, mut o) in izip!(queries, q, k, v, o) {
+            let pos = query.pos();
+            let seq_len = query.seq_len();
+            let att_len = query.att_len();
+            let Some((mut k_cache, mut v_cache)) = query.cache(layer as _) else {
+                continue;
+            };
+
+            let slice_cat = &[slice![=>], slice![pos =>=> seq_len], slice![=>]];
+            let slice_att = &[slice![=>], slice![      => att_len], slice![=>]];
+            let shape_q0 = &[nkvh / n * head_group, seq_len, dh];
+            let shape_q1 = &[nkvh / n, head_group * seq_len, dh];
+            let shape_att0 = &[nkvh / n, head_group * seq_len, att_len];
+            let shape_att1 = &[nkvh / n * head_group, seq_len, att_len];
+
+            let mut q_att = Tensor::new(dt, shape_q0, &mut q_buf[..]);
+            let mut k_cat = k_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
+            let mut v_cat = v_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
+            kernels.reform(&mut q_att, &q);
+            kernels.reform(&mut k_cat, &k);
+            kernels.reform(&mut v_cat, &v);
+
+            let q_att = q_att.reshape(shape_q1);
+            let k_att = k_cache.slice(slice_att).transpose(&[0, 2, 1]);
+            let v_att = v_cache.slice(slice_att);
+
+            let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
+            kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
+            let mut att = att.reshape(shape_att1);
+            kernels.softmax(&mut att);
+            let mut x2 = q_att;
+            kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
+
+            kernels.reform(&mut o, &x2.reshape(shape_q0));
+        }
+
+        let (x1, _) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
+
+        let o = x1.as_ref().slice(&[slice![=>], slice![=> d/n as udim]]);
+        let o = o.map_physical(|u| &**u);
+        kernels.mat_mul(x, if i == 0 { 1. } else { 0. }, &o, &params.w_o(), 1.);
+    }
+
+    fn mlp(
+        &self,
+        kernels: &KernelRuntime,
+        params: &Layer,
+        x: &mut Tensor<DevMem>,
+        state_buf: &mut Tensor<DevMem>,
+        i: usize,
+    ) {
+        let d = self.config.d;
+        let nh = self.config.nh;
+        let nkvh = self.config.nkvh;
+        let dh = d / nh;
+        let dkv = nkvh * dh;
+        let di = self.config.di;
+        let epsilon = self.config.epsilon;
+
+        let n = self.comms.len() as udim;
+        let reusing = (d + dkv + dkv).max(di + di);
+
+        let (mut x1, gate_up) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
+        let mut gate_up = gate_up.slice(&[slice![=>], slice![=> (di + di) / n]]);
+
+        kernels.rms_norm(&mut x1, x, &params.post_att_layernorm(), epsilon);
+        kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
+
+        let (mut gate, up) = split!(gate_up; [1]: di / n, di / n);
+
+        kernels.swiglu(&mut gate, &up);
+        kernels.mat_mul(
+            x,
+            if i == 0 { 1. } else { 0. },
+            &gate,
+            &params.mlp_down(),
+            1.,
+        );
     }
 }
 
