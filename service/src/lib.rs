@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 mod batcher;
+mod sentence;
 mod session;
 mod template;
 

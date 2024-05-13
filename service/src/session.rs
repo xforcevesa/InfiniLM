@@ -1,4 +1,5 @@
-﻿use crate::{batcher::Batcher, ServiceComponent};
+﻿use crate::{batcher::Batcher, sentence::Sentence, ServiceComponent};
+use cache::Cache;
 use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleArgs, SampleMeta};
 use common::{upos, utok};
 use log::info;
@@ -7,10 +8,10 @@ use std::{
     cmp::Ordering::{Equal, Greater, Less},
     error, fmt,
     iter::zip,
-    mem::{replace, take},
-    ops::Range,
     sync::{Arc, Mutex},
+    vec,
 };
+use task::Task;
 use tensor::Tensor;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
@@ -18,9 +19,9 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 pub struct Session<M: CausalLM> {
     component: Arc<ServiceComponent<M>>,
     pub sample: SampleArgs,
-    cache: Option<Tensor<M::Storage>>,
+
     dialog: Vec<Arc<Sentence>>,
-    tail: Vec<utok>,
+    cache: Option<Cache<M::Storage>>,
 }
 
 impl<M: CausalLM> From<Arc<ServiceComponent<M>>> for Session<M> {
@@ -29,9 +30,9 @@ impl<M: CausalLM> From<Arc<ServiceComponent<M>>> for Session<M> {
         Self {
             component,
             sample: Default::default(),
-            cache: Default::default(),
+
             dialog: Default::default(),
-            tail: Default::default(),
+            cache: Default::default(),
         }
     }
 }
@@ -47,14 +48,11 @@ impl<M: CausalLM> Session<M> {
         Self {
             component: self.component.clone(),
             sample: Default::default(),
-            cache: self.cache.as_ref().map(|cache| {
-                self.component
-                    .handle
-                    .model
-                    .duplicate_cache(cache, self.pos())
-            }),
             dialog: self.dialog.clone(),
-            tail: self.tail.clone(),
+            cache: self
+                .cache
+                .as_ref()
+                .map(|cache| cache.duplicate(&self.component.handle.model)),
         }
     }
 
@@ -62,7 +60,10 @@ impl<M: CausalLM> Session<M> {
     pub fn revert(&mut self, dialog_pos: usize) -> Result<(), ChatError> {
         match dialog_pos.cmp(&self.dialog.len()) {
             Less => {
-                self.tail = self.dialog[dialog_pos].head().to_vec();
+                let end = &self.dialog[dialog_pos];
+                let cache = self.cache.as_mut().unwrap();
+                cache.cached = end.pos();
+                cache.tokens.truncate(end.start());
                 self.dialog.truncate(dialog_pos);
                 Ok(())
             }
@@ -77,11 +78,15 @@ impl<M: CausalLM> Session<M> {
         dialog: impl IntoIterator<Item = &'a str>,
     ) -> BusySession<'s, M> {
         let eos = self.component.handle.model.eos_token();
-        let pos = self.pos();
-        let mut prefill = vec![];
-        let mut prompt = self.dialog.is_empty() || !self.tail.is_empty();
+        let mut pos = self.dialog.last().map_or(0, |s| s.end());
+        let mut cache = self
+            .cache
+            .take()
+            .unwrap_or_else(|| Cache::new(&self.component.handle.model, vec![]));
+        let mut tail = cache.query().to_vec();
         // 填充对话
         for s in dialog {
+            let prompt = self.dialog.len() % 2 == 0;
             let s = if prompt {
                 self.component.template.apply_chat(s)
             } else {
@@ -90,49 +95,29 @@ impl<M: CausalLM> Session<M> {
 
             let s = self.component.normalizer.encode(&s);
             let s = self.component.tokenizer.encode(&s);
-            prefill.extend_from_slice(self.push_sentence(s));
 
-            if !prompt {
-                self.tail = vec![eos];
-            }
-            prompt = !prompt;
+            let head_len = tail.len();
+            tail.extend(s);
+            let tokens = std::mem::replace(&mut tail, if prompt { vec![] } else { vec![eos] });
+
+            let len = tail.len();
+            cache.tokens.extend(&tokens);
+
+            self.dialog.push(Sentence::new(tokens, pos, head_len));
+            pos += len;
         }
         // 生成推理任务与会话的交互管道
+        let cache = Arc::new(Mutex::new(Some(cache)));
         let (sender, receiver) = unbounded_channel();
-        let cache = Arc::new(Mutex::new(Some(
-            self.cache
-                .take()
-                .unwrap_or_else(|| self.component.handle.model.new_cache()),
-        )));
-        self.component.handle.batcher.enq(Task {
-            tokens: prefill,
-            pos,
-            sample: self.sample.clone(),
-            cache: cache.clone(),
-            sender,
-        });
+        self.component
+            .handle
+            .batcher
+            .enq(Task::new(cache.clone(), self.sample.clone(), sender));
         BusySession {
             session: self,
             receiver: Some(receiver),
             cache,
         }
-    }
-
-    #[inline]
-    fn pos(&self) -> upos {
-        self.dialog
-            .last()
-            .map_or(0, |s| s.pos + s.tokens.len() as upos)
-    }
-
-    /// 连接上一个句子的后续并构造新句子。
-    fn push_sentence(&mut self, s: Vec<utok>) -> &[utok] {
-        let pos = self.pos();
-        let head_len = self.tail.len();
-        self.tail.extend(s);
-        self.dialog
-            .push(Sentence::take(&mut self.tail, pos, head_len));
-        &self.dialog.last().unwrap().tokens
     }
 }
 
@@ -154,15 +139,13 @@ impl fmt::Display for ChatError {
 pub struct BusySession<'a, M: CausalLM> {
     session: &'a mut Session<M>,
     receiver: Option<UnboundedReceiver<utok>>,
-    cache: Arc<Mutex<Option<Tensor<M::Storage>>>>,
+    cache: Arc<Mutex<Option<Cache<M::Storage>>>>,
 }
 
 impl<M: CausalLM> BusySession<'_, M> {
     /// 接收模型解码产生的文本。
     pub async fn decode(&mut self) -> Option<Cow<str>> {
         self.receiver.as_mut().unwrap().recv().await.map(|token| {
-            // 记录 token
-            self.session.tail.push(token);
             // detokenize and denormalize the token
             let ServiceComponent {
                 normalizer,
@@ -181,24 +164,28 @@ impl<M: CausalLM> Drop for BusySession<'_, M> {
         // 停止响应接收
         let _ = self.receiver.take();
         // 回收 cache
-        s.cache = self.cache.lock().unwrap().take();
-        if !s.tail.is_empty() {
+        let mut cache = self.cache.lock().unwrap().take().unwrap();
+        let end = s.dialog.last().map_or(0, |s| s.end());
+        if cache.cached > end {
             // 只要忙会话收集到任何 token，就生成一个新的句子
-            let answer = take(&mut s.tail);
-            s.push_sentence(answer);
+            let tokens = cache.tokens[end..cache.cached].to_vec();
+            s.dialog.push(Sentence::new(tokens, end as _, 0));
             // 无论忙会话为何丢弃，只要生成了新句子，就补充一个结束符
-            s.tail = vec![s.component.handle.model.eos_token()];
+            cache.tokens.truncate(cache.cached);
+            cache.tokens.push(s.component.handle.model.eos_token());
         } else if let Some(last) = s.dialog.pop() {
             // 否则回滚句子
-            s.tail = last.head().to_vec();
+            cache.cached = last.pos();
+            cache.tokens.truncate(last.start());
         }
+        s.cache = Some(cache);
     }
 }
 
 pub struct Generator<M: CausalLM> {
     component: Arc<ServiceComponent<M>>,
     receiver: Option<UnboundedReceiver<utok>>,
-    cache: Arc<Mutex<Option<Tensor<M::Storage>>>>,
+    cache: Arc<Mutex<Option<Cache<M::Storage>>>>,
 }
 
 impl<M: CausalLM> Generator<M> {
@@ -211,15 +198,15 @@ impl<M: CausalLM> Generator<M> {
         let prompt = component.normalizer.encode(&prompt);
         let tokens = component.tokenizer.encode(&prompt);
         // 生成推理任务与会话的交互管道
-        let (sender, receiver) = unbounded_channel();
-        let cache = Arc::new(Mutex::new(Some(component.handle.model.new_cache())));
-        component.handle.batcher.enq(Task {
+        let cache = Arc::new(Mutex::new(Some(Cache::new(
+            &component.handle.model,
             tokens,
-            pos: 0,
-            sample,
-            cache: cache.clone(),
-            sender,
-        });
+        ))));
+        let (sender, receiver) = unbounded_channel();
+        component
+            .handle
+            .batcher
+            .enq(Task::new(cache.clone(), sample, sender));
         Self {
             component,
             receiver: Some(receiver),
@@ -251,7 +238,7 @@ impl<M: CausalLM> Drop for Generator<M> {
 
 pub(crate) struct HandleComponent<M: CausalLM> {
     model: M,
-    pub batcher: Batcher<Task<M::Storage>>,
+    batcher: Batcher<Task<M::Storage>>,
 }
 
 impl<M: CausalLM> From<M> for HandleComponent<M> {
@@ -279,39 +266,38 @@ where
 {
     pub fn run(self: Arc<Self>) {
         while let Some(tasks) = Some(self.batcher.deq()).filter(|t| !t.is_empty()) {
-            let token_embedded = {
-                let queries = tasks.iter().flat_map(|t| &t.tokens).copied();
-                self.model.token_embed(queries)
-            };
-            // 锁定所有请求的 cache
-            let hidden_state = {
-                let mut queries = tasks
-                    .iter()
-                    .map(|t| (t, t.cache.lock().unwrap()))
-                    .collect::<Vec<_>>();
-                let queries = queries.iter_mut().map(|(task, lock)| QueryContext {
-                    cache: lock.as_mut(),
-                    range: task.range(),
-                });
-                self.model.forward(queries, token_embedded)
-            };
+            // 锁定所有请求的缓存
+            let mut caches = tasks.iter().map(Task::lock_cache).collect::<Vec<_>>();
+            // 取出每个任务的查询
+            let tokens = caches
+                .iter()
+                .map(|c| c.as_ref().map_or(vec![], |c| c.query().to_vec()))
+                .collect::<Vec<_>>();
+            // 词嵌入
+            let token_embedded = self.model.token_embed(tokens.iter().flatten().copied());
+            // 推理
+            let hidden_state = self.model.forward(
+                caches.iter_mut().map(|c| Cache::ctx(&mut **c)),
+                token_embedded,
+            );
+            drop(caches);
             // 为每次推理启动一个任务执行解码工作
             let self_ = self.clone();
             tokio::task::spawn_blocking(move || {
                 let num_decode = tasks
                     .iter()
-                    .map(|t| if !t.sender.is_closed() { 1 } else { 0 })
+                    .map(|t| if t.is_alive() { 1 } else { 0 })
                     .collect::<Vec<_>>();
 
-                let decoding = zip(&tasks, &num_decode).map(|(t, num_decode)| DecodingMeta {
-                    num_query: t.tokens.len(),
+                let decoding = zip(&tokens, &num_decode).map(|(t, num_decode)| DecodingMeta {
+                    num_query: t.len(),
                     num_decode: *num_decode,
                 });
                 let logits = self_.model.decode(decoding, hidden_state);
 
                 let args = zip(&tasks, &num_decode).map(|(t, num_decode)| SampleMeta {
                     num_decode: *num_decode,
-                    args: t.sample.clone(),
+                    args: t.sample().clone(),
                 });
                 let tokens = self_.model.sample(args, logits);
 
@@ -320,56 +306,130 @@ where
                     .filter(|(_, n)| *n > 0)
                     .map(|(t, _)| t)
                     .zip(tokens)
-                    .filter(|(task, token)| *token != eos && task.sender.send(*token).is_ok())
+                    .filter(|(_, token)| *token != eos)
                     .for_each(|(mut task, token)| {
-                        task.pos += replace(&mut task.tokens, vec![token]).len() as upos;
-                        self_.batcher.enq(task);
+                        if task.push(token) {
+                            self_.batcher.enq(task);
+                        }
                     });
             });
         }
     }
 }
 
-/// 对话中的一个片段。
-struct Sentence {
-    /// 按 token 计数，句子在对话中的位置。
-    pos: upos,
-    /// 句子中来自上一个句子的后续 token 的数量。
-    head_len: usize,
-    /// 句子的 token 序列。
-    tokens: Vec<utok>,
-}
+mod task {
+    use super::*;
+    use std::sync::MutexGuard;
 
-impl Sentence {
-    /// 取走 `tokens` 以构造一个位于 `pos` 处的句子，
-    /// 其中 `tokens` 的前 `head_len` token 是前一个句子的后续，回滚时需要重新连接。
-    #[inline]
-    pub fn take(tokens: &mut Vec<utok>, pos: upos, head_len: usize) -> Arc<Self> {
-        Arc::new(Self {
-            pos,
-            head_len,
-            tokens: take(tokens),
-        })
+    pub(super) struct Task<Storage> {
+        sample: SampleArgs,
+        sender: UnboundedSender<utok>,
+
+        cache: Arc<Mutex<Option<Cache<Storage>>>>,
     }
 
-    /// 句子中来自前一句的后续部分。
-    #[inline]
-    pub fn head(&self) -> &[utok] {
-        &self.tokens[..self.head_len]
+    impl<Storage> Task<Storage> {
+        #[inline]
+        pub fn new(
+            cache: Arc<Mutex<Option<Cache<Storage>>>>,
+            sample: SampleArgs,
+            sender: UnboundedSender<utok>,
+        ) -> Self {
+            Self {
+                sample,
+                sender,
+                cache,
+            }
+        }
+
+        #[inline]
+        pub fn sample(&self) -> &SampleArgs {
+            &self.sample
+        }
+        #[inline]
+        pub fn is_alive(&self) -> bool {
+            !self.sender.is_closed()
+        }
+        #[inline]
+        pub fn lock_cache(&self) -> MutexGuard<Option<Cache<Storage>>> {
+            self.cache.lock().unwrap()
+        }
+
+        #[inline]
+        pub fn push(&mut self, token: utok) -> bool {
+            if self.sender.send(token).is_ok() {
+                if let Some(cache) = self.cache.lock().unwrap().as_mut() {
+                    cache.push(token);
+                    return true;
+                }
+            }
+            false
+        }
     }
 }
 
-pub(crate) struct Task<Cache> {
-    tokens: Vec<utok>,
-    pos: upos,
-    sample: SampleArgs,
-    cache: Arc<Mutex<Option<Tensor<Cache>>>>,
-    sender: UnboundedSender<utok>,
-}
+mod cache {
+    use super::*;
 
-impl<Cache> Task<Cache> {
-    #[inline]
-    fn range(&self) -> Range<upos> {
-        self.pos..self.pos + self.tokens.len() as upos
+    pub(super) struct Cache<Storage> {
+        pos: upos,
+        cache: Tensor<Storage>,
+        pub tokens: Vec<utok>,
+        pub cached: usize,
+    }
+
+    impl<Storage> Cache<Storage> {
+        #[inline]
+        pub fn new(t: &impl CausalLM<Storage = Storage>, tokens: Vec<utok>) -> Self {
+            Self {
+                pos: 0,
+                cache: t.new_cache(),
+                tokens,
+                cached: 0,
+            }
+        }
+
+        #[inline]
+        pub fn duplicate(&self, t: &impl CausalLM<Storage = Storage>) -> Self {
+            Self {
+                pos: self.pos,
+                cache: t.duplicate_cache(&self.cache, self.cached as _),
+                tokens: self.tokens.clone(),
+                cached: self.cached,
+            }
+        }
+
+        /// 所有 token 中还没有加入缓存的部分就是这次的查询。
+        #[inline]
+        pub fn query(&self) -> &[utok] {
+            &self.tokens[self.cached..]
+        }
+
+        pub fn ctx(opt: &mut Option<Self>) -> QueryContext<Storage> {
+            if let Some(Cache {
+                pos,
+                cache,
+                tokens,
+                cached,
+            }) = &mut *opt
+            {
+                QueryContext {
+                    cache: Some(cache),
+                    range: *pos + *cached as upos..*pos + tokens.len() as upos,
+                }
+            } else {
+                QueryContext {
+                    cache: None,
+                    range: 0..0,
+                }
+            }
+        }
+
+        /// 将新采样的值加入缓存。
+        #[inline]
+        pub fn push(&mut self, token: utok) {
+            self.cached = self.tokens.len();
+            self.tokens.push(token);
+        }
     }
 }
