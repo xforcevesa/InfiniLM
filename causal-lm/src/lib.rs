@@ -27,6 +27,8 @@ pub trait Model: Sized {
 pub trait CausalLM: Model {
     /// 存储中间结果的类型。
     type Storage;
+    /// 最大序列长度。
+    fn max_seq_len(&self) -> upos;
     /// 模型定义的句子结束符。
     fn eos_token(&self) -> utok;
     /// 创建一个新的缓存（`num_layers x 2 x num_kv_head x max_seq_len x head_dim`）。
@@ -73,7 +75,7 @@ pub fn pos<'a, S: 'a>(
 ) -> Tensor<Vec<upos>> {
     let mut ans = Vec::with_capacity(nt_hint as usize);
     for query in queries {
-        ans.extend(query.pos()..query.att_len());
+        ans.extend(query.range.clone().into_iter());
     }
     Tensor::new(tensor::DataType::U32, &[ans.len() as _], ans)
 }

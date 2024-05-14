@@ -112,6 +112,10 @@ impl CausalLM for Transformer {
     type Storage = Cache;
 
     #[inline]
+    fn max_seq_len(&self) -> upos {
+        self.config.max_seq_len
+    }
+    #[inline]
     fn eos_token(&self) -> utok {
         self.config.eos_token
     }

@@ -12,15 +12,18 @@ pub struct QueryContext<'a, Storage> {
 
 impl<'a, Storage> QueryContext<'a, Storage> {
     /// 查询的位置。
-    pub fn pos(&self) -> upos {
+    #[inline]
+    pub const fn pos(&self) -> upos {
         self.range.start
     }
     /// 查询的长度。
+    #[inline]
     pub fn seq_len(&self) -> udim {
         self.range.len() as _
     }
     /// 注意力长度。
-    pub fn att_len(&self) -> udim {
+    #[inline]
+    pub const fn att_len(&self) -> udim {
         self.range.end
     }
 }

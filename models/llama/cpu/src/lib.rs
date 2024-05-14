@@ -150,6 +150,10 @@ impl CausalLM for Transformer {
     type Storage = Blob;
 
     #[inline]
+    fn max_seq_len(&self) -> upos {
+        self.0.config.max_seq_len
+    }
+    #[inline]
     fn eos_token(&self) -> utok {
         self.0.config.eos_token
     }

@@ -1,7 +1,12 @@
-﻿use crate::{batcher::Batcher, sentence::Sentence, ServiceComponent};
+﻿mod cache;
+mod dialog;
+mod task;
+
+use crate::{batcher::Batcher, ServiceComponent};
 use cache::Cache;
-use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleArgs, SampleMeta};
-use common::{upos, utok};
+use causal_lm::{CausalLM, DecodingMeta, SampleArgs, SampleMeta};
+use common::utok;
+use dialog::Dialog;
 use log::info;
 use std::{
     borrow::Cow,
@@ -12,15 +17,14 @@ use std::{
     vec,
 };
 use task::Task;
-use tensor::Tensor;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 /// 会话。
 pub struct Session<M: CausalLM> {
     component: Arc<ServiceComponent<M>>,
     pub sample: SampleArgs,
 
-    dialog: Vec<Arc<Sentence>>,
+    dialog: Dialog,
     cache: Option<Cache<M::Storage>>,
 }
 
@@ -40,7 +44,7 @@ impl<M: CausalLM> From<Arc<ServiceComponent<M>>> for Session<M> {
 impl<M: CausalLM> Session<M> {
     #[inline]
     pub fn dialog_pos(&self) -> usize {
-        self.dialog.len()
+        self.dialog.num_sentences()
     }
 
     /// 复制当前会话。
@@ -58,13 +62,18 @@ impl<M: CausalLM> Session<M> {
 
     /// 回滚对话到第 `dialog_pos` 个句子。
     pub fn revert(&mut self, dialog_pos: usize) -> Result<(), ChatError> {
-        match dialog_pos.cmp(&self.dialog.len()) {
+        match dialog_pos.cmp(&self.dialog.num_sentences()) {
             Less => {
-                let end = &self.dialog[dialog_pos];
                 let cache = self.cache.as_mut().unwrap();
-                cache.cached = end.pos();
-                cache.tokens.truncate(end.start());
-                self.dialog.truncate(dialog_pos);
+
+                self.dialog.revert(dialog_pos);
+                let cached = cache.revert(self.dialog.num_tokens());
+                let last_prompt = self.dialog.last_prompt().map_or(0, |p| p.len());
+                if cached < last_prompt {
+                    let len = self.component.handle.model.max_seq_len() as usize;
+                    let (tokens, pos) = self.dialog.window(len);
+                    cache.reset_with(tokens, pos);
+                }
                 Ok(())
             }
             Equal => Ok(()),
@@ -78,35 +87,32 @@ impl<M: CausalLM> Session<M> {
         dialog: impl IntoIterator<Item = &'a str>,
     ) -> BusySession<'s, M> {
         let eos = self.component.handle.model.eos_token();
-        let mut pos = self.dialog.last().map_or(0, |s| s.end());
         let mut cache = self
             .cache
             .take()
             .unwrap_or_else(|| Cache::new(&self.component.handle.model, vec![]));
-        let mut tail = cache.query().to_vec();
         // 填充对话
         for s in dialog {
-            let prompt = self.dialog.len() % 2 == 0;
+            let prompt = self.dialog.num_sentences() % 2 == 0;
+
             let s = if prompt {
                 self.component.template.apply_chat(s)
             } else {
                 s.into()
             };
-
             let s = self.component.normalizer.encode(&s);
-            let s = self.component.tokenizer.encode(&s);
+            let mut s = self.component.tokenizer.encode(&s);
+            if !prompt {
+                s.push(eos);
+            }
 
-            let head_len = tail.len();
-            tail.extend(s);
-            let tokens = std::mem::replace(&mut tail, if prompt { vec![] } else { vec![eos] });
-
-            let len = tail.len();
-            cache.tokens.extend(&tokens);
-
-            self.dialog.push(Sentence::new(tokens, pos, head_len));
-            pos += len;
+            cache.extend(&s);
+            self.dialog.push(s);
+            // assert_eq!(cache.end(), self.dialog.last().unwrap().end());
         }
         // 生成推理任务与会话的交互管道
+        let max = self.component.handle.model.max_seq_len() as usize;
+        cache.reset_within(max / 4, max / 4 * 3);
         let cache = Arc::new(Mutex::new(Some(cache)));
         let (sender, receiver) = unbounded_channel();
         self.component
@@ -118,6 +124,18 @@ impl<M: CausalLM> Session<M> {
             receiver: Some(receiver),
             cache,
         }
+    }
+
+    fn restore_cache(&mut self, mut cache: Cache<M::Storage>) {
+        let end = self.dialog.num_tokens();
+        if cache.end() > end {
+            // 无论忙会话为何丢弃，只要生成了新句子，就补充一个结束符
+            cache.push(self.component.handle.model.eos_token());
+            // 只要忙会话收集到任何 token，就生成一个新的句子
+            self.dialog.push(cache.slice_tail(end).to_vec());
+        }
+        cache.cleanup();
+        self.cache = Some(cache);
     }
 }
 
@@ -160,25 +178,12 @@ impl<M: CausalLM> BusySession<'_, M> {
 impl<M: CausalLM> Drop for BusySession<'_, M> {
     fn drop(&mut self) {
         info!("Drop busy session");
-        let s = &mut *self.session;
         // 停止响应接收
         let _ = self.receiver.take();
+        // 取走 cache
+        let cache = self.cache.lock().unwrap().take();
         // 回收 cache
-        let mut cache = self.cache.lock().unwrap().take().unwrap();
-        let end = s.dialog.last().map_or(0, |s| s.end());
-        if cache.cached > end {
-            // 只要忙会话收集到任何 token，就生成一个新的句子
-            let tokens = cache.tokens[end..cache.cached].to_vec();
-            s.dialog.push(Sentence::new(tokens, end as _, 0));
-            // 无论忙会话为何丢弃，只要生成了新句子，就补充一个结束符
-            cache.tokens.truncate(cache.cached);
-            cache.tokens.push(s.component.handle.model.eos_token());
-        } else if let Some(last) = s.dialog.pop() {
-            // 否则回滚句子
-            cache.cached = last.pos();
-            cache.tokens.truncate(last.start());
-        }
-        s.cache = Some(cache);
+        self.session.restore_cache(cache.unwrap());
     }
 }
 
@@ -197,11 +202,11 @@ impl<M: CausalLM> Generator<M> {
         let prompt = component.template.normalize(prompt.as_ref());
         let prompt = component.normalizer.encode(&prompt);
         let tokens = component.tokenizer.encode(&prompt);
+        let mut cache = Cache::new(&component.handle.model, tokens);
+        let max = component.handle.model.max_seq_len() as usize;
+        cache.reset_within(max / 4, max / 4 * 3);
         // 生成推理任务与会话的交互管道
-        let cache = Arc::new(Mutex::new(Some(Cache::new(
-            &component.handle.model,
-            tokens,
-        ))));
+        let cache = Arc::new(Mutex::new(Some(cache)));
         let (sender, receiver) = unbounded_channel();
         component
             .handle
@@ -231,7 +236,7 @@ impl<M: CausalLM> Drop for Generator<M> {
     fn drop(&mut self) {
         // 停止响应接收
         let _ = self.receiver.take();
-        // 丢弃 cache
+        // 取走 cache
         let _ = self.cache.lock().unwrap().take();
     }
 }
@@ -302,134 +307,19 @@ where
                 let tokens = self_.model.sample(args, logits);
 
                 let eos = self_.model.eos_token();
+                let max = self_.model.max_seq_len() as usize;
+                let min = max / 4;
                 zip(tasks, num_decode)
                     .filter(|(_, n)| *n > 0)
                     .map(|(t, _)| t)
                     .zip(tokens)
                     .filter(|(_, token)| *token != eos)
                     .for_each(|(mut task, token)| {
-                        if task.push(token) {
+                        if task.push(token, min, max) {
                             self_.batcher.enq(task);
                         }
                     });
             });
-        }
-    }
-}
-
-mod task {
-    use super::*;
-    use std::sync::MutexGuard;
-
-    pub(super) struct Task<Storage> {
-        sample: SampleArgs,
-        sender: UnboundedSender<utok>,
-
-        cache: Arc<Mutex<Option<Cache<Storage>>>>,
-    }
-
-    impl<Storage> Task<Storage> {
-        #[inline]
-        pub fn new(
-            cache: Arc<Mutex<Option<Cache<Storage>>>>,
-            sample: SampleArgs,
-            sender: UnboundedSender<utok>,
-        ) -> Self {
-            Self {
-                sample,
-                sender,
-                cache,
-            }
-        }
-
-        #[inline]
-        pub fn sample(&self) -> &SampleArgs {
-            &self.sample
-        }
-        #[inline]
-        pub fn is_alive(&self) -> bool {
-            !self.sender.is_closed()
-        }
-        #[inline]
-        pub fn lock_cache(&self) -> MutexGuard<Option<Cache<Storage>>> {
-            self.cache.lock().unwrap()
-        }
-
-        #[inline]
-        pub fn push(&mut self, token: utok) -> bool {
-            if self.sender.send(token).is_ok() {
-                if let Some(cache) = self.cache.lock().unwrap().as_mut() {
-                    cache.push(token);
-                    return true;
-                }
-            }
-            false
-        }
-    }
-}
-
-mod cache {
-    use super::*;
-
-    pub(super) struct Cache<Storage> {
-        pos: upos,
-        cache: Tensor<Storage>,
-        pub tokens: Vec<utok>,
-        pub cached: usize,
-    }
-
-    impl<Storage> Cache<Storage> {
-        #[inline]
-        pub fn new(t: &impl CausalLM<Storage = Storage>, tokens: Vec<utok>) -> Self {
-            Self {
-                pos: 0,
-                cache: t.new_cache(),
-                tokens,
-                cached: 0,
-            }
-        }
-
-        #[inline]
-        pub fn duplicate(&self, t: &impl CausalLM<Storage = Storage>) -> Self {
-            Self {
-                pos: self.pos,
-                cache: t.duplicate_cache(&self.cache, self.cached as _),
-                tokens: self.tokens.clone(),
-                cached: self.cached,
-            }
-        }
-
-        /// 所有 token 中还没有加入缓存的部分就是这次的查询。
-        #[inline]
-        pub fn query(&self) -> &[utok] {
-            &self.tokens[self.cached..]
-        }
-
-        pub fn ctx(opt: &mut Option<Self>) -> QueryContext<Storage> {
-            if let Some(Cache {
-                pos,
-                cache,
-                tokens,
-                cached,
-            }) = &mut *opt
-            {
-                QueryContext {
-                    cache: Some(cache),
-                    range: *pos + *cached as upos..*pos + tokens.len() as upos,
-                }
-            } else {
-                QueryContext {
-                    cache: None,
-                    range: 0..0,
-                }
-            }
-        }
-
-        /// 将新采样的值加入缓存。
-        #[inline]
-        pub fn push(&mut self, token: utok) {
-            self.cached = self.tokens.len();
-            self.tokens.push(token);
         }
     }
 }
