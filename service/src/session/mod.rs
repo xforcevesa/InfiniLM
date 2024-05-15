@@ -65,7 +65,7 @@ impl<M: CausalLM> Session<M> {
     pub fn fork(&self) -> Self {
         Self {
             component: self.component.clone(),
-            sample: Default::default(),
+            sample: self.sample.clone(),
             dialog: self.dialog.clone(),
             cache: self
                 .cache
