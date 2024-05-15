@@ -52,7 +52,6 @@ pub(crate) enum Error {
     SessionDuplicate,
     SessionNotFound,
     WrongJson(serde_json::Error),
-    EmptyInput,
     InvalidDialogPos(usize),
 }
 
@@ -71,7 +70,6 @@ impl Error {
             Self::SessionBusy => StatusCode::NOT_ACCEPTABLE,
             Self::SessionDuplicate => StatusCode::CONFLICT,
             Self::WrongJson(_) => StatusCode::BAD_REQUEST,
-            Self::EmptyInput => StatusCode::BAD_REQUEST,
             Self::InvalidDialogPos(_) => StatusCode::RANGE_NOT_SATISFIABLE,
         }
     }
@@ -98,7 +96,6 @@ impl Error {
             Self::SessionBusy => json(error!(0, "Session is busy")),
             Self::SessionDuplicate => json(error!(0, "Session ID already exists")),
             Self::WrongJson(e) => json(error!(0, e.to_string())),
-            Self::EmptyInput => json(error!(1, "Input list is empty")),
             &Self::InvalidDialogPos(current_dialog_pos) => {
                 #[derive(serde::Serialize)]
                 struct ErrorBodyExtra {

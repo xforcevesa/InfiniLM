@@ -226,7 +226,9 @@ impl<M: CausalLM> Chatting<M> {
 
     async fn infer(&mut self, text: &str) {
         print_now!("{}", "AI: ".green());
-        let mut busy = self.session_mut().chat([text]);
+        let session = self.session_mut();
+        session.extend([text]);
+        let mut busy = session.chat();
         while let Some(s) = busy.decode().await {
             match &*s {
                 "\\n" => println!(),

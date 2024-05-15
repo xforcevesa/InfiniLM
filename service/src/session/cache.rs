@@ -38,11 +38,17 @@ impl<Storage> Cache<Storage> {
     }
     /// 回滚缓存到 `pos`，并返回剩余的有效缓存长度。
     pub fn revert(&mut self, pos: usize) -> usize {
+        // 只能在闲时回滚，因此 cache 和 tokens 起始位置对齐
         assert_eq!(self.cached.start, 0);
+        // 回滚之后，tokens.len()、cached.end、pos 不能大于新的 pos
         let len = pos.saturating_sub(self.pos);
+        // 1. tokens.len() 不大于 pos；
         self.tokens.truncate(len);
-        self.pos = pos;
+        // 2. cached.end 不大于 pos；
         self.cached.end = self.cached.end.min(len);
+        // 3. pos 不大于 pos；
+        self.pos = self.pos.min(pos);
+        // 返回当前的缓存长度
         self.cached.len()
     }
     /// 扩展待填充 token。

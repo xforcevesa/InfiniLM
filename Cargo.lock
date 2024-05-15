@@ -456,7 +456,7 @@ dependencies = [
 [[package]]
 name = "cublas"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=992d449#992d449ae03794c69fd7ba5403ef4204f413475c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=c47aed2#c47aed2b789a47a94cfcb682139dc9853086053b"
 dependencies = [
  "bindgen",
  "cuda",
@@ -466,7 +466,7 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=992d449#992d449ae03794c69fd7ba5403ef4204f413475c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=c47aed2#c47aed2b789a47a94cfcb682139dc9853086053b"
 dependencies = [
  "bindgen",
  "half",
@@ -1304,7 +1304,7 @@ dependencies = [
 [[package]]
 name = "nccl"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=992d449#992d449ae03794c69fd7ba5403ef4204f413475c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=c47aed2#c47aed2b789a47a94cfcb682139dc9853086053b"
 dependencies = [
  "bindgen",
  "cuda",
@@ -1536,9 +1536,9 @@ dependencies = [
 
 [[package]]
 name = "pulp"
-version = "0.18.10"
+version = "0.18.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e14989307e408d9f4245d4fda09a7b144a08114ba124e26cab60ab83dc98db10"
+checksum = "d1739821f0c499feacfb32feb4095a6be38552bf9f62e7a62206853e464e15e9"
 dependencies = [
  "bytemuck",
  "libm",
@@ -1791,7 +1791,7 @@ dependencies = [
 [[package]]
 name = "search-cuda-tools"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=992d449#992d449ae03794c69fd7ba5403ef4204f413475c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=c47aed2#c47aed2b789a47a94cfcb682139dc9853086053b"
 dependencies = [
  "find_cuda_helper",
 ]

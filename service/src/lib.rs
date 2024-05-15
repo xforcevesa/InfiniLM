@@ -5,7 +5,7 @@ mod session;
 mod template;
 
 use causal_lm::{CausalLM, SampleArgs};
-use session::{Generator, HandleComponent};
+use session::{Dispatcher, Generator};
 use std::{fmt::Debug, path::Path, sync::Arc};
 use template::Template;
 use tokenizer::{BPECommonNormalizer, Normalizer, Tokenizer, VocabTxt, BPE};
@@ -23,7 +23,7 @@ pub struct Service<M: CausalLM> {
 ///
 /// 推理线程的生命周期与这个组件绑定。
 struct ServiceComponent<M: CausalLM> {
-    handle: Arc<HandleComponent<M>>,
+    handle: Arc<Dispatcher<M>>,
     tokenizer: Box<dyn Tokenizer + Send + Sync>,
     normalizer: Box<dyn Normalizer + Send + Sync>,
     template: Box<dyn template::Template + Send + Sync>,
@@ -44,7 +44,7 @@ where
     M::Error: Debug,
 {
     pub fn load(model_dir: impl AsRef<Path>, meta: M::Meta) -> (Self, JoinHandle<()>) {
-        let handle = Arc::new(HandleComponent::from(M::load(&model_dir, meta).unwrap()));
+        let handle = Arc::new(Dispatcher::from(M::load(&model_dir, meta).unwrap()));
         (
             Self {
                 component: Arc::new(ServiceComponent {
@@ -104,7 +104,8 @@ fn test() {
 
     for ((prompt, color), mut session) in zip(tasks, sessions) {
         set.spawn(async move {
-            let mut busy = session.chat([prompt]);
+            session.extend([prompt]);
+            let mut busy = session.chat();
             while let Some(s) = busy.decode().await {
                 print!("{}", s.color(color));
                 std::io::stdout().flush().unwrap();

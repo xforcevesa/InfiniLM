@@ -33,7 +33,7 @@ where
     pub fn infer(
         self: &Arc<Self>,
         Infer {
-            inputs,
+            inputs: messages,
             session_id,
             dialog_pos,
             temperature,
@@ -41,9 +41,6 @@ where
             top_p,
         }: Infer,
     ) -> Result<UnboundedReceiver<String>, Error> {
-        if inputs.is_empty() {
-            return Err(Error::EmptyInput);
-        }
         let dialog_pos = dialog_pos.unwrap_or(0);
         let (sender, receiver) = mpsc::unbounded_channel();
 
@@ -94,32 +91,37 @@ where
                 }
             }?;
 
-            let self_ = self.clone();
+            session.extend(messages.iter().map(|s| s.content.as_str()));
             set_sample!(session);
-            tokio::spawn(async move {
-                {
-                    let mut busy = session.chat(inputs.iter().map(|s| s.content.as_str()));
-                    while let Some(s) = busy.decode().await {
-                        if let Err(e) = sender.send(s.into_owned()) {
-                            warn!("Failed to send piece to {session_id} with error \"{e}\"");
-                            break;
+
+            if session.dialog_pos() % 2 == 1 {
+                let self_ = self.clone();
+                tokio::spawn(async move {
+                    {
+                        let mut busy = session.chat();
+                        while let Some(s) = busy.decode().await {
+                            if let Err(e) = sender.send(s.into_owned()) {
+                                warn!("Failed to send piece to {session_id} with error \"{e}\"");
+                                break;
+                            }
                         }
                     }
-                }
-                if let Some(container) = self_.pending.lock().unwrap().get_mut(&session_id) {
-                    container.get_or_insert(session);
-                }
-            });
+                    if let Some(container) = self_.pending.lock().unwrap().get_mut(&session_id) {
+                        container.get_or_insert(session);
+                    }
+                });
+            }
         } else if dialog_pos != 0 {
             warn!("Temporary session must be created with zero dialog position");
             return Err(Error::InvalidDialogPos(0));
-        } else {
+        } else if messages.len() % 2 == 1 {
             info!("Temporary session created, inference ready");
             let mut session = self.service.launch();
-
+            session.extend(messages.iter().map(|s| s.content.as_str()));
             set_sample!(session);
+
             tokio::spawn(async move {
-                let mut busy = session.chat(inputs.iter().map(|s| s.content.as_str()));
+                let mut busy = session.chat();
                 while let Some(s) = busy.decode().await {
                     if let Err(e) = sender.send(s.into_owned()) {
                         warn!("Failed to send piece to temporary session with error \"{e}\"");

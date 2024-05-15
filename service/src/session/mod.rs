@@ -1,23 +1,23 @@
 ﻿mod cache;
 mod dialog;
+mod dispatch;
 mod task;
 
-use crate::{batcher::Batcher, ServiceComponent};
+use crate::ServiceComponent;
 use cache::Cache;
-use causal_lm::{CausalLM, DecodingMeta, SampleArgs, SampleMeta};
-use common::utok;
+use causal_lm::{CausalLM, SampleArgs};
 use dialog::Dialog;
+use dispatch::TaskHandle;
 use log::info;
 use std::{
     borrow::Cow,
     cmp::Ordering::{Equal, Greater, Less},
     error, fmt,
-    iter::zip,
-    sync::{Arc, Mutex},
+    sync::Arc,
     vec,
 };
-use task::Task;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+
+pub(crate) use dispatch::Dispatcher;
 
 /// 会话。
 pub struct Session<M: CausalLM> {
@@ -26,6 +26,20 @@ pub struct Session<M: CausalLM> {
 
     dialog: Dialog,
     cache: Option<Cache<M::Storage>>,
+}
+
+/// 对话错误类型。
+///
+/// 目前唯一可能的对话错误是增量对话中句子位置异常。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ChatError;
+
+impl error::Error for ChatError {}
+impl fmt::Display for ChatError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "chat error")
+    }
 }
 
 impl<M: CausalLM> From<Arc<ServiceComponent<M>>> for Session<M> {
@@ -81,16 +95,12 @@ impl<M: CausalLM> Session<M> {
         }
     }
 
-    /// 用 dialog 重置会话，启动推理并返回忙会话。
-    pub fn chat<'s, 'a>(
-        &'s mut self,
-        dialog: impl IntoIterator<Item = &'a str>,
-    ) -> BusySession<'s, M> {
+    /// 用 dialog 填充会话。
+    pub fn extend<'a>(&mut self, dialog: impl IntoIterator<Item = &'a str>) {
         let eos = self.component.handle.model.eos_token();
-        let mut cache = self
+        let cache = self
             .cache
-            .take()
-            .unwrap_or_else(|| Cache::new(&self.component.handle.model, vec![]));
+            .get_or_insert_with(|| Cache::new(&self.component.handle.model, vec![]));
         // 填充对话
         for s in dialog {
             let prompt = self.dialog.num_sentences() % 2 == 0;
@@ -108,21 +118,18 @@ impl<M: CausalLM> Session<M> {
 
             cache.extend(&s);
             self.dialog.push(s);
-            // assert_eq!(cache.end(), self.dialog.last().unwrap().end());
+            assert_eq!(cache.end(), self.dialog.num_tokens());
         }
-        // 生成推理任务与会话的交互管道
-        let max = self.component.handle.model.max_seq_len() as usize;
-        cache.reset_within(max / 4, max / 4 * 3);
-        let cache = Arc::new(Mutex::new(Some(cache)));
-        let (sender, receiver) = unbounded_channel();
-        self.component
-            .handle
-            .batcher
-            .enq(Task::new(cache.clone(), self.sample.clone(), sender));
+    }
+
+    /// 启动推理任务，返回忙会话。
+    pub fn chat(&mut self) -> BusySession<M> {
+        let sample = self.sample.clone();
+        let cache = self.cache.take().unwrap();
+        let handle = self.component.infer(sample, cache);
         BusySession {
             session: self,
-            receiver: Some(receiver),
-            cache,
+            handle,
         }
     }
 
@@ -139,58 +146,31 @@ impl<M: CausalLM> Session<M> {
     }
 }
 
-/// 对话错误类型。
-///
-/// 目前唯一可能的对话错误是增量对话中句子位置异常。
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ChatError;
-
-impl error::Error for ChatError {}
-impl fmt::Display for ChatError {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "chat error")
-    }
-}
-
 /// 忙会话，表示会话正在处理推理任务，并可接收推理结果。
 pub struct BusySession<'a, M: CausalLM> {
     session: &'a mut Session<M>,
-    receiver: Option<UnboundedReceiver<utok>>,
-    cache: Arc<Mutex<Option<Cache<M::Storage>>>>,
+    handle: TaskHandle<M>,
 }
 
 impl<M: CausalLM> BusySession<'_, M> {
     /// 接收模型解码产生的文本。
+    #[inline]
     pub async fn decode(&mut self) -> Option<Cow<str>> {
-        self.receiver.as_mut().unwrap().recv().await.map(|token| {
-            // detokenize and denormalize the token
-            let ServiceComponent {
-                normalizer,
-                tokenizer,
-                ..
-            } = &*self.session.component;
-            normalizer.decode(tokenizer.decode(token))
-        })
+        self.session.component.decode(&mut self.handle).await
     }
 }
 
 impl<M: CausalLM> Drop for BusySession<'_, M> {
+    #[inline]
     fn drop(&mut self) {
         info!("Drop busy session");
-        // 停止响应接收
-        let _ = self.receiver.take();
-        // 取走 cache
-        let cache = self.cache.lock().unwrap().take();
-        // 回收 cache
-        self.session.restore_cache(cache.unwrap());
+        self.session.restore_cache(self.handle.take());
     }
 }
 
 pub struct Generator<M: CausalLM> {
     component: Arc<ServiceComponent<M>>,
-    receiver: Option<UnboundedReceiver<utok>>,
-    cache: Arc<Mutex<Option<Cache<M::Storage>>>>,
+    handle: TaskHandle<M>,
 }
 
 impl<M: CausalLM> Generator<M> {
@@ -202,133 +182,22 @@ impl<M: CausalLM> Generator<M> {
         let prompt = component.template.normalize(prompt.as_ref());
         let prompt = component.normalizer.encode(&prompt);
         let tokens = component.tokenizer.encode(&prompt);
-        let mut cache = Cache::new(&component.handle.model, tokens);
-        let max = component.handle.model.max_seq_len() as usize;
-        cache.reset_within(max / 4, max / 4 * 3);
-        // 生成推理任务与会话的交互管道
-        let cache = Arc::new(Mutex::new(Some(cache)));
-        let (sender, receiver) = unbounded_channel();
-        component
-            .handle
-            .batcher
-            .enq(Task::new(cache.clone(), sample, sender));
+        let x = component.infer(sample, Cache::new(&component.handle.model, tokens));
         Self {
+            handle: x,
             component,
-            receiver: Some(receiver),
-            cache,
         }
     }
 
+    #[inline]
     pub async fn decode(&mut self) -> Option<Cow<str>> {
-        self.receiver.as_mut().unwrap().recv().await.map(|token| {
-            // detokenize and denormalize the token
-            let ServiceComponent {
-                normalizer,
-                tokenizer,
-                ..
-            } = &*self.component;
-            normalizer.decode(tokenizer.decode(token))
-        })
+        self.component.decode(&mut self.handle).await
     }
 }
 
 impl<M: CausalLM> Drop for Generator<M> {
+    #[inline]
     fn drop(&mut self) {
-        // 停止响应接收
-        let _ = self.receiver.take();
-        // 取走 cache
-        let _ = self.cache.lock().unwrap().take();
-    }
-}
-
-pub(crate) struct HandleComponent<M: CausalLM> {
-    model: M,
-    batcher: Batcher<Task<M::Storage>>,
-}
-
-impl<M: CausalLM> From<M> for HandleComponent<M> {
-    #[inline]
-    fn from(model: M) -> Self {
-        Self {
-            model,
-            batcher: Batcher::new(),
-        }
-    }
-}
-
-impl<M: CausalLM> HandleComponent<M> {
-    /// 通过关闭任务队列通知推理线程退出。
-    #[inline]
-    pub fn stop(&self) {
-        self.batcher.shutdown();
-    }
-}
-
-impl<M> HandleComponent<M>
-where
-    M: CausalLM + Send + Sync + 'static,
-    M::Storage: Send,
-{
-    pub fn run(self: Arc<Self>) {
-        while let Some(tasks) = Some(self.batcher.deq()).filter(|t| !t.is_empty()) {
-            // 锁定所有请求的缓存
-            let mut caches = tasks.iter().map(Task::lock_cache).collect::<Vec<_>>();
-            // 统计每个任务的查询长度
-            let num_query = caches
-                .iter()
-                .map(|c| c.as_ref().map_or(0, |c| c.query().len()))
-                .collect::<Vec<_>>();
-            if num_query.iter().all(|&n| n == 0) {
-                continue;
-            }
-            // 词嵌入
-            let queries = caches
-                .iter()
-                .filter_map(|c| c.as_ref().map(Cache::query))
-                .flatten()
-                .copied();
-            let token_embedded = self.model.token_embed(queries);
-            // 推理
-            let queries = caches
-                .iter_mut()
-                .filter_map(|c| c.as_mut().map(Cache::as_ctx));
-            let hidden_state = self.model.forward(queries, token_embedded);
-            drop(caches);
-            // 为每次推理启动一个任务执行解码工作
-            let self_ = self.clone();
-            tokio::task::spawn_blocking(move || {
-                let num_decode = tasks
-                    .iter()
-                    .map(|t| if t.is_alive() { 1 } else { 0 })
-                    .collect::<Vec<_>>();
-
-                let decoding =
-                    zip(&num_query, &num_decode).map(|(&num_query, &num_decode)| DecodingMeta {
-                        num_query,
-                        num_decode,
-                    });
-                let logits = self_.model.decode(decoding, hidden_state);
-
-                let args = zip(&tasks, &num_decode).map(|(t, &num_decode)| SampleMeta {
-                    num_decode,
-                    args: t.sample().clone(),
-                });
-                let tokens = self_.model.sample(args, logits);
-
-                let eos = self_.model.eos_token();
-                let max = self_.model.max_seq_len() as usize;
-                let min = max / 4;
-                zip(tasks, num_decode)
-                    .filter(|(_, n)| *n > 0)
-                    .map(|(t, _)| t)
-                    .zip(tokens)
-                    .filter(|(_, token)| *token != eos)
-                    .for_each(|(mut task, token)| {
-                        if task.push(token, min, max) {
-                            self_.batcher.enq(task);
-                        }
-                    });
-            });
-        }
+        let _ = self.handle.take();
     }
 }

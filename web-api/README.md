@@ -6,8 +6,8 @@
 {
     "request": {
         "/infer": {
-            "inputs": [{
-                "role": "String",
+            "messages": [{
+                "role": "user | assistant",
                 "content": "String"
             }],
             "session_id": "String?",
@@ -44,11 +44,6 @@
             "status": 400,
             "code": 0,
             "message": "(Some json error)"
-        },
-        "empty_input": {
-            "status": 400,
-            "code": 1,
-            "message": "Input list is empty"
         },
         "invalid_dialog_pos": {
             "status": 416,
