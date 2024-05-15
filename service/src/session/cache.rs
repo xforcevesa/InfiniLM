@@ -55,24 +55,18 @@ impl<Storage> Cache<Storage> {
     pub fn query(&self) -> &[utok] {
         &self.tokens[self.cached.end..]
     }
-
-    pub fn ctx(opt: &mut Option<Self>) -> QueryContext<Storage> {
-        if let Some(Cache {
+    /// 生成对应的查询上下文。
+    #[inline]
+    pub fn as_ctx(&mut self) -> QueryContext<Storage> {
+        let Cache {
             pos: _pos,
             cache,
             tokens,
             cached,
-        }) = &mut *opt
-        {
-            QueryContext {
-                cache: Some(cache),
-                range: cached.len() as upos..(tokens.len() - cached.start) as upos,
-            }
-        } else {
-            QueryContext {
-                cache: None,
-                range: 0..0,
-            }
+        } = self;
+        QueryContext {
+            cache: Some(cache),
+            range: cached.len() as upos..(tokens.len() - cached.start) as upos,
         }
     }
 

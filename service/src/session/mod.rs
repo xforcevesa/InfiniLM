@@ -273,18 +273,26 @@ where
         while let Some(tasks) = Some(self.batcher.deq()).filter(|t| !t.is_empty()) {
             // 锁定所有请求的缓存
             let mut caches = tasks.iter().map(Task::lock_cache).collect::<Vec<_>>();
-            // 取出每个任务的查询
-            let tokens = caches
+            // 统计每个任务的查询长度
+            let num_query = caches
                 .iter()
-                .map(|c| c.as_ref().map_or(vec![], |c| c.query().to_vec()))
+                .map(|c| c.as_ref().map_or(0, |c| c.query().len()))
                 .collect::<Vec<_>>();
+            if num_query.iter().all(|&n| n == 0) {
+                continue;
+            }
             // 词嵌入
-            let token_embedded = self.model.token_embed(tokens.iter().flatten().copied());
+            let queries = caches
+                .iter()
+                .filter_map(|c| c.as_ref().map(Cache::query))
+                .flatten()
+                .copied();
+            let token_embedded = self.model.token_embed(queries);
             // 推理
-            let hidden_state = self.model.forward(
-                caches.iter_mut().map(|c| Cache::ctx(&mut **c)),
-                token_embedded,
-            );
+            let queries = caches
+                .iter_mut()
+                .filter_map(|c| c.as_mut().map(Cache::as_ctx));
+            let hidden_state = self.model.forward(queries, token_embedded);
             drop(caches);
             // 为每次推理启动一个任务执行解码工作
             let self_ = self.clone();
@@ -294,14 +302,15 @@ where
                     .map(|t| if t.is_alive() { 1 } else { 0 })
                     .collect::<Vec<_>>();
 
-                let decoding = zip(&tokens, &num_decode).map(|(t, num_decode)| DecodingMeta {
-                    num_query: t.len(),
-                    num_decode: *num_decode,
-                });
+                let decoding =
+                    zip(&num_query, &num_decode).map(|(&num_query, &num_decode)| DecodingMeta {
+                        num_query,
+                        num_decode,
+                    });
                 let logits = self_.model.decode(decoding, hidden_state);
 
-                let args = zip(&tasks, &num_decode).map(|(t, num_decode)| SampleMeta {
-                    num_decode: *num_decode,
+                let args = zip(&tasks, &num_decode).map(|(t, &num_decode)| SampleMeta {
+                    num_decode,
                     args: t.sample().clone(),
                 });
                 let tokens = self_.model.sample(args, logits);
