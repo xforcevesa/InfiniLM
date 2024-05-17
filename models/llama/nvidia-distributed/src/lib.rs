@@ -23,6 +23,7 @@ use nccl::CommunicatorGroup;
 use parameters::{Layer, ParameterMatrix};
 use std::{
     iter::{repeat, zip},
+    mem::{take, ManuallyDrop},
     path::Path,
     slice::from_raw_parts,
     sync::Arc,
@@ -354,7 +355,7 @@ impl CausalLM for Transformer {
         let d = self.config.d;
 
         let contexts = Arc::new(vec![self.comms.contexts().next().unwrap()]);
-        contexts[0].apply(|ctx| {
+        let ans = contexts[0].apply(|ctx| {
             let stream = unsafe { self.streams[0].sprout(ctx) };
 
             let mut x = hidden_state
@@ -397,7 +398,17 @@ impl CausalLM for Transformer {
                 contexts: contexts.clone(),
                 mem: vec![u.sporulate()],
             })
-        })
+        });
+
+        take(&mut ManuallyDrop::new(hidden_state.take_physical()).mem)
+            .into_iter()
+            .zip(self.comms.contexts())
+            .enumerate()
+            .for_each(|(i, (mut mem, context))| {
+                context.apply(|ctx| unsafe { mem.kill_on(&self.streams[i].sprout(ctx)) });
+            });
+
+        ans
     }
 
     fn sample(

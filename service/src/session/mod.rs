@@ -143,6 +143,7 @@ impl<M: CausalLM> Session<M> {
             self.dialog.push(cache.slice_tail(end).to_vec());
         }
         cache.cleanup();
+        info!("Cache restored at {} tokens", cache.end());
         self.cache = Some(cache);
     }
 }
@@ -164,7 +165,6 @@ impl<M: CausalLM> BusySession<'_, M> {
 impl<M: CausalLM> Drop for BusySession<'_, M> {
     #[inline]
     fn drop(&mut self) {
-        info!("Drop busy session");
         self.session.restore_cache(self.handle.take());
     }
 }
