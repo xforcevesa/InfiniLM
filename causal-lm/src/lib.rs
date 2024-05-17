@@ -75,7 +75,7 @@ pub fn pos<'a, S: 'a>(
 ) -> Tensor<Vec<upos>> {
     let mut ans = Vec::with_capacity(nt_hint as usize);
     for query in queries {
-        ans.extend(query.range.clone().into_iter());
+        ans.extend(query.range.clone());
     }
     Tensor::new(tensor::DataType::U32, &[ans.len() as _], ans)
 }
