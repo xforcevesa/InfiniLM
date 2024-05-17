@@ -94,23 +94,23 @@ where
             session.extend(messages.iter().map(|s| s.content.as_str()));
             set_sample!(session);
 
-            if session.dialog_pos() % 2 == 1 {
-                let self_ = self.clone();
-                tokio::spawn(async move {
-                    {
-                        let mut busy = session.chat();
-                        while let Some(s) = busy.decode().await {
-                            if let Err(e) = sender.send(s.into_owned()) {
-                                warn!("Failed to send piece to {session_id} with error \"{e}\"");
-                                break;
-                            }
+            let self_ = self.clone();
+            tokio::spawn(async move {
+                if session.dialog_pos() % 2 == 1 {
+                    let mut busy = session.chat();
+                    while let Some(s) = busy.decode().await {
+                        if let Err(e) = sender.send(s.into_owned()) {
+                            warn!("Failed to send piece to {session_id} with error \"{e}\"");
+                            break;
                         }
                     }
-                    if let Some(container) = self_.pending.lock().unwrap().get_mut(&session_id) {
-                        container.get_or_insert(session);
-                    }
-                });
-            }
+                } else {
+                    warn!("Only revert, no inference for session {session_id}");
+                }
+                if let Some(container) = self_.pending.lock().unwrap().get_mut(&session_id) {
+                    container.get_or_insert(session);
+                }
+            });
         } else if dialog_pos != 0 {
             warn!("Temporary session must be created with zero dialog position");
             return Err(Error::InvalidDialogPos(0));
