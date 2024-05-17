@@ -1,4 +1,5 @@
-﻿mod cache;
+﻿mod batcher;
+mod cache;
 mod dialog;
 mod dispatch;
 mod task;
@@ -182,11 +183,8 @@ impl<M: CausalLM> Generator<M> {
         let prompt = component.template.normalize(prompt.as_ref());
         let prompt = component.normalizer.encode(&prompt);
         let tokens = component.tokenizer.encode(&prompt);
-        let x = component.infer(sample, Cache::new(&component.handle.model, tokens));
-        Self {
-            handle: x,
-            component,
-        }
+        let handle = component.infer(sample, Cache::new(&component.handle.model, tokens));
+        Self { handle, component }
     }
 
     #[inline]

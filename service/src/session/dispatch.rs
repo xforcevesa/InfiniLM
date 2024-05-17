@@ -1,5 +1,5 @@
-﻿use super::{cache::Cache, task::Task};
-use crate::{batcher::Batcher, ServiceComponent};
+﻿use super::{batcher::Batcher, cache::Cache, task::Task};
+use crate::ServiceComponent;
 use causal_lm::{CausalLM, DecodingMeta, SampleArgs, SampleMeta};
 use common::utok;
 use std::{

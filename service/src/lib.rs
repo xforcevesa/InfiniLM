@@ -1,6 +1,5 @@
 #![deny(warnings)]
 
-mod batcher;
 mod session;
 mod template;
 
@@ -26,7 +25,7 @@ struct ServiceComponent<M: CausalLM> {
     handle: Arc<Dispatcher<M>>,
     tokenizer: Box<dyn Tokenizer + Send + Sync>,
     normalizer: Box<dyn Normalizer + Send + Sync>,
-    template: Box<dyn template::Template + Send + Sync>,
+    template: Box<dyn Template + Send + Sync>,
 }
 
 impl<M: CausalLM> Drop for ServiceComponent<M> {
