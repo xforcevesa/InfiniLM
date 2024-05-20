@@ -96,14 +96,14 @@ where
             // 词嵌入
             let queries = caches
                 .iter()
-                .filter_map(|c| c.as_ref().map(Cache::query))
+                .filter_map(|c| c.as_ref().map(Cache::query).filter(|q| !q.is_empty()))
                 .flatten()
                 .copied();
             let token_embedded = self.model.token_embed(queries);
             // 推理
             let queries = caches
                 .iter_mut()
-                .filter_map(|c| c.as_mut().map(Cache::as_ctx));
+                .filter_map(|c| c.as_mut().map(Cache::as_ctx).filter(|q| q.seq_len() > 0));
             let hidden_state = self.model.forward(queries, token_embedded);
             drop(caches);
             // 为每次推理启动一个任务执行解码工作

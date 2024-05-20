@@ -87,20 +87,21 @@ impl InferenceConfig {
         malloc: impl FnOnce(usize) -> S,
         reform: impl FnOnce(Tensor<&mut S>, Tensor<&S>),
     ) -> Tensor<S> {
-        let &[_nlayers, 2, _nkvh, max_seq_len, _dh] = cache.shape() else {
-            panic!()
-        };
-        assert!(pos <= max_seq_len);
-        let slice = [
-            slice![=>],
-            slice![=>],
-            slice![=>],
-            slice![=>pos],
-            slice![=>],
-        ];
-
         let mut ans = Tensor::alloc(cache.data_type(), cache.shape(), malloc);
-        reform(ans.as_mut().slice(&slice), cache.as_ref().slice(&slice));
+        if pos > 0 {
+            let &[_nlayers, 2, _nkvh, max_seq_len, _dh] = cache.shape() else {
+                panic!()
+            };
+            assert!(pos <= max_seq_len);
+            let slice = [
+                slice![=>],
+                slice![=>],
+                slice![=>],
+                slice![=>pos],
+                slice![=>],
+            ];
+            reform(ans.as_mut().slice(&slice), cache.as_ref().slice(&slice));
+        }
         ans
     }
 }
