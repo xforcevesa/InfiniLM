@@ -55,7 +55,9 @@ impl Model for Transformer {
         let host = llama::Storage::load_safetensors(model_dir)?;
         info!("load host: {:?}", time.elapsed());
 
-        let block_size = meta.iter().map(|dev| dev.max_block_dims().0).min().unwrap();
+        let kernels =
+            NvidiaKernelsPtx::new(&meta, host.config.d as _, host.config.max_seq_len as _);
+
         let contexts = meta
             .iter()
             .map(|dev| {
@@ -63,9 +65,6 @@ impl Model for Transformer {
                 dev.retain_primary()
             })
             .collect::<Vec<_>>();
-        let kernels =
-            NvidiaKernelsPtx::new(host.config.d as _, host.config.max_seq_len as _, block_size);
-
         let comms = CommunicatorGroup::new(
             &meta
                 .iter()

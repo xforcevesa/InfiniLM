@@ -405,9 +405,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.4.0"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3855a8a784b474f333699ef2bbca9db2c4a1f6d9088a90a2d25b1eb53111eaa"
+checksum = "a97769d94ddab943e4510d138150169a2758b5ef3eb191a9ee688de3e23ef7b3"
 dependencies = [
  "cfg-if",
 ]
@@ -456,7 +456,7 @@ dependencies = [
 [[package]]
 name = "cublas"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=c47aed2#c47aed2b789a47a94cfcb682139dc9853086053b"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=cb2a18d#cb2a18d50758c4eb52ebb24f065df303eea228e7"
 dependencies = [
  "bindgen",
  "cuda",
@@ -466,7 +466,7 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=c47aed2#c47aed2b789a47a94cfcb682139dc9853086053b"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=cb2a18d#cb2a18d50758c4eb52ebb24f065df303eea228e7"
 dependencies = [
  "bindgen",
  "half",
@@ -1304,7 +1304,7 @@ dependencies = [
 [[package]]
 name = "nccl"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=c47aed2#c47aed2b789a47a94cfcb682139dc9853086053b"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=cb2a18d#cb2a18d50758c4eb52ebb24f065df303eea228e7"
 dependencies = [
  "bindgen",
  "cuda",
@@ -1791,7 +1791,7 @@ dependencies = [
 [[package]]
 name = "search-cuda-tools"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=c47aed2#c47aed2b789a47a94cfcb682139dc9853086053b"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=cb2a18d#cb2a18d50758c4eb52ebb24f065df303eea228e7"
 dependencies = [
  "find_cuda_helper",
 ]
@@ -2327,9 +2327,9 @@ dependencies = [
 
 [[package]]
 name = "wide"
-version = "0.7.19"
+version = "0.7.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aab6594190de06d718a5dbc5fa781ab62f8903797056480e549ca74add6b7065"
+checksum = "21e005a4cc35784183a9e39cb22e9a9c46353ef6a7f113fd8d36ddc58c15ef3c"
 dependencies = [
  "bytemuck",
  "safe_arch",

@@ -16,8 +16,8 @@ mod swiglu;
 use common::utok;
 use cublas::{Cublas, CublasSpore};
 use cuda::{
-    memcpy_d2h, ContextGuard, ContextResource, ContextSpore, CudaDataType, DevByte, ModuleSpore,
-    Ptx, Stream,
+    memcpy_d2h, ComputeCapability, ContextGuard, ContextResource, ContextSpore, CudaDataType,
+    DevByte, Device, ModuleSpore, Ptx, Stream,
 };
 use fused_softmax::FusedSoftmax;
 use reform::Reform;
@@ -42,21 +42,38 @@ pub struct NvidiaKernelsPtx {
 }
 
 impl NvidiaKernelsPtx {
-    pub fn new(rms_norm_max_size: usize, softmax_max_size: usize, block_size: usize) -> Self {
+    pub fn new(devices: &[Device], rms_norm_max_size: usize, softmax_max_size: usize) -> Self {
+        let (cc, block_size) = devices.iter().fold(
+            (
+                ComputeCapability {
+                    major: i32::MAX,
+                    minor: i32::MAX,
+                },
+                usize::MAX,
+            ),
+            |(cc, block_size), d| {
+                (
+                    cc.min(d.compute_capability()),
+                    block_size.min(d.max_block_dims().0),
+                )
+            },
+        );
         Self {
             rms_norm: Arc::new(RmsNormalization::new(
                 CudaDataType::f16,
                 rms_norm_max_size,
+                cc,
                 block_size,
             )),
-            rotary_embedding: Arc::new(Rope::new(block_size)),
-            reform: Arc::new(Reform::new(block_size, 32)),
+            rotary_embedding: Arc::new(Rope::new(cc, block_size)),
+            reform: Arc::new(Reform::new(32, cc, block_size)),
             softmax: Arc::new(FusedSoftmax::new(
                 CudaDataType::f16,
                 softmax_max_size,
+                cc,
                 block_size,
             )),
-            swiglu: Arc::new(Swiglu::new(CudaDataType::f16, block_size)),
+            swiglu: Arc::new(Swiglu::new(CudaDataType::f16, cc, block_size)),
         }
     }
 }

@@ -1,5 +1,8 @@
 ﻿use crate::PtxWapper;
-use cuda::{bindings::CUdeviceptr, ContextSpore, CudaDataType, DevByte, ModuleSpore, Ptx, Stream};
+use cuda::{
+    bindings::CUdeviceptr, ComputeCapability, ContextSpore, CudaDataType, DevByte, ModuleSpore,
+    Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::DerefMut,
@@ -21,7 +24,12 @@ impl PtxWapper for FusedSoftmax {
 }
 
 impl FusedSoftmax {
-    pub fn new(data_type: CudaDataType, max_seq_len: usize, block_size: usize) -> Self {
+    pub fn new(
+        data_type: CudaDataType,
+        max_seq_len: usize,
+        cc: ComputeCapability,
+        block_size: usize,
+    ) -> Self {
         let ty_arg = data_type.name();
         let mask = "AttentionCausualMask";
         let max_items_per_thread = (max_seq_len + block_size - 1) / block_size;
@@ -55,7 +63,7 @@ extern "C" __global__ void {folding}(
 "#
         );
 
-        let (ptx, log) = Ptx::compile(code);
+        let (ptx, log) = Ptx::compile(code, cc);
         if !log.is_empty() {
             warn!("{log}");
         }
@@ -144,14 +152,14 @@ fn test_kernel() {
         );
 
         {
-            let kernel = FusedSoftmax::new(CudaDataType::f16, 2048, 1024);
+            let kernel = FusedSoftmax::new(CudaDataType::f16, 2048, dev.compute_capability(), 1024);
             let mut module = ctx.load(&kernel.ptx).sporulate();
             kernel.launch(&module, &mut att0, &stream);
             stream.synchronize();
             unsafe { module.kill(ctx) };
         }
         {
-            let kernel = FusedSoftmax::new(CudaDataType::f16, 2048, 512);
+            let kernel = FusedSoftmax::new(CudaDataType::f16, 2048, dev.compute_capability(), 512);
             let mut module = ctx.load(&kernel.ptx).sporulate();
             kernel.launch(&module, &mut att1, &stream);
             stream.synchronize();

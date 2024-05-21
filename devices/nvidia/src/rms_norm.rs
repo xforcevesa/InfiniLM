@@ -1,5 +1,8 @@
 use crate::PtxWapper;
-use cuda::{bindings::CUdeviceptr, ContextSpore, CudaDataType, DevByte, ModuleSpore, Ptx, Stream};
+use cuda::{
+    bindings::CUdeviceptr, ComputeCapability, ContextSpore, CudaDataType, DevByte, ModuleSpore,
+    Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -22,7 +25,12 @@ impl PtxWapper for RmsNormalization {
 }
 
 impl RmsNormalization {
-    pub fn new(data_type: CudaDataType, max_item_size: usize, block_size: usize) -> Self {
+    pub fn new(
+        data_type: CudaDataType,
+        max_item_size: usize,
+        cc: ComputeCapability,
+        block_size: usize,
+    ) -> Self {
         let ty_arg = data_type.name();
         let items_per_thread = (max_item_size + block_size - 1) / block_size;
         let padding = format!("rms_normalization_padding_{block_size}");
@@ -59,7 +67,7 @@ extern "C" __global__ void {folding}(
 "#
         );
 
-        let (ptx, log) = Ptx::compile(code);
+        let (ptx, log) = Ptx::compile(code, cc);
         if !log.is_empty() {
             warn!("{log}");
         }
@@ -132,5 +140,5 @@ fn test_kernel() {
         return;
     };
     dev.context()
-        .apply(|_| RmsNormalization::new(CudaDataType::f16, 2048, 1024));
+        .apply(|_| RmsNormalization::new(CudaDataType::f16, 2048, dev.compute_capability(), 1024));
 }

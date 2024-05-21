@@ -1,5 +1,7 @@
 ﻿use crate::PtxWapper;
-use cuda::{bindings::CUdeviceptr, ContextSpore, DevByte, ModuleSpore, Ptx, Stream};
+use cuda::{
+    bindings::CUdeviceptr, ComputeCapability, ContextSpore, DevByte, ModuleSpore, Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -20,7 +22,7 @@ impl PtxWapper for Rope {
 }
 
 impl Rope {
-    pub fn new(block_size: usize) -> Self {
+    pub fn new(cc: ComputeCapability, block_size: usize) -> Self {
         let name = "rotary_embedding_padding";
 
         const ROTARY_EMBEDDING: &str = include_str!("rotary_embedding.cuh");
@@ -38,7 +40,7 @@ extern "C" __global__ void {name}(
 "#
         );
 
-        let (ptx, log) = Ptx::compile(code);
+        let (ptx, log) = Ptx::compile(code, cc);
         if !log.is_empty() {
             warn!("{log}");
         }

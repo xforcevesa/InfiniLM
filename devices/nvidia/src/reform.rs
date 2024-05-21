@@ -1,5 +1,7 @@
 ﻿use crate::PtxWapper;
-use cuda::{bindings::CUdeviceptr, ContextSpore, DevByte, ModuleSpore, Ptx, Stream};
+use cuda::{
+    bindings::CUdeviceptr, ComputeCapability, ContextSpore, DevByte, ModuleSpore, Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -21,7 +23,7 @@ impl PtxWapper for Reform {
 }
 
 impl Reform {
-    pub fn new(block_size: usize, warp_size: usize) -> Self {
+    pub fn new(warp_size: usize, cc: ComputeCapability, block_size: usize) -> Self {
         assert_eq!(
             block_size % warp_size,
             0,
@@ -56,7 +58,7 @@ extern "C" __global__ void {name}(
 "#
         );
 
-        let (ptx, log) = Ptx::compile(code);
+        let (ptx, log) = Ptx::compile(code, cc);
         if !log.is_empty() {
             warn!("{log}");
         }

@@ -77,7 +77,6 @@ impl Model for Transformer {
         let context = Arc::new(device.retain_primary());
         context.apply(|ctx| {
             let transfer = ctx.stream();
-            let block_size = ctx.dev().max_block_dims().0;
 
             let page_lock = |u: &Weight| {
                 let mut host = ctx.malloc_host::<u8>(u.len());
@@ -101,9 +100,9 @@ impl Model for Transformer {
                 context: context.clone(),
 
                 kernels: NvidiaKernelsPtx::new(
+                    &[device],
                     host.config.d as _,
                     host.config.max_seq_len as _,
-                    block_size,
                 )
                 .load(&transfer),
                 embed_tokens: host.embed_tokens.as_ref().map_physical(page_lock),

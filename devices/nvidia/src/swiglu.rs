@@ -1,5 +1,8 @@
 ﻿use crate::PtxWapper;
-use cuda::{bindings::CUdeviceptr, ContextSpore, CudaDataType, DevByte, ModuleSpore, Ptx, Stream};
+use cuda::{
+    bindings::CUdeviceptr, ComputeCapability, ContextSpore, CudaDataType, DevByte, ModuleSpore,
+    Ptx, Stream,
+};
 use std::{
     ffi::{c_uint, c_void, CString},
     ops::{Deref, DerefMut},
@@ -20,7 +23,7 @@ impl PtxWapper for Swiglu {
 }
 
 impl Swiglu {
-    pub fn new(data_type: CudaDataType, block_size: usize) -> Self {
+    pub fn new(data_type: CudaDataType, cc: ComputeCapability, block_size: usize) -> Self {
         let ty_arg = data_type.name();
         let name = format!("swiglu_{ty_arg}");
 
@@ -39,7 +42,7 @@ extern "C" __global__ void {name}(
 "#
         );
 
-        let (ptx, log) = Ptx::compile(code);
+        let (ptx, log) = Ptx::compile(code, cc);
         if !log.is_empty() {
             warn!("{log}");
         }
