@@ -106,27 +106,26 @@ where
                 .filter_map(|c| c.as_mut().map(Cache::as_ctx).filter(|q| q.seq_len() > 0));
             let hidden_state = self.model.forward(queries, token_embedded);
             drop(caches);
-            // 为每次推理启动一个任务执行解码工作
+            // 采样
+            let num_decode = tasks
+                .iter()
+                .map(|t| if t.is_alive() { 1 } else { 0 })
+                .collect::<Vec<_>>();
+            let decoding =
+                zip(num_query, &num_decode).map(|(num_query, &num_decode)| DecodingMeta {
+                    num_query,
+                    num_decode,
+                });
+            let logits = self.model.decode(decoding, hidden_state);
+            // 采样
+            let args = zip(&tasks, &num_decode).map(|(t, &num_decode)| SampleMeta {
+                num_decode,
+                args: t.sample().clone(),
+            });
+            let tokens = self.model.sample(args, logits);
+            // 为每次推理启动一个任务执行发射
             let self_ = self.clone();
             tokio::task::spawn_blocking(move || {
-                let num_decode = tasks
-                    .iter()
-                    .map(|t| if t.is_alive() { 1 } else { 0 })
-                    .collect::<Vec<_>>();
-
-                let decoding =
-                    zip(&num_query, &num_decode).map(|(&num_query, &num_decode)| DecodingMeta {
-                        num_query,
-                        num_decode,
-                    });
-                let logits = self_.model.decode(decoding, hidden_state);
-
-                let args = zip(&tasks, &num_decode).map(|(t, &num_decode)| SampleMeta {
-                    num_decode,
-                    args: t.sample().clone(),
-                });
-                let tokens = self_.model.sample(args, logits);
-
                 let eos = self_.model.eos_token();
                 let max = self_.model.max_seq_len() as usize;
                 let min = max / 4;
