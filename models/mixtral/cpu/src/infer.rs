@@ -314,8 +314,8 @@ fn topk(logits: &Tensor<Blob>, k: usize, weight: &mut Tensor<Blob>, indices: &mu
     let dim = logits.shape()[1];
     let slice = logits.as_slice();
     let slice: &[f16] = reslice(slice);
-    let weight_slice: &mut [f16] = reslice_mut(&mut **weight.physical_mut());
-    let indices_slice: &mut [u32] = reslice_mut(&mut **indices.physical_mut());
+    let weight_slice: &mut [f16] = reslice_mut(weight.physical_mut());
+    let indices_slice: &mut [u32] = reslice_mut(indices.physical_mut());
     for token_i in 0..n {
         #[derive(PartialEq, Debug)]
         struct WithIndex {
@@ -324,7 +324,7 @@ fn topk(logits: &Tensor<Blob>, k: usize, weight: &mut Tensor<Blob>, indices: &mu
         }
         impl PartialOrd for WithIndex {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.data.partial_cmp(&other.data).map(|ord| ord.reverse())
+                Some(self.cmp(other))
             }
         }
         impl Eq for WithIndex {}

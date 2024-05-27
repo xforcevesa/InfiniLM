@@ -134,10 +134,10 @@ fn to_tensor(tensor: SafeTensor) -> Tensor<&[u8]> {
     Tensor::new(data_type, &shape, tensor.data)
 }
 
-fn convert<'a>(tensors: &'a SafeTensors, name: impl AsRef<str>) -> Tensor<&'a [u8]> {
+fn convert(tensors: &SafeTensors, name: impl AsRef<str>) -> Tensor<&[u8]> {
     let tensor = tensors
         .get(name.as_ref())
-        .expect(&format!("Tensor {} not found", name.as_ref()));
+        .unwrap_or_else(|| panic!("Tensor {} not found", name.as_ref()));
     let data_type = type_convert(tensor.dtype);
     let shape = tensor.shape.iter().map(|&x| x as udim).collect::<Vec<_>>();
     Tensor::new(data_type, &shape, tensor.data)
@@ -179,5 +179,5 @@ fn concat0(tensors: &[Tensor<&[u8]>]) -> Tensor<Blob> {
         unsafe { t.reform_to_raw(&mut ans.physical_mut()[offset..][..len]) };
         offset += len;
     }
-    ans.map_physical(|b| b.into())
+    ans.map_physical(|b| b)
 }

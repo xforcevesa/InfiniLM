@@ -6,6 +6,7 @@
             .cuda(true)
             .flag("-gencode")
             .flag("arch=compute_80,code=sm_80")
+            .flag("-allow-unsupported-compiler")
             .file("src/sample.cu")
             .compile("sample");
     }
