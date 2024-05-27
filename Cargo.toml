@@ -17,6 +17,8 @@ members = [
     "models/llama/cpu",
     "models/llama/nvidia",
     "models/llama/nvidia-distributed",
+    "models/mixtral/common",
+    "models/mixtral/cpu",
 ]
 resolver = "2"
 
