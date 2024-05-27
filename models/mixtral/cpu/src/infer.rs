@@ -1,14 +1,10 @@
-use std::usize;
-
+use super::MixtralCPU;
 use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleMeta};
 use common::{f16, upos, utok, Blob};
-// use gemm::f16;
 use common_cpu::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
 use itertools::izip;
 use std::{iter::repeat, slice::from_raw_parts};
 use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
-
-use super::MixtralCPU;
 
 impl CausalLM for MixtralCPU {
     type Storage = Blob;
@@ -16,6 +12,10 @@ impl CausalLM for MixtralCPU {
     #[inline]
     fn eos_token(&self) -> utok {
         self.eos_token
+    }
+    #[inline]
+    fn max_seq_len(&self) -> upos {
+        self.max_seq_len
     }
 
     fn new_cache(&self) -> Tensor<Self::Storage> {
@@ -26,6 +26,28 @@ impl CausalLM for MixtralCPU {
         let d = self.d;
         let nh = self.nh;
         Tensor::alloc(dt, &[nlayers, 2, nkvh, max_seq_len, d / nh], Blob::new)
+    }
+
+    fn duplicate_cache(&self, cache: &Tensor<Self::Storage>, pos: upos) -> Tensor<Self::Storage> {
+        let &[_nlayers, 2, _nkvh, max_seq_len, _dh] = cache.shape() else {
+            panic!()
+        };
+        assert!(pos <= max_seq_len);
+        let slice = [
+            slice![=>],
+            slice![=>],
+            slice![=>],
+            slice![=>pos],
+            slice![=>],
+        ];
+
+        let mut ans = Tensor::alloc(cache.data_type(), cache.shape(), Blob::new);
+        cache
+            .as_ref()
+            .slice(&slice)
+            .map_physical(|u| &**u)
+            .reform_to(&mut ans.as_mut().slice(&slice).map_physical(|u| &mut **u));
+        ans
     }
 
     fn token_embed(&self, queries: impl IntoIterator<Item = utok>) -> Tensor<Self::Storage> {
@@ -202,62 +224,28 @@ impl CausalLM for MixtralCPU {
     fn decode(
         &self,
         decoding: impl IntoIterator<Item = DecodingMeta>,
-        mut hidden_state: Tensor<Self::Storage>,
+        hidden_state: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage> {
         let dt = self.data_type;
         let d = self.d;
 
-        let buf = hidden_state.as_mut_slice();
-        let len = d as usize * dt.size();
+        let mut x = hidden_state;
+        let range = DecodingMeta::select(&mut x, decoding, |dst, src| dst.copy_from_slice(src));
 
-        let mut iter = decoding.into_iter();
-        let mut begin = 0;
-        let mut src = 0;
-        let mut dst = 0;
-        for DecodingMeta {
-            num_query,
-            num_decode,
-        } in iter.by_ref()
-        {
-            begin += num_query;
-            if num_decode > 0 {
-                src = begin;
-                dst = begin;
-                begin -= num_decode;
-                break;
-            }
-        }
-        for DecodingMeta {
-            num_query,
-            num_decode,
-        } in iter
-        {
-            src += num_query - num_decode;
-            if src > dst {
-                for _ in 0..num_decode {
-                    buf.copy_within(src * len..(src + 1) * len, dst * len);
-                    src += 1;
-                    dst += 1;
-                }
-            } else {
-                src += num_decode;
-                dst += num_decode;
-            }
-        }
-
-        if dst == begin {
+        if range.is_empty() {
             return Tensor::alloc(dt, &[0, d as _], Blob::new);
         }
 
+        let lm_layernorm = &self.params.model_norm();
         let lm_head = self.params.lm_head().transpose(&[1, 0]);
-        let mut x = hidden_state.slice(&[slice![begin => dst], slice![=>]]);
+        let mut x = x.slice(&[slice![range.start => range.end], slice![=>]]);
         let mut logits = Tensor::alloc(dt, &[x.shape()[0], lm_head.shape()[1]], Blob::new);
 
         // 复制一个 x 以实现原地归一化
         let x_ = x
             .as_ref()
             .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-        rms_norm(&mut x, &x_, &self.params.model_norm(), self.epsilon);
+        rms_norm(&mut x, &x_, lm_layernorm, self.epsilon);
         mat_mul(&mut logits, 0., &x, &lm_head, 1.);
 
         logits
@@ -273,34 +261,8 @@ impl CausalLM for MixtralCPU {
         args.into_iter()
             .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
             .enumerate()
-            .map(|(i, args)| args.random(&logits[(i * voc as usize)..][..voc as usize]))
+            .map(|(i, args)| args.random(&common_cpu::slice!(logits; voc; [i])))
             .collect()
-    }
-
-    fn duplicate_cache(&self, cache: &Tensor<Self::Storage>, pos: upos) -> Tensor<Self::Storage> {
-        let &[_nlayers, 2, _nkvh, max_seq_len, _dh] = cache.shape() else {
-            panic!()
-        };
-        assert!(pos <= max_seq_len);
-        let slice = [
-            slice![=>],
-            slice![=>],
-            slice![=>],
-            slice![=>pos],
-            slice![=>],
-        ];
-
-        let mut ans = Tensor::alloc(cache.data_type(), cache.shape(), Blob::new);
-        cache
-            .as_ref()
-            .slice(&slice)
-            .map_physical(|u| &**u)
-            .reform_to(&mut ans.as_mut().slice(&slice).map_physical(|u| &mut **u));
-        ans
-    }
-
-    fn max_seq_len(&self) -> upos {
-        self.max_seq_len
     }
 }
 

@@ -1,4 +1,5 @@
 mod config;
-pub use config::ConfigJson;
 mod params;
+
+pub use config::ConfigJson;
 pub use params::MixtralParams;

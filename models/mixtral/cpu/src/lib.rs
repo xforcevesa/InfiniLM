@@ -1,12 +1,12 @@
+mod infer;
+
 use causal_lm::Model;
 use common::{safe_tensors::SafeTensors, utok, FileLoadError};
 use mixtral::ConfigJson;
+use mixtral::MixtralParams;
 use std::path::Path;
 use tensor::{udim, DataType};
 
-mod infer;
-
-use mixtral::MixtralParams;
 pub struct MixtralCPU {
     eos_token: utok,
     data_type: DataType,

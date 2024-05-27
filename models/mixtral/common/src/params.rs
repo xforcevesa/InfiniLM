@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-
 use super::ConfigJson;
 use common::{
     safe_tensors::{Dtype, SafeTensor, SafeTensors},
     Blob,
 };
+use std::collections::HashMap;
 use tensor::{udim, DataType, Shape, Tensor};
+
 pub struct MixtralParams {
     safe_tensors: SafeTensors,
     transformed_tensors: HashMap<String, Tensor<Blob>>,
