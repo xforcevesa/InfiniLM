@@ -13,10 +13,13 @@ causal-lm = { path = "../causal-lm" }
 service = { path = "../service" }
 web-api = { path = "../web-api" }
 
+# models
 llama = { path = "../models/llama/common" }
 llama-cpu = { path = "../models/llama/cpu" }
 llama-nv = { path = "../models/llama/nvidia", optional = true }
 llama-nv-distributed = { path = "../models/llama/nvidia-distributed", optional = true }
+mixtral = { path = "../models/mixtral/common" }
+mixtral-cpu = { path = "../models/mixtral/cpu" }
 
 log.workspace = true
 tokio.workspace = true

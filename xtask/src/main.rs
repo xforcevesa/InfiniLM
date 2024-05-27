@@ -51,6 +51,10 @@ struct InferenceArgs {
     /// Model directory.
     #[clap(short, long)]
     model: String,
+    /// Model type, maybe "llama", "mixtral", "llama" by default.
+    #[clap(long)]
+    model_type: Option<String>,
+
     /// Log level, may be "off", "trace", "debug", "info" or "error".
     #[clap(long)]
     log: Option<String>,
@@ -69,6 +73,12 @@ struct InferenceArgs {
     /// Use Nvidia GPU, specify device IDs separated by comma, e.g. `0` or `0,1`.
     #[clap(long)]
     nvidia: Option<String>,
+}
+
+#[derive(PartialEq)]
+enum ModelType {
+    Llama,
+    Mixtral,
 }
 
 impl InferenceArgs {
@@ -128,6 +138,19 @@ impl InferenceArgs {
     }
 
     #[inline]
+    fn model_type(&self) -> ModelType {
+        if let Some(model_type) = self.model_type.as_ref() {
+            match model_type.to_lowercase().as_str() {
+                "llama" => ModelType::Llama,
+                "mixtral" => ModelType::Mixtral,
+                _ => ModelType::Llama,
+            }
+        } else {
+            ModelType::Llama
+        }
+    }
+
+    #[inline]
     fn sample_args(&self) -> SampleArgs {
         SampleArgs {
             temperature: self.temperature.unwrap_or(0.),
@@ -154,10 +177,16 @@ trait Task: Sized {
         let runtime = tokio::runtime::Runtime::new().unwrap();
 
         self.inference().init_log();
+        let model_type = self.inference().model_type();
         match self.inference().nvidia().as_slice() {
             [] => {
-                use llama_cpu::Transformer as M;
-                runtime.block_on(self.typed::<M>(()));
+                if model_type == ModelType::Mixtral {
+                    use mixtral_cpu::MixtralCPU as M;
+                    runtime.block_on(self.typed::<M>(()));
+                } else {
+                    use llama_cpu::Transformer as M;
+                    runtime.block_on(self.typed::<M>(()));
+                }
             }
             #[cfg(detected_cuda)]
             &[n] => {
