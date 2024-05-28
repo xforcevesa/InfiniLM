@@ -169,6 +169,7 @@ impl<M: CausalLM> Drop for BusySession<'_, M> {
     }
 }
 
+/// 用于文本生成任务的生成器。
 pub struct Generator<M: CausalLM> {
     component: Arc<ServiceComponent<M>>,
     handle: TaskHandle<M>,
@@ -187,6 +188,7 @@ impl<M: CausalLM> Generator<M> {
         Self { handle, component }
     }
 
+    /// 接收模型解码产生的文本。
     #[inline]
     pub async fn decode(&mut self) -> Option<Cow<str>> {
         self.component.decode(&mut self.handle).await

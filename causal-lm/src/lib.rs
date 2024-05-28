@@ -1,5 +1,4 @@
-//! 提供因果语言模型的特性定义。
-
+#![doc = include_str!("../README.md")]
 #![deny(warnings, missing_docs)]
 
 mod decoding;
@@ -13,7 +12,7 @@ pub use decoding::DecodingMeta;
 pub use query_context::QueryContext;
 pub use sample::SampleArgs;
 
-/// 模型。
+/// 从文件系统加载的模型。
 pub trait Model: Sized {
     /// 用于模型加载的元数据。
     type Meta;
@@ -24,20 +23,40 @@ pub trait Model: Sized {
 }
 
 /// 因果语言模型。
+///
+/// 基于从文件加载得到的模型参数和权重，提供以下能力：
+///
+/// - 创建缓存张量（[`new_cache`](CausalLM::new_cache)）；
+/// - 复制缓存张量（[`duplicate_cache`](CausalLM::duplicate_cache)）；
+/// - 以及对输入序列计算词嵌入（[`token_embed`](CausalLM::token_embed)）；
+/// - 对词嵌入计算前向传播（[`forward`](CausalLM::forward)）；
+/// - 解码词嵌入张量得到概率密度（[`decode`](CausalLM::decode)）；
+/// - 采样概率密度（[`sample`](CausalLM::sample)）；
+///
+/// 这种定义根据计算的形式和特性将“一轮”推理分割为多个部分，方便灵活地实现调度。
+/// 为了在推理的不同阶段之间传递巨大的张量，需要 [`Storage`](CausalLM::Storage) 类型来约定中间变量的存储方式。
+///
+/// 模型的结构和计算隔离在这个特性以下，基于这个特性实现的推理调度服务可适用于不同结构的因果语言模型。
 pub trait CausalLM: Model {
-    /// 存储中间结果的类型。
+    /// 定义中间变量的存储方式。
     type Storage;
     /// 最大序列长度。
     fn max_seq_len(&self) -> upos;
     /// 模型定义的句子结束符。
     fn eos_token(&self) -> utok;
-    /// 创建一个新的缓存（`num_layers x 2 x num_kv_head x max_seq_len x head_dim`）。
+    /// 创建一个未填充的缓存张量（`num_layers x 2 x num_kv_head x max_seq_len x head_dim`）。
     fn new_cache(&self) -> Tensor<Self::Storage>;
     /// 复制一个有效长度为 `pos` 的缓存。
+    ///
+    /// 有效部分：`.., .., .., ..pos, ..`
     fn duplicate_cache(&self, cache: &Tensor<Self::Storage>, pos: upos) -> Tensor<Self::Storage>;
     /// 对所有词执行词嵌入（`num_tokens x hidden_size`）。
+    ///
+    /// 词嵌入是上下文无关的，对于每个词独立进行，因此多个请求的查询序列可以 flatten 同时计算。
     fn token_embed(&self, queries: impl IntoIterator<Item = utok>) -> Tensor<Self::Storage>;
-    /// 对词嵌入张量执行 Transformer 计算（`num_tokens x hidden_size`）。
+    /// 对词嵌入张量执行 Transformer 计算（`num_t   okens x hidden_size`）。
+    ///
+    /// 需要输入每个请求的上下文。
     fn forward<'a>(
         &self,
         queries: impl IntoIterator<Item = QueryContext<'a, Self::Storage>>,
@@ -46,6 +65,8 @@ pub trait CausalLM: Model {
     where
         Self: 'a;
     /// 对词嵌入张量执行解码计算（`num_decoding_tokens` x `vocab_size`）。
+    ///
+    /// 每个请求可以独立指定解码 token 的数量。
     fn decode(
         &self,
         decoding: impl IntoIterator<Item = DecodingMeta>,

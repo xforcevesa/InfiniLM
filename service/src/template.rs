@@ -1,4 +1,6 @@
-﻿use std::borrow::Cow;
+﻿//! See tokenizer_config.json/chat_template.
+
+use std::borrow::Cow;
 
 pub trait Template {
     fn normalize<'a>(&self, prompt: &'a str) -> Cow<'a, str>;

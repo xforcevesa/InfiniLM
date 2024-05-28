@@ -16,6 +16,7 @@ pub(crate) struct GenerateArgs {
 }
 
 impl Task for GenerateArgs {
+    #[inline]
     fn inference(&self) -> &InferenceArgs {
         &self.inference
     }

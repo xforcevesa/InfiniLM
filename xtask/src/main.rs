@@ -75,6 +75,7 @@ struct InferenceArgs {
     nvidia: Option<String>,
 }
 
+/// TODO 应该根据参数自动识别模型
 #[derive(PartialEq)]
 enum ModelType {
     Llama,
@@ -143,7 +144,7 @@ impl InferenceArgs {
             match model_type.to_lowercase().as_str() {
                 "llama" => ModelType::Llama,
                 "mixtral" => ModelType::Mixtral,
-                _ => ModelType::Llama,
+                _ => panic!("Unsupported model type: {model_type}"),
             }
         } else {
             ModelType::Llama
@@ -160,9 +161,14 @@ impl InferenceArgs {
     }
 }
 
+/// 模型相关的推理任务。
 trait Task: Sized {
+    /// 解析推理参数。
     fn inference(&self) -> &InferenceArgs;
 
+    /// 在指定类型的模型上调用推理任务。
+    ///
+    /// 特性约束继承自 [`Service`](::service::Service)。
     async fn typed<M>(self, meta: M::Meta)
     where
         M: CausalLM + Send + Sync + 'static,
@@ -170,45 +176,54 @@ trait Task: Sized {
         M::Error: fmt::Debug;
 
     fn run(self) {
+        // 初始化日志器
+        self.inference().init_log();
+        // 启动 tokio 运行时
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        // 如果感知到 cuda 环境则初始化
         #[cfg(detected_cuda)]
         {
             llama_nv::cuda::init();
         }
-        let runtime = tokio::runtime::Runtime::new().unwrap();
 
-        self.inference().init_log();
-        let model_type = self.inference().model_type();
-        match self.inference().nvidia().as_slice() {
-            [] => {
-                if model_type == ModelType::Mixtral {
-                    use mixtral_cpu::MixtralCPU as M;
-                    runtime.block_on(self.typed::<M>(()));
-                } else {
+        let nvidia = self.inference().nvidia();
+        match self.inference().model_type() {
+            ModelType::Llama => match nvidia.as_slice() {
+                [] => {
                     use llama_cpu::Transformer as M;
                     runtime.block_on(self.typed::<M>(()));
                 }
-            }
-            #[cfg(detected_cuda)]
-            &[n] => {
-                use llama_nv::{ModelLoadMeta, Transformer as M};
-                let meta = ModelLoadMeta::load_all_to(n);
-                runtime.block_on(self.typed::<M>(meta));
-            }
-            #[cfg(detected_nccl)]
-            distribute => {
-                use llama_nv_distributed::{cuda::Device, Transformer as M};
-                let meta = distribute.iter().copied().map(Device::new).collect();
-                runtime.block_on(self.typed::<M>(meta));
-            }
-            #[cfg(not(all(detected_cuda, detected_nccl)))]
-            _ => panic!("Device not detected"),
+                #[cfg(detected_cuda)]
+                &[n] => {
+                    use llama_nv::{ModelLoadMeta, Transformer as M};
+                    let meta = ModelLoadMeta::load_all_to(n);
+                    runtime.block_on(self.typed::<M>(meta));
+                }
+                #[cfg(detected_nccl)]
+                distribute => {
+                    use llama_nv_distributed::{cuda::Device, Transformer as M};
+                    let meta = distribute.iter().copied().map(Device::new).collect();
+                    runtime.block_on(self.typed::<M>(meta));
+                }
+                #[cfg(not(all(detected_cuda, detected_nccl)))]
+                _ => panic!("Device not detected"),
+            },
+            ModelType::Mixtral => match nvidia.as_slice() {
+                [] => {
+                    use mixtral_cpu::MixtralCPU as M;
+                    runtime.block_on(self.typed::<M>(()));
+                }
+                _ => panic!("Unsupported device"),
+            },
         }
-
-        runtime.shutdown_background();
+        // 正常退出
+        // 同步等待 NV 上任务结束
         #[cfg(detected_cuda)]
         {
             llama_nv::synchronize();
         }
+        // 关闭 tokio 运行时
+        runtime.shutdown_background();
     }
 }
 
