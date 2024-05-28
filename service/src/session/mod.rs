@@ -11,7 +11,6 @@ use dialog::Dialog;
 use dispatch::TaskHandle;
 use log::info;
 use std::{
-    borrow::Cow,
     cmp::Ordering::{Equal, Greater, Less},
     error, fmt,
     sync::Arc,
@@ -157,7 +156,7 @@ pub struct BusySession<'a, M: CausalLM> {
 impl<M: CausalLM> BusySession<'_, M> {
     /// 接收模型解码产生的文本。
     #[inline]
-    pub async fn decode(&mut self) -> Option<Cow<str>> {
+    pub async fn decode(&mut self) -> Option<String> {
         self.session.component.decode(&mut self.handle).await
     }
 }
@@ -190,7 +189,7 @@ impl<M: CausalLM> Generator<M> {
 
     /// 接收模型解码产生的文本。
     #[inline]
-    pub async fn decode(&mut self) -> Option<Cow<str>> {
+    pub async fn decode(&mut self) -> Option<String> {
         self.component.decode(&mut self.handle).await
     }
 }

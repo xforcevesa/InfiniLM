@@ -65,7 +65,7 @@ where
                 info!("{session_id} inference started");
                 let mut busy = session.chat();
                 while let Some(s) = busy.decode().await {
-                    if let Err(e) = sender.send(s.into_owned()) {
+                    if let Err(e) = sender.send(s) {
                         warn!("Failed to send piece to {session_id} with error \"{e}\"");
                         break;
                     }

@@ -3,8 +3,9 @@ use crate::ServiceComponent;
 use causal_lm::{CausalLM, DecodingMeta, SampleArgs, SampleMeta};
 use common::utok;
 use std::{
-    borrow::Cow,
     iter::zip,
+    mem::{replace, size_of},
+    str,
     sync::{Arc, Mutex},
 };
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -12,6 +13,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 pub(super) struct TaskHandle<M: CausalLM> {
     receiver: Option<UnboundedReceiver<utok>>,
     cache: Arc<Mutex<Option<Cache<M::Storage>>>>,
+    buffer: Utf8Buffer,
 }
 
 impl<M: CausalLM> TaskHandle<M> {
@@ -37,19 +39,26 @@ impl<M: CausalLM> ServiceComponent<M> {
         TaskHandle {
             receiver: Some(receiver),
             cache,
+            buffer: Default::default(),
         }
     }
 
-    pub(super) async fn decode(&self, x: &mut TaskHandle<M>) -> Option<Cow<str>> {
-        x.receiver.as_mut().unwrap().recv().await.map(|token| {
-            // detokenize and denormalize the token
-            let ServiceComponent {
-                normalizer,
-                tokenizer,
-                ..
-            } = self;
-            normalizer.decode(tokenizer.decode(token))
-        })
+    pub(super) async fn decode(&self, x: &mut TaskHandle<M>) -> Option<String> {
+        loop {
+            let s = x.receiver.as_mut().unwrap().recv().await.map(|token| {
+                // detokenize and denormalize the token
+                let ServiceComponent {
+                    normalizer,
+                    tokenizer,
+                    ..
+                } = self;
+                normalizer.decode(tokenizer.decode(token))
+            })?;
+            let s = x.buffer.push(s.as_bytes());
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
     }
 }
 
@@ -141,5 +150,28 @@ where
                     });
             });
         }
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+struct Utf8Buffer(Vec<u8>);
+
+impl Utf8Buffer {
+    fn push(&mut self, bytes: impl AsRef<[u8]>) -> String {
+        self.0.extend_from_slice(bytes.as_ref());
+        let mut len = match str::from_utf8(&self.0) {
+            Ok(_) => self.0.len(),
+            Err(e) => e.valid_up_to(),
+        };
+        while len + size_of::<char>() <= self.0.len() {
+            len += 1;
+            match str::from_utf8(&self.0[len..]) {
+                Ok(s) => len += s.as_bytes().len(),
+                Err(e) => len += e.valid_up_to(),
+            }
+        }
+        let s = self.0.split_off(len);
+        let s = replace(&mut self.0, s);
+        unsafe { String::from_utf8_unchecked(s) }
     }
 }
