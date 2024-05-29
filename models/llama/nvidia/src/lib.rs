@@ -164,7 +164,7 @@ impl CausalLM for Transformer {
             |dst, src| {
                 self.resource.apply(|stream| {
                     let ctx = stream.ctx();
-                    self.kernels.on(&stream).reform(
+                    self.kernels.on(stream).reform(
                         &mut dst.map_physical(|u| unsafe { u.mem.sprout(ctx) }),
                         &src.map_physical(|u| unsafe { u.mem.sprout(ctx) }),
                     );
@@ -180,7 +180,7 @@ impl CausalLM for Transformer {
 
         let mut x = self.tensor(&[nt, d]);
         self.resource.apply(|compute| {
-            self.kernels.on(&compute).gather(
+            self.kernels.on(compute).gather(
                 &mut x
                     .as_mut()
                     .map_physical(|u| unsafe { u.mem.sprout(compute.ctx()) }),
@@ -208,8 +208,8 @@ impl CausalLM for Transformer {
                 di: self.config.di,
                 epsilon: self.config.epsilon,
                 theta: self.config.theta,
-                kernels: self.kernels.on(&compute),
-                compute: &compute,
+                kernels: self.kernels.on(compute),
+                compute,
                 transfer: &transfer,
                 host: &self.layers,
                 dev: Rc::new(RefCell::new(self.pool.lock().unwrap())),
@@ -250,7 +250,7 @@ impl CausalLM for Transformer {
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-            let kernels = self.kernels.on(&compute);
+            let kernels = self.kernels.on(compute);
             kernels.rms_norm(&mut x, &x_, &lm_layernorm, self.config.epsilon);
             kernels.mat_mul(
                 &mut logits

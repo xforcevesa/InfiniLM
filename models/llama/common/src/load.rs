@@ -7,7 +7,7 @@ use common::{
     Blob,
     FileLoadError::{self, Io, Json},
 };
-use std::{fs::File, path::Path, pin::Pin, sync::Arc, usize};
+use std::{fs::File, path::Path, pin::Pin, sync::Arc};
 use tensor::{udim, DataType, Shape, Tensor};
 
 impl Storage {

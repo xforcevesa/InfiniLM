@@ -1,4 +1,5 @@
 ﻿fn main() {
+    println!("cargo::rustc-check-cfg=cfg(detected_mkl)");
     if !intel_mkl_tool::Library::available().is_empty() {
         // **NOTICE** add mkl_rt to library search path
         println!("cargo:rustc-cfg=detected_mkl");
