@@ -284,9 +284,9 @@ dependencies = [
 
 [[package]]
 name = "clang-sys"
-version = "1.8.1"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
+checksum = "f803f94ecf597339c7a34eed2036ef83f86aaba937f001f7c5b5e251f043f1f9"
 dependencies = [
  "glob",
  "libc",
@@ -456,7 +456,7 @@ dependencies = [
 [[package]]
 name = "cublas"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=5e58565#5e585658eb10778e1cfb25248d6eaf428c72bdc4"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=7e46af7#7e46af70bf3fe602b15d93987e2417292163fced"
 dependencies = [
  "bindgen",
  "cuda",
@@ -466,7 +466,7 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=5e58565#5e585658eb10778e1cfb25248d6eaf428c72bdc4"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=7e46af7#7e46af70bf3fe602b15d93987e2417292163fced"
 dependencies = [
  "bindgen",
  "half",
@@ -1325,7 +1325,7 @@ dependencies = [
 [[package]]
 name = "nccl"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=5e58565#5e585658eb10778e1cfb25248d6eaf428c72bdc4"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=7e46af7#7e46af70bf3fe602b15d93987e2417292163fced"
 dependencies = [
  "bindgen",
  "cuda",
@@ -1812,7 +1812,7 @@ dependencies = [
 [[package]]
 name = "search-cuda-tools"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=5e58565#5e585658eb10778e1cfb25248d6eaf428c72bdc4"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=7e46af7#7e46af70bf3fe602b15d93987e2417292163fced"
 dependencies = [
  "find_cuda_helper",
 ]
