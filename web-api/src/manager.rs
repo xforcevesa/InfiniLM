@@ -16,25 +16,20 @@ pub(crate) struct ServiceManager<M: CausalLM> {
     pending: Mutex<LruCache<SessionId, Option<Session<M>>>>,
 }
 
-// 是否应该添加Clone
 #[derive(Eq, PartialEq, Hash, Clone, Debug)]
-pub(crate) struct UnamedSessionId {
-    id: usize,
-}
+struct AnonymousSessionId(usize);
 
-impl UnamedSessionId {
+impl AnonymousSessionId {
     fn new() -> Self {
-        static OCCUPIED_UNAMED_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
-        UnamedSessionId {
-            id: OCCUPIED_UNAMED_SESSION_ID.fetch_add(1, Ordering::Relaxed),
-        }
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 enum SessionId {
-    Named(String),
-    Unamed(UnamedSessionId),
+    Permanent(String),
+    Temporary(AnonymousSessionId),
 }
 
 impl<M: CausalLM> ServiceManager<M> {
@@ -102,7 +97,7 @@ where
 
         match (session_id, dialog_pos.unwrap_or(0)) {
             (Some(session_id_str), 0) => {
-                let session_id = SessionId::Named(session_id_str);
+                let session_id = SessionId::Permanent(session_id_str);
                 let mut session = self
                     .pending
                     .lock()
@@ -136,7 +131,7 @@ where
                 Ok(receiver)
             }
             (Some(session_id_str), p) => {
-                let session_id = SessionId::Named(session_id_str);
+                let session_id = SessionId::Permanent(session_id_str);
                 let mut session = self
                     .pending
                     .lock()
@@ -177,7 +172,7 @@ where
                 Ok(receiver)
             }
             (None, 0) => {
-                let session_id = SessionId::Unamed(UnamedSessionId::new());
+                let session_id = SessionId::Temporary(AnonymousSessionId::new());
                 let mut session = self
                     .pending
                     .lock()
@@ -202,7 +197,7 @@ where
                             sender,
                         )
                         .await;
-                        self_.drop_with_session_id(&session_id).unwrap();
+                        self_.drop_with_session_id(session_id).unwrap();
                     });
                 }
                 Ok(receiver)
@@ -216,7 +211,7 @@ where
 
     #[inline]
     fn restore(&self, session_id: &SessionId, session: Session<M>) {
-        if let Some(option) = self.pending.lock().unwrap().get_mut(&session_id) {
+        if let Some(option) = self.pending.lock().unwrap().get_mut(session_id) {
             assert!(option.replace(session).is_none());
         }
     }
@@ -229,10 +224,10 @@ where
         }: Fork,
     ) -> Result<ForkSuccess, Error> {
         let mut sessions = self.pending.lock().unwrap();
-        let new_session_id_warped = SessionId::Named(new_session_id.clone());
+        let new_session_id_warped = SessionId::Permanent(new_session_id.clone());
         if !sessions.contains(&new_session_id_warped) {
             let new = sessions
-                .get_mut(&SessionId::Named(session_id.clone()))
+                .get_mut(&SessionId::Permanent(session_id.clone()))
                 .ok_or(Error::SessionNotFound)?
                 .as_ref()
                 .ok_or(Error::SessionBusy)?
@@ -250,16 +245,11 @@ where
     }
 
     pub fn drop_(&self, Drop { session_id }: Drop) -> Result<DropSuccess, Error> {
-        let session_id = SessionId::Named(session_id);
-        if self.pending.lock().unwrap().pop(&session_id).is_some() {
-            info!("{session_id:?} dropped");
-            Ok(DropSuccess)
-        } else {
-            Err(Error::SessionNotFound)
-        }
+        let session_id = SessionId::Permanent(session_id);
+        self.drop_with_session_id(session_id)
     }
 
-    fn drop_with_session_id(&self, session_id: &SessionId) -> Result<DropSuccess, Error> {
+    fn drop_with_session_id(&self, session_id: SessionId) -> Result<DropSuccess, Error> {
         if self.pending.lock().unwrap().pop(&session_id).is_some() {
             info!("{session_id:?} dropped in drop function");
             Ok(DropSuccess)
