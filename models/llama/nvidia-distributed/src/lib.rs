@@ -121,63 +121,50 @@ impl CausalLM for Transformer {
     }
 
     fn new_cache(&self) -> Tensor<Self::Storage> {
-        let dt = self.config.dt;
-        let nlayers = self.config.nlayers;
-        let nkvh = self.config.nkvh;
-        let max_seq_len = self.config.max_seq_len;
-        let d = self.config.d;
-        let nh = self.config.nh;
-
         let contexts = Arc::new(self.comms.contexts().collect::<Vec<_>>());
         let n = contexts.len() as udim;
-        Tensor::alloc(dt, &[nlayers, 2, nkvh / n, max_seq_len, d / nh], |len| {
-            Cache {
+        let distributed = InferenceConfig {
+            nkvh: self.config.nkvh / n,
+            ..self.config.clone()
+        };
+
+        distributed.new_cache(|len| Cache {
+            mem: contexts
+                .iter()
+                .map(|context| context.apply(|ctx| ctx.malloc::<u8>(len).sporulate()))
+                .collect(),
+            contexts,
+        })
+    }
+
+    fn duplicate_cache(&self, cache: &Tensor<Self::Storage>, pos: upos) -> Tensor<Self::Storage> {
+        let contexts = Arc::new(self.comms.contexts().collect::<Vec<_>>());
+        self.config.duplicate_cache(
+            cache,
+            pos,
+            |len| Cache {
                 mem: contexts
                     .iter()
                     .map(|context| context.apply(|ctx| ctx.malloc::<u8>(len).sporulate()))
                     .collect(),
                 contexts: contexts.clone(),
-            }
-        })
-    }
-
-    fn duplicate_cache(&self, cache: &Tensor<Self::Storage>, pos: upos) -> Tensor<Self::Storage> {
-        let &[_nlayers, 2, _nkvh, max_seq_len, _dh] = cache.shape() else {
-            panic!()
-        };
-        assert!(pos <= max_seq_len);
-        let slice = [
-            slice![=>],
-            slice![=>],
-            slice![=>],
-            slice![=>pos],
-            slice![=>],
-        ];
-
-        let contexts = Arc::new(self.comms.contexts().collect::<Vec<_>>());
-        let mem = contexts
-            .iter()
-            .enumerate()
-            .map(|(i, context)| {
-                context.apply(|ctx| {
-                    let stream = ctx.stream();
-                    let mut ans = Tensor::alloc(cache.data_type(), cache.shape(), |len| {
-                        stream.malloc::<u8>(len)
+            },
+            |dst, src| {
+                for (i, context) in contexts.iter().enumerate() {
+                    context.apply(|ctx| {
+                        let stream = ctx.stream();
+                        let kernels = self.kernels[i].on(&stream);
+                        kernels.reform(
+                            &mut dst
+                                .as_ref()
+                                .map_physical(|u| unsafe { u.mem[i].sprout(ctx) }),
+                            &src.as_ref()
+                                .map_physical(|u| unsafe { u.mem[i].sprout(ctx) }),
+                        );
                     });
-                    let kernels = self.kernels[i].on(&stream);
-                    kernels.reform(
-                        &mut ans.as_mut().slice(&slice).map_physical(|u| &mut **u),
-                        &cache
-                            .as_ref()
-                            .slice(&slice)
-                            .map_physical(|u| unsafe { u.mem[i].sprout(ctx) }),
-                    );
-                    ans.take_physical().sporulate()
-                })
-            })
-            .collect();
-
-        Tensor::new(cache.data_type(), cache.shape(), Cache { contexts, mem })
+                }
+            },
+        )
     }
 
     fn token_embed(&self, queries: impl IntoIterator<Item = utok>) -> Tensor<Self::Storage> {
