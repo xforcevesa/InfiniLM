@@ -247,12 +247,12 @@ impl CausalLM for Transformer {
                             )
                         })
                         .collect::<Vec<_>>();
+
                     let x = token_embedded.as_ref().map_physical(|u| &u.mem[i]);
+                    let pos = pos.as_ref().map_physical(|u| &**u);
 
                     s.spawn(move || {
                         comm.device().retain_primary().apply(|ctx| {
-                            let stream = unsafe { ctx.sprout(&self.streams[i]) };
-                            let kernels = self.kernels[i].on(&stream);
                             let mut queries = queries
                                 .into_iter()
                                 .map(|(cache, range)| {
@@ -269,18 +269,19 @@ impl CausalLM for Transformer {
                                     range: range.clone(),
                                 })
                                 .collect::<Vec<_>>();
+
+                            let stream = unsafe { ctx.sprout(&self.streams[i]) };
+                            let kernels = self.kernels[i].on(&stream);
+
                             let mut x = x.map_physical(|u| unsafe { ctx.sprout(u) });
-
+                            let pos = pos.map_physical(|u| stream.from_host(u));
                             let mut state_buf = Tensor::alloc(dt, &[nt, d + reusing / n], |len| {
-                                ctx.malloc::<u8>(len)
+                                stream.malloc::<u8>(len)
                             });
-
-                            let mut q_buf =
-                                ctx.malloc::<u8>((nh / n * max_seq_len * dh) as usize * dt.size());
-                            let mut att_buf = ctx.malloc::<u8>(
-                                (nh / n * max_seq_len * max_att_len) as usize * dt.size(),
-                            );
-                            let pos = pos.as_ref().map_physical(|u| stream.from_host(u));
+                            let buf_len_common = (nh / n * max_seq_len) as usize * dt.size();
+                            let mut q_buf = stream.malloc::<u8>(buf_len_common * dh as usize);
+                            let mut att_buf =
+                                stream.malloc::<u8>(buf_len_common * max_att_len as usize);
 
                             for layer in 0..self.config.nlayers as usize {
                                 let params = self.matrix.get(layer, i, ctx);
@@ -317,11 +318,11 @@ impl CausalLM for Transformer {
                                 );
                             }
 
-                            state_buf.take_physical().drop_on(&stream);
                             pos.take_physical().drop_on(&stream);
-                            q_buf.drop_on(&stream);
                             att_buf.drop_on(&stream);
-                        });
+                            q_buf.drop_on(&stream);
+                            state_buf.take_physical().drop_on(&stream);
+                        })
                     })
                 })
                 .collect::<Vec<_>>()

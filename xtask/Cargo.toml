@@ -26,6 +26,7 @@ tokio.workspace = true
 simple_logger = "5.0"
 colored = "2.1"
 clap = { version = "4.5", features = ["derive"] }
+time = "0.3"
 
 [build-dependencies]
 search-cuda-tools.workspace = true

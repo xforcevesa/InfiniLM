@@ -9,6 +9,7 @@ use clap::Parser;
 use deploy::DeployArgs;
 use service::ServiceArgs;
 use std::{ffi::c_int, fmt};
+use time::UtcOffset;
 
 #[macro_use]
 extern crate clap;
@@ -92,16 +93,21 @@ impl InferenceArgs {
             .as_ref()
             .and_then(|log| match log.to_lowercase().as_str() {
                 "off" | "none" => Some(LevelFilter::Off),
-                "trace" => Some(LevelFilter::Trace),
+                "all" | "trace" => Some(LevelFilter::Trace),
                 "debug" => Some(LevelFilter::Debug),
                 "info" => Some(LevelFilter::Info),
                 "error" => Some(LevelFilter::Error),
                 _ => None,
             })
             .unwrap_or(LevelFilter::Warn);
+
+        const EAST8: UtcOffset = match UtcOffset::from_hms(8, 0, 0) {
+            Ok(it) => it,
+            Err(_) => unreachable!(),
+        };
         SimpleLogger::new()
             .with_level(log)
-            .with_local_timestamps()
+            .with_utc_offset(UtcOffset::current_local_offset().unwrap_or(EAST8))
             .init()
             .unwrap();
     }
