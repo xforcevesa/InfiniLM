@@ -25,12 +25,12 @@ resolver = "2"
 [workspace.dependencies]
 half = "2.4"
 log = "0.4"
-itertools = "0.12"
+itertools = "0.13"
 serde = "1.0"
 serde_json = "1.0"
 memmap2 = "0.9"
 rayon = "1.10"
-tokio = { version = "1.37", features = ["rt-multi-thread", "sync"] }
+tokio = { version = "1.38", features = ["rt-multi-thread", "sync"] }
 
 cuda = { git = "https://github.com/YdrMaster/cuda-driver", rev = "7e46af7" }
 cublas = { git = "https://github.com/YdrMaster/cuda-driver", rev = "7e46af7" }

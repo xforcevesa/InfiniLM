@@ -23,7 +23,7 @@ mixtral-cpu = { path = "../models/mixtral/cpu" }
 
 log.workspace = true
 tokio.workspace = true
-simple_logger = "4.3"
+simple_logger = "5.0"
 colored = "2.1"
 clap = { version = "4.5", features = ["derive"] }
 

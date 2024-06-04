@@ -16,7 +16,7 @@ log.workspace = true
 itertools.workspace = true
 
 [dev-dependencies]
-simple_logger = "4.3"
+simple_logger = "5.0"
 
 [build-dependencies]
 search-cuda-tools.workspace = true

@@ -99,7 +99,11 @@ impl InferenceArgs {
                 _ => None,
             })
             .unwrap_or(LevelFilter::Warn);
-        SimpleLogger::new().with_level(log).init().unwrap();
+        SimpleLogger::new()
+            .with_level(log)
+            .with_local_timestamps()
+            .init()
+            .unwrap();
     }
 
     #[cfg(detected_cuda)]
