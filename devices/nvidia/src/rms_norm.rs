@@ -119,7 +119,7 @@ extern "C" __global__ void {folding}(
             (&epsilon) as *const _ as _,
             (&items_len) as *const _ as _,
         ];
-        let module = unsafe { module.sprout(stream.ctx()) };
+        let module = module.sprout_ref(stream.ctx());
         if items_len <= self.block_size {
             let kernel = module.get_kernel(&self.padding);
             kernel.launch(n, items_len, params.as_ptr(), 0, Some(stream));

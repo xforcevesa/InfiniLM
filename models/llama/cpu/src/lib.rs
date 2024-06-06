@@ -39,8 +39,8 @@ impl ComputeStream for Transformer {
     {
         reslice(pos)
     }
-    fn map_storage(&self, storage: &mut Self::Storage) -> impl DerefMut<Target = [Self::Byte]> {
-        &mut **storage
+    fn map_storage<'a>(&'a self, storage: &'a mut Self::Storage) -> &'a mut [Self::Byte] {
+        storage
     }
     #[inline]
     fn rms_norm<O, X, W>(&self, o: &mut Tensor<O>, x: &Tensor<X>, w: &Tensor<W>)

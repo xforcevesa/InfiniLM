@@ -119,15 +119,13 @@ impl NvidiaKernelsPtx {
 }
 
 impl NvidiaKernels {
-    pub fn kill(&mut self, ctx: &ContextGuard) {
-        unsafe {
-            self.cublas.kill(ctx);
-            self.rms_norm.module.kill(ctx);
-            self.rotary_embedding.module.kill(ctx);
-            self.reform.module.kill(ctx);
-            self.softmax.module.kill(ctx);
-            self.swiglu.module.kill(ctx);
-        }
+    pub fn kill(self, ctx: &ContextGuard) {
+        drop(self.cublas.sprout(ctx));
+        drop(self.rms_norm.module.sprout(ctx));
+        drop(self.rotary_embedding.module.sprout(ctx));
+        drop(self.reform.module.sprout(ctx));
+        drop(self.softmax.module.sprout(ctx));
+        drop(self.swiglu.module.sprout(ctx));
     }
 }
 
@@ -139,7 +137,7 @@ pub struct KernelRuntime<'a> {
 impl NvidiaKernels {
     #[inline]
     pub fn on<'a>(&'a self, stream: &'a Stream) -> KernelRuntime<'a> {
-        unsafe { stream.ctx().sprout(&self.cublas).set_stream(stream) };
+        self.cublas.sprout_ref(stream.ctx()).set_stream(stream);
         KernelRuntime {
             kernels: self,
             stream,
@@ -184,8 +182,8 @@ impl Kernels for KernelRuntime<'_> {
         U: Deref<Target = Self::Storage>,
         V: Deref<Target = Self::Storage>,
     {
-        let cublas = unsafe { self.kernels.cublas.sprout(self.stream.ctx()) };
-        mat_mul::mat_mul(&cublas, c, beta, a, b, alpha)
+        let cublas = self.kernels.cublas.sprout_ref(self.stream.ctx());
+        mat_mul::mat_mul(cublas, c, beta, a, b, alpha)
     }
 
     #[inline]

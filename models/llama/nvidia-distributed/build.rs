@@ -1,8 +1,9 @@
 ﻿fn main() {
-    use search_cuda_tools::{allow_cfg, detect, find_nccl_root};
+    use build_script_cfg::Cfg;
+    use search_cuda_tools::find_nccl_root;
 
-    allow_cfg("nccl");
+    let nccl = Cfg::new("detected_nccl");
     if find_nccl_root().is_some() {
-        detect("nccl");
+        nccl.define();
     }
 }

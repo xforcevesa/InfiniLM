@@ -1,8 +1,9 @@
 ﻿fn main() {
-    use search_cuda_tools::{allow_cfg, detect, find_cuda_root};
+    use build_script_cfg::Cfg;
+    use search_cuda_tools::find_cuda_root;
 
-    allow_cfg("cuda");
+    let cuda = Cfg::new("detected_cuda");
     if find_cuda_root().is_some() {
-        detect("cuda");
+        cuda.define();
     }
 }

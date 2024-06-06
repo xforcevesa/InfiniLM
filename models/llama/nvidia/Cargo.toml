@@ -15,4 +15,5 @@ log.workspace = true
 itertools.workspace = true
 
 [build-dependencies]
+build-script-cfg.workspace = true
 search-cuda-tools.workspace = true

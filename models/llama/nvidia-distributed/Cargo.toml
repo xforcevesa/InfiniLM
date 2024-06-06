@@ -19,4 +19,5 @@ itertools.workspace = true
 simple_logger = "5.0"
 
 [build-dependencies]
+build-script-cfg.workspace = true
 search-cuda-tools.workspace = true

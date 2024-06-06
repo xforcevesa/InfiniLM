@@ -29,6 +29,7 @@ clap = { version = "4.5", features = ["derive"] }
 time = "0.3"
 
 [build-dependencies]
+build-script-cfg.workspace = true
 search-cuda-tools.workspace = true
 
 [features]

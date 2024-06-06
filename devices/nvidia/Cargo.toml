@@ -17,5 +17,6 @@ log.workspace = true
 rand = "0.8"
 
 [build-dependencies]
+build-script-cfg.workspace = true
 search-cuda-tools.workspace = true
 cc = "1.0"

@@ -91,9 +91,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle-query"
-version = "1.0.3"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a64c907d4e79225ac72e2a354c9ce84d50ebb4586dee56c82b3ee73004f537f5"
+checksum = "ad186efb764318d35165f1758e7dcef3b10628e26d41a44bc5550652e6804391"
 dependencies = [
  "windows-sys 0.52.0",
 ]
@@ -199,6 +199,12 @@ checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
 ]
+
+[[package]]
+name = "build-script-cfg"
+version = "0.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62416e5d5d54b59baf7fd793ee632d83a7512d2d4ef227729642b45db09e6c7d"
 
 [[package]]
 name = "bumpalo"
@@ -376,6 +382,7 @@ dependencies = [
 name = "common-nv"
 version = "0.0.0"
 dependencies = [
+ "build-script-cfg",
  "cc",
  "common",
  "cublas",
@@ -456,9 +463,10 @@ dependencies = [
 [[package]]
 name = "cublas"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=7e46af7#7e46af70bf3fe602b15d93987e2417292163fced"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=a4b3cf5#a4b3cf53de9c59ab18aff752720dff4ff50e9ccf"
 dependencies = [
  "bindgen",
+ "build-script-cfg",
  "cuda",
  "search-cuda-tools",
 ]
@@ -466,9 +474,10 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=7e46af7#7e46af70bf3fe602b15d93987e2417292163fced"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=a4b3cf5#a4b3cf53de9c59ab18aff752720dff4ff50e9ccf"
 dependencies = [
  "bindgen",
+ "build-script-cfg",
  "half",
  "log",
  "search-cuda-tools",
@@ -1192,6 +1201,7 @@ dependencies = [
 name = "llama-nv"
 version = "0.0.0"
 dependencies = [
+ "build-script-cfg",
  "causal-lm",
  "common",
  "common-nv",
@@ -1205,6 +1215,7 @@ dependencies = [
 name = "llama-nv-distributed"
 version = "0.0.0"
 dependencies = [
+ "build-script-cfg",
  "causal-lm",
  "common",
  "common-nv",
@@ -1334,9 +1345,10 @@ dependencies = [
 [[package]]
 name = "nccl"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=7e46af7#7e46af70bf3fe602b15d93987e2417292163fced"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=a4b3cf5#a4b3cf53de9c59ab18aff752720dff4ff50e9ccf"
 dependencies = [
  "bindgen",
+ "build-script-cfg",
  "cuda",
  "search-cuda-tools",
 ]
@@ -1821,7 +1833,7 @@ dependencies = [
 [[package]]
 name = "search-cuda-tools"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=7e46af7#7e46af70bf3fe602b15d93987e2417292163fced"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=a4b3cf5#a4b3cf53de9c59ab18aff752720dff4ff50e9ccf"
 dependencies = [
  "find_cuda_helper",
 ]
@@ -2006,9 +2018,9 @@ dependencies = [
 
 [[package]]
 name = "tar"
-version = "0.4.40"
+version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b16afcea1f22891c49a00c751c7b63b2233284064f11a200fc624137c51e2ddb"
+checksum = "cb797dad5fb5b76fcf519e702f4a589483b5ef06567f160c392832c1f5e44909"
 dependencies = [
  "filetime",
  "libc",
@@ -2336,9 +2348,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3de34ae270483955a94f4b21bdaaeb83d508bb84a01435f393818edb0012009"
+checksum = "3c452ad30530b54a4d8e71952716a212b08efd0f3562baa66c29a618b07da7c3"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -2357,9 +2369,9 @@ dependencies = [
 
 [[package]]
 name = "wide"
-version = "0.7.22"
+version = "0.7.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c5cb32c74fe55350a3272ba792f050613e692253ae0d89ad5d83eb0dcea15e1"
+checksum = "1134eff459f1063780b94cc78b704e2212cac12abd554e4268f5b8f9dfcc1883"
 dependencies = [
  "bytemuck",
  "safe_arch",
@@ -2546,6 +2558,7 @@ dependencies = [
 name = "xtask"
 version = "0.0.0"
 dependencies = [
+ "build-script-cfg",
  "causal-lm",
  "clap",
  "colored",

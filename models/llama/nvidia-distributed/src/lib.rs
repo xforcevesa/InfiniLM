@@ -11,8 +11,8 @@ use common::{upos, utok, FileLoadError};
 use common_nv::{
     cast_dt,
     cuda::{
-        AsRaw, Context, ContextResource, ContextSpore, DevMem, DevMemSpore, Device, HostMemSpore,
-        StreamSpore,
+        AsRaw, Context, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device,
+        HostMemSpore, StreamSpore,
     },
     sample_nv, slice, split, udim, DataType, KernelRuntime, Kernels, LocalSplitable, NvidiaKernels,
     NvidiaKernelsPtx, Tensor,
@@ -39,10 +39,10 @@ pub struct Transformer {
     streams: Vec<StreamSpore>,
     kernels: Vec<NvidiaKernels>,
 
-    embed_tokens: Tensor<HostMemSpore>,
+    embed_tokens: Tensor<Option<HostMemSpore>>,
     matrix: ParameterMatrix,
-    lm_layernorm: Tensor<DevMemSpore>,
-    lm_head: Tensor<DevMemSpore>,
+    lm_layernorm: Tensor<Option<DevMemSpore>>,
+    lm_head: Tensor<Option<DevMemSpore>>,
 }
 
 impl Model for Transformer {
@@ -77,11 +77,12 @@ impl Model for Transformer {
                 host.embed_tokens.map_physical(|u| {
                     let mut host = ctx.malloc_host::<u8>(u.len());
                     host.clone_from_slice(&u);
-                    host.sporulate()
+                    Some(host.sporulate())
                 }),
                 host.lm_layernorm
-                    .map_physical(|u| ctx.from_host(&u).sporulate()),
-                host.lm_head.map_physical(|u| ctx.from_host(&u).sporulate()),
+                    .map_physical(|u| Some(ctx.from_host(&u).sporulate())),
+                host.lm_head
+                    .map_physical(|u| Some(ctx.from_host(&u).sporulate())),
             )
         });
         let streams = contexts
@@ -89,9 +90,7 @@ impl Model for Transformer {
             .map(|context| context.apply(|ctx| ctx.stream().sporulate()))
             .collect::<Vec<_>>();
         let kernels = zip(&contexts, &streams)
-            .map(|(context, stream)| {
-                context.apply(|ctx| kernels.load(&unsafe { stream.sprout(ctx) }))
-            })
+            .map(|(context, stream)| context.apply(|ctx| kernels.load(stream.sprout_ref(ctx))))
             .collect();
         Ok(Self {
             comms,
@@ -149,17 +148,16 @@ impl CausalLM for Transformer {
                     .collect(),
                 contexts: contexts.clone(),
             },
-            |dst, src| {
+            |mut dst, src| {
                 for (i, context) in contexts.iter().enumerate() {
                     context.apply(|ctx| {
                         let stream = ctx.stream();
                         let kernels = self.kernels[i].on(&stream);
                         kernels.reform(
                             &mut dst
-                                .as_ref()
-                                .map_physical(|u| unsafe { u.mem[i].sprout(ctx) }),
-                            &src.as_ref()
-                                .map_physical(|u| unsafe { u.mem[i].sprout(ctx) }),
+                                .as_mut()
+                                .map_physical(|u| &mut **u.mem[i].sprout_mut(ctx)),
+                            &src.as_ref().map_physical(|u| &**u.mem[i].sprout_ref(ctx)),
                         );
                     });
                 }
@@ -177,16 +175,23 @@ impl CausalLM for Transformer {
 
         let mut x = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, len));
         contexts[0].apply(|ctx| {
-            let stream = unsafe { ctx.sprout(&self.streams[0]) };
+            let stream = self.streams[0].sprout_ref(ctx);
             let kernels = self.kernels[0].on(&stream);
-            let mut x = x.as_mut().map_physical(|u| unsafe { ctx.sprout(&u[0]) });
-            kernels.gather(&mut x, &self.embed_tokens, tokens);
+            let mut x = x.as_mut().map_physical(|u| &mut **u[0].sprout_mut(ctx));
+            kernels.gather(
+                &mut x,
+                &self
+                    .embed_tokens
+                    .as_ref()
+                    .map_physical(|u| u.as_deref().unwrap()),
+                tokens,
+            );
         });
         for (i, comm) in self.comms.call().iter().enumerate() {
             contexts[i].apply(|ctx| {
-                let stream = unsafe { ctx.sprout(&self.streams[i]) };
-                let mut dst = unsafe { ctx.sprout(&x.physical_mut()[i]) };
-                comm.broadcast(&mut dst, None, 0, &stream);
+                let stream = self.streams[i].sprout_ref(ctx);
+                let dst = x.physical_mut()[i].sprout_mut(ctx);
+                comm.broadcast(dst, None, 0, &stream);
             });
         }
         x.map_physical(|mem| Cache { contexts, mem })
@@ -195,7 +200,7 @@ impl CausalLM for Transformer {
     fn forward<'a>(
         &self,
         queries: impl IntoIterator<Item = QueryContext<'a, Self::Storage>>,
-        token_embedded: Tensor<Self::Storage>,
+        mut token_embedded: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage>
     where
         Self: 'a,
@@ -230,38 +235,52 @@ impl CausalLM for Transformer {
         let pos = causal_lm::pos(&queries, nt);
         let pos = &pos;
 
+        let x = token_embedded
+            .as_mut()
+            .map_physical(|u| unsafe { u.split() });
+        let queries = queries
+            .into_iter()
+            .map(|q| {
+                (
+                    q.cache.map(|t| {
+                        let ptrs = unsafe { t.physical_mut().split() };
+                        Tensor::new(t.data_type(), t.shape(), ptrs)
+                    }),
+                    q.range,
+                )
+            })
+            .collect::<Vec<_>>();
+        let queries = &queries;
+
         std::thread::scope(|s| {
             let _ = self
                 .comms
                 .iter()
                 .enumerate()
                 .map(|(i, comm)| {
-                    let queries = queries
+                    let mut x = x.as_ref().map_physical(|u| unsafe {
+                        std::slice::from_raw_parts_mut(u[i].0 as *mut DevByte, u[i].1)
+                    });
+                    let pos = pos.as_ref().map_physical(|u| &**u);
+                    let mut queries = queries
                         .iter()
-                        .map(|q| {
+                        .map(|(cache, range)| {
                             (
-                                q.cache
-                                    .as_ref()
-                                    .map(|t| t.as_ref().map_physical(|u| &u.mem[i])),
-                                q.range.clone(),
+                                cache.as_ref().map(|t| {
+                                    t.as_ref().map_physical(|u| unsafe {
+                                        std::slice::from_raw_parts_mut(
+                                            u[i].0 as *mut DevByte,
+                                            u[i].1,
+                                        )
+                                    })
+                                }),
+                                range,
                             )
                         })
                         .collect::<Vec<_>>();
 
-                    let x = token_embedded.as_ref().map_physical(|u| &u.mem[i]);
-                    let pos = pos.as_ref().map_physical(|u| &**u);
-
                     s.spawn(move || {
                         comm.device().retain_primary().apply(|ctx| {
-                            let mut queries = queries
-                                .into_iter()
-                                .map(|(cache, range)| {
-                                    (
-                                        cache.map(|t| t.map_physical(|u| unsafe { ctx.sprout(u) })),
-                                        range,
-                                    )
-                                })
-                                .collect::<Vec<_>>();
                             let mut queries = queries
                                 .iter_mut()
                                 .map(|(cache, range)| QueryContext {
@@ -270,10 +289,9 @@ impl CausalLM for Transformer {
                                 })
                                 .collect::<Vec<_>>();
 
-                            let stream = unsafe { ctx.sprout(&self.streams[i]) };
+                            let stream = self.streams[i].sprout_ref(ctx);
                             let kernels = self.kernels[i].on(&stream);
 
-                            let mut x = x.map_physical(|u| unsafe { ctx.sprout(u) });
                             let pos = pos.map_physical(|u| stream.from_host(u));
                             let mut state_buf = Tensor::alloc(dt, &[nt, d + reusing / n], |len| {
                                 stream.malloc::<u8>(len)
@@ -343,11 +361,11 @@ impl CausalLM for Transformer {
 
         let contexts = Arc::new(vec![self.comms.contexts().next().unwrap()]);
         let ans = contexts[0].apply(|ctx| {
-            let stream = unsafe { self.streams[0].sprout(ctx) };
+            let stream = self.streams[0].sprout_ref(ctx);
 
             let mut x = hidden_state
                 .as_mut()
-                .map_physical(|u| unsafe { u.mem[0].sprout(ctx) });
+                .map_physical(|u| &mut **u.mem[0].sprout_mut(ctx));
             let range = DecodingMeta::select(&mut x, decoding, |dst, src| {
                 stream.memcpy_d2d(dst, src);
             });
@@ -362,11 +380,11 @@ impl CausalLM for Transformer {
             let model_norm = self
                 .lm_layernorm
                 .as_ref()
-                .map_physical(|u| unsafe { u.sprout(ctx) });
+                .map_physical(|u| &**u.as_ref().unwrap().sprout_ref(ctx));
             let lm_head = self
                 .lm_head
                 .as_ref()
-                .map_physical(|u| unsafe { u.sprout(ctx) });
+                .map_physical(|u| &**u.as_ref().unwrap().sprout_ref(ctx));
 
             let mut x = x.slice(&[slice![range.start => range.end], slice![=>]]);
             let mut logits = Tensor::alloc(dt, &[x.shape()[0], lm_head.shape()[1]], |len| {
@@ -391,8 +409,8 @@ impl CausalLM for Transformer {
             .into_iter()
             .zip(self.comms.contexts())
             .enumerate()
-            .for_each(|(i, (mut mem, context))| {
-                context.apply(|ctx| unsafe { mem.kill_on(&self.streams[i].sprout(ctx)) });
+            .for_each(|(i, (mem, context))| {
+                context.apply(|ctx| mem.sprout(ctx).drop_on(self.streams[i].sprout_ref(ctx)));
             });
 
         ans
@@ -415,9 +433,9 @@ impl CausalLM for Transformer {
                 args.into_iter()
                     .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
                     .enumerate(),
-                &unsafe { mem[0].sprout(ctx) },
+                mem[0].sprout_ref(ctx),
                 voc,
-                &unsafe { self.streams[0].sprout(ctx) },
+                self.streams[0].sprout_ref(ctx),
             )
         })
     }
@@ -427,10 +445,10 @@ impl Transformer {
     fn self_att(
         &self,
         kernels: &KernelRuntime,
-        queries: &mut [QueryContext<DevMem>],
+        queries: &mut [QueryContext<&mut [DevByte]>],
         seq_len: &[udim],
         params: &Layer,
-        x: &mut Tensor<DevMem>,
+        x: &mut Tensor<&mut [DevByte]>,
         state_buf: &mut Tensor<DevMem>,
         pos: &Tensor<DevMem>,
         q_buf: &mut DevMem,
@@ -522,7 +540,7 @@ impl Transformer {
         &self,
         kernels: &KernelRuntime,
         params: &Layer,
-        x: &mut Tensor<DevMem>,
+        x: &mut Tensor<&mut [DevByte]>,
         state_buf: &mut Tensor<DevMem>,
         i: usize,
     ) {
@@ -562,15 +580,16 @@ impl Drop for Transformer {
         let contexts = self.comms.contexts().collect::<Vec<_>>();
         unsafe {
             contexts[0].apply(|ctx| {
-                ctx.kill(self.embed_tokens.physical_mut());
-                ctx.kill(self.lm_layernorm.physical_mut());
-                ctx.kill(self.lm_head.physical_mut());
+                self.embed_tokens.physical_mut().take().unwrap().sprout(ctx);
+                self.lm_layernorm.physical_mut().take().unwrap().sprout(ctx);
+                self.lm_head.physical_mut().take().unwrap().sprout(ctx);
             });
             self.matrix.kill(&contexts);
-            for (context, stream, kernels) in izip!(contexts, &mut self.streams, &mut self.kernels)
-            {
+            let streams = std::mem::take(&mut self.streams);
+            let kernels = std::mem::take(&mut self.kernels);
+            for (context, stream, kernels) in izip!(contexts, streams, kernels) {
                 context.apply(|ctx| {
-                    stream.kill(ctx);
+                    stream.sprout(ctx);
                     kernels.kill(ctx);
                 });
             }
@@ -583,11 +602,21 @@ pub struct Cache {
     pub mem: Vec<DevMemSpore>,
 }
 
+impl Cache {
+    unsafe fn split(&mut self) -> Vec<(cuda::bindings::CUdeviceptr, usize)> {
+        self.mem
+            .iter()
+            .map(|mem| (mem.as_raw(), mem.len()))
+            .collect()
+    }
+}
+
 impl Drop for Cache {
     #[inline]
     fn drop(&mut self) {
-        for (context, mem) in zip(&*self.contexts, &mut self.mem) {
-            context.apply(|ctx| unsafe { mem.kill(ctx) });
+        let mem = std::mem::take(&mut self.mem);
+        for (context, mem) in zip(&*self.contexts, mem) {
+            context.apply(|ctx| drop(mem.sprout(ctx)));
         }
     }
 }

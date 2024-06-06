@@ -15,7 +15,7 @@ pub trait ComputeStream {
     where
         Self: 'p;
     fn free_pos(&self, _mem: Self::Pos<'_>) {}
-    fn map_storage(&self, storage: &mut Self::Storage) -> impl DerefMut<Target = [Self::Byte]>;
+    fn map_storage<'a>(&'a self, storage: &'a mut Self::Storage) -> &'a mut [Self::Byte];
 
     fn rms_norm<O, X, W>(&self, o: &mut Tensor<O>, x: &Tensor<X>, w: &Tensor<W>)
     where

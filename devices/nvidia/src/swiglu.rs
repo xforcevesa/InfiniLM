@@ -94,7 +94,7 @@ extern "C" __global__ void {name}(
         let block_dims = gcd(self.block_size, di);
         let grid_dims = (seq_len, di / block_dims);
 
-        let module = unsafe { module.sprout(stream.ctx()) };
+        let module = module.sprout_ref(stream.ctx());
         let kernel = module.get_kernel(&self.f);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }

@@ -1,15 +1,16 @@
 ﻿fn main() {
-    use search_cuda_tools::{allow_cfg, detect, find_cuda_root, find_nccl_root};
+    use build_script_cfg::Cfg;
+    use search_cuda_tools::{find_cuda_root, find_nccl_root};
 
-    allow_cfg("cuda");
-    allow_cfg("nccl");
+    let cuda = Cfg::new("detected_cuda");
+    let nccl = Cfg::new("detected_nccl");
     if !cfg!(feature = "nvidia") {
         return;
     }
     if find_cuda_root().is_some() {
-        detect("cuda");
+        cuda.define();
     }
     if find_nccl_root().is_some() {
-        detect("nccl");
+        nccl.define();
     }
 }

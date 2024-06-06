@@ -1,6 +1,6 @@
 ﻿use crate::distribute::{DistributeScheme, Distributer};
 use common_nv::{
-    cuda::{Context, ContextGuard, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore},
+    cuda::{Context, ContextGuard, ContextResource, ContextSpore, DevByte, DevMemSpore},
     udim, Tensor,
 };
 use std::time::Instant;
@@ -44,20 +44,17 @@ impl ParameterMatrix {
 
     pub unsafe fn kill(&mut self, contexts: &[Context]) {
         assert_eq!(contexts.len(), self.scheme.n);
-        let nlayers = self.matrix.len() / self.scheme.n;
-        for (i, context) in contexts.iter().enumerate() {
-            context.apply(|ctx| {
-                for element in &mut self.matrix[i * nlayers..][..nlayers] {
-                    element.kill(ctx);
-                }
-            });
+        let matrix = std::mem::take(&mut self.matrix);
+        let nlayers = matrix.len() / self.scheme.n;
+        for (i, spore) in matrix.into_iter().enumerate() {
+            contexts[i / nlayers].apply(|ctx| drop(spore.sprout(ctx)));
         }
     }
 }
 
 pub struct Layer<'ctx> {
     scheme: &'ctx DistributeScheme,
-    mem: DevMem<'ctx>,
+    mem: &'ctx [DevByte],
 }
 
 impl ParameterMatrix {
@@ -65,7 +62,7 @@ impl ParameterMatrix {
         let nlayers = self.matrix.len() / self.scheme.n;
         Layer {
             scheme: &self.scheme,
-            mem: unsafe { self.matrix[i * nlayers + layer].sprout(ctx) },
+            mem: self.matrix[i * nlayers + layer].sprout_ref(ctx),
         }
     }
 }

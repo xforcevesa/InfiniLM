@@ -82,7 +82,7 @@ extern "C" __global__ void {name}(
             (&leading_dim) as *const _ as _,
         ];
 
-        let module = unsafe { module.sprout(stream.ctx()) };
+        let module = module.sprout_ref(stream.ctx());
         let kernel = module.get_kernel(&self.f);
         kernel.launch((nh, nt), dh / 2, params.as_ptr(), 0, Some(stream))
     }

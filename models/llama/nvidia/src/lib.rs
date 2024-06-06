@@ -16,7 +16,7 @@ use cuda::{
     Stream, StreamSpore,
 };
 use llama::{InferenceConfig, LayerStorage, Weight};
-use resource::Resource;
+use resource::{DropOption, Resource};
 use std::{
     cell::RefCell,
     collections::VecDeque,
@@ -36,13 +36,13 @@ pub struct Transformer {
     config: InferenceConfig,
 
     resource: Arc<Resource>,
-    transfer: StreamSpore,
-    kernels: NvidiaKernels,
+    transfer: DropOption<StreamSpore>,
+    kernels: DropOption<NvidiaKernels>,
 
-    embed_tokens: Tensor<HostMemSpore>,
+    embed_tokens: Tensor<DropOption<HostMemSpore>>,
     layers: Vec<LayerStorage<HostMemSpore>>,
-    lm_layernorm: Tensor<DevMemSpore>,
-    lm_head: Tensor<DevMemSpore>,
+    lm_layernorm: Tensor<DropOption<DevMemSpore>>,
+    lm_head: Tensor<DropOption<DevMemSpore>>,
 
     pool: Mutex<VecDeque<(LayerStorage<DevMemSpore>, EventSpore)>>,
 }
@@ -109,20 +109,25 @@ impl Model for Transformer {
                     host.config.d as _,
                     host.config.max_seq_len as _,
                 )
-                .load(&transfer),
-                embed_tokens: host.embed_tokens.as_ref().map_physical(page_lock),
+                .load(&transfer)
+                .into(),
+                embed_tokens: host
+                    .embed_tokens
+                    .as_ref()
+                    .map_physical(page_lock)
+                    .map_physical(|u| u.into()),
                 layers,
                 lm_layernorm: host
                     .lm_layernorm
-                    .map_physical(|u| transfer.from_host(&u).sporulate()),
+                    .map_physical(|u| transfer.from_host(&u).sporulate().into()),
                 lm_head: host
                     .lm_head
-                    .map_physical(|u| transfer.from_host(&u).sporulate()),
+                    .map_physical(|u| transfer.from_host(&u).sporulate().into()),
                 pool: Mutex::new(pool),
 
                 config: host.config,
                 resource: resource.clone(),
-                transfer: transfer.sporulate(),
+                transfer: transfer.sporulate().into(),
             })
         })
     }
@@ -164,9 +169,9 @@ impl CausalLM for Transformer {
             |dst, src| {
                 self.resource.apply(|stream| {
                     let ctx = stream.ctx();
-                    self.kernels.on(stream).reform(
-                        &mut dst.map_physical(|u| unsafe { u.mem.sprout(ctx) }),
-                        &src.map_physical(|u| unsafe { u.mem.sprout(ctx) }),
+                    self.kernels.as_ref().on(stream).reform(
+                        &mut dst.map_physical(|u| &mut **u.mem.as_mut().sprout_mut(ctx)),
+                        &src.map_physical(|u| &**u.mem.as_ref().sprout_ref(ctx)),
                     );
                 })
             },
@@ -180,11 +185,11 @@ impl CausalLM for Transformer {
 
         let mut x = self.tensor(&[nt, d]);
         self.resource.apply(|compute| {
-            self.kernels.on(compute).gather(
+            self.kernels.as_ref().on(compute).gather(
                 &mut x
                     .as_mut()
-                    .map_physical(|u| unsafe { u.mem.sprout(compute.ctx()) }),
-                &self.embed_tokens,
+                    .map_physical(|u| &mut **u.mem.as_mut().sprout_mut(compute.ctx())),
+                &self.embed_tokens.as_ref().map_physical(|u| &**u.as_ref()),
                 tokens,
             )
         });
@@ -201,16 +206,16 @@ impl CausalLM for Transformer {
     {
         self.resource.apply(|compute| {
             let ctx = compute.ctx();
-            let transfer = unsafe { self.transfer.sprout(ctx) };
+            let transfer = self.transfer.as_ref().sprout_ref(ctx);
             let stream = ComputeStream {
                 nh: self.config.nh,
                 nkvh: self.config.nkvh,
                 di: self.config.di,
                 epsilon: self.config.epsilon,
                 theta: self.config.theta,
-                kernels: self.kernels.on(compute),
+                kernels: self.kernels.as_ref().on(compute),
                 compute,
-                transfer: &transfer,
+                transfer,
                 host: &self.layers,
                 dev: Rc::new(RefCell::new(self.pool.lock().unwrap())),
             };
@@ -227,7 +232,7 @@ impl CausalLM for Transformer {
             let ctx = compute.ctx();
             let mut x = hidden_state
                 .as_mut()
-                .map_physical(|u| unsafe { u.mem.sprout(ctx) });
+                .map_physical(|u| &mut **u.mem.as_mut().sprout_mut(ctx));
             let range =
                 DecodingMeta::select(&mut x, decoding, |dst, src| compute.memcpy_d2d(dst, src));
             if range.is_empty() {
@@ -237,11 +242,11 @@ impl CausalLM for Transformer {
             let lm_layernorm = self
                 .lm_layernorm
                 .as_ref()
-                .map_physical(|u| unsafe { ctx.sprout(u) });
+                .map_physical(|u| &**u.as_ref().sprout_ref(ctx));
             let lm_head = self
                 .lm_head
                 .as_ref()
-                .map_physical(|u| unsafe { ctx.sprout(u) });
+                .map_physical(|u| &**u.as_ref().sprout_ref(ctx));
 
             let mut x = x.slice(&[slice![range.start => range.end], slice![=>]]);
             let mut logits = self.tensor(&[x.shape()[0], lm_head.shape()[1]]);
@@ -250,12 +255,12 @@ impl CausalLM for Transformer {
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-            let kernels = self.kernels.on(compute);
+            let kernels = self.kernels.as_ref().on(compute);
             kernels.rms_norm(&mut x, &x_, &lm_layernorm, self.config.epsilon);
             kernels.mat_mul(
                 &mut logits
                     .as_mut()
-                    .map_physical(|u| unsafe { ctx.sprout(&u.mem) }),
+                    .map_physical(|u| &mut **u.mem.as_mut().sprout_mut(ctx)),
                 0.,
                 &x,
                 &lm_head,
@@ -282,7 +287,11 @@ impl CausalLM for Transformer {
                 args.into_iter()
                     .flat_map(|meta| repeat(meta.args).take(meta.num_decode))
                     .enumerate(),
-                &unsafe { logits.take_physical().mem.sprout(compute.ctx()) },
+                logits
+                    .take_physical()
+                    .mem
+                    .as_ref()
+                    .sprout_ref(compute.ctx()),
                 voc,
                 compute,
             )
@@ -293,31 +302,31 @@ impl CausalLM for Transformer {
 impl Drop for Transformer {
     #[inline]
     fn drop(&mut self) {
-        self.resource.apply(|compute| unsafe {
+        self.resource.apply(|compute| {
             let ctx = compute.ctx();
-            ctx.kill(&mut self.transfer);
-            ctx.kill(self.embed_tokens.physical_mut());
-            ctx.kill(self.lm_layernorm.physical_mut());
-            ctx.kill(self.lm_head.physical_mut());
-            for layer in self.layers.iter_mut() {
-                ctx.kill(layer.att_layernorm.physical_mut());
-                ctx.kill(layer.att_qkv.physical_mut());
-                ctx.kill(layer.att_o.physical_mut());
-                ctx.kill(layer.mlp_layernorm.physical_mut());
-                ctx.kill(layer.mlp_gate_up.physical_mut());
-                ctx.kill(layer.mlp_down.physical_mut());
+            self.transfer.take().sprout(ctx);
+            self.kernels.take().kill(ctx);
+            self.embed_tokens.physical_mut().take().sprout(ctx);
+            self.lm_layernorm.physical_mut().take().sprout(ctx);
+            self.lm_head.physical_mut().take().sprout(ctx);
+            while let Some(layer) = self.layers.pop() {
+                layer.att_layernorm.take_physical().sprout(ctx);
+                layer.att_qkv.take_physical().sprout(ctx);
+                layer.att_o.take_physical().sprout(ctx);
+                layer.mlp_layernorm.take_physical().sprout(ctx);
+                layer.mlp_gate_up.take_physical().sprout(ctx);
+                layer.mlp_down.take_physical().sprout(ctx);
             }
             let mut pool = self.pool.lock().unwrap();
-            while let Some((mut layer, mut event)) = pool.pop_front() {
-                ctx.kill(layer.att_layernorm.physical_mut());
-                ctx.kill(layer.att_qkv.physical_mut());
-                ctx.kill(layer.att_o.physical_mut());
-                ctx.kill(layer.mlp_layernorm.physical_mut());
-                ctx.kill(layer.mlp_gate_up.physical_mut());
-                ctx.kill(layer.mlp_down.physical_mut());
-                ctx.kill(&mut event);
+            while let Some((layer, event)) = pool.pop_front() {
+                layer.att_layernorm.take_physical().sprout(ctx);
+                layer.att_qkv.take_physical().sprout(ctx);
+                layer.att_o.take_physical().sprout(ctx);
+                layer.mlp_layernorm.take_physical().sprout(ctx);
+                layer.mlp_gate_up.take_physical().sprout(ctx);
+                layer.mlp_down.take_physical().sprout(ctx);
+                event.sprout(ctx);
             }
-            self.kernels.kill(ctx);
         });
     }
 }
@@ -359,8 +368,8 @@ impl<'a> llama::ComputeStream for ComputeStream<'a> {
     fn free_pos(&self, mem: Self::Pos<'_>) {
         mem.drop_on(self.compute);
     }
-    fn map_storage(&self, storage: &mut Self::Storage) -> impl DerefMut<Target = [Self::Byte]> {
-        unsafe { storage.mem.sprout(self.compute.ctx()) }
+    fn map_storage<'b>(&'b self, storage: &'b mut Self::Storage) -> &'b mut [Self::Byte] {
+        storage.mem.as_mut().sprout_mut(self.compute.ctx())
     }
     fn rms_norm<O, X, W>(&self, o: &mut Tensor<O>, x: &Tensor<X>, w: &Tensor<W>)
     where
@@ -465,10 +474,9 @@ impl<'a> Iterator for Iter<'a> {
         };
         self.layer += 1;
 
-        let (s, mut event) = pool.pop_front().unwrap();
+        let (s, event) = pool.pop_front().unwrap();
         let ctx = self.compute.ctx();
-        self.compute.wait_for(&unsafe { event.sprout(ctx) });
-        unsafe { ctx.kill(&mut event) };
+        self.compute.wait_for(&event.sprout(ctx));
 
         Some(Self::Item {
             host: self.host,
@@ -496,12 +504,12 @@ macro_rules! access {
             .unwrap()
             .$name
             .as_ref()
-            .map_physical(|u| unsafe { u.sprout($self.transfer.ctx()) })
+            .map_physical(|u| &**u.sprout_ref($self.transfer.ctx()))
     };
 }
 impl<'a> llama::LLamaLayer for LayerLoader<'a> {
     type Byte = DevByte;
-    type Storage<'m> = DevMem<'m> where Self: 'm;
+    type Storage<'m> = &'m[DevByte] where Self: 'm;
 
     fn att_layernorm(&self) -> Tensor<Self::Storage<'_>> {
         access!(self, att_layernorm)
@@ -525,13 +533,13 @@ impl<'a> llama::LLamaLayer for LayerLoader<'a> {
 
 impl Drop for LayerLoader<'_> {
     fn drop(&mut self) {
-        let lll = self.storage.take().unwrap();
+        let mut lll = self.storage.take().unwrap();
         if let Some(load) = self.load {
             macro_rules! exchange {
                 ($($name:ident)+) => {
                     $(
                         let host = self.host[load].$name.physical();
-                        let mut dev = unsafe { lll.$name.physical().sprout(self.transfer.ctx()) };
+                        let mut dev = lll.$name.physical_mut().sprout_mut(self.transfer.ctx());
                         self.transfer.memcpy_h2d(&mut dev, host);
                     )+
                 };

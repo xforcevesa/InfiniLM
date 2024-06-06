@@ -135,7 +135,7 @@ extern "C" __global__ void {name}(
         let grid_dims = (r, (c + max_warp_per_block - 1) / max_warp_per_block);
         let block_dims = ((c + grid_dims.1 - 1) / grid_dims.1, self.warp_size);
 
-        let module = unsafe { module.sprout(stream.ctx()) };
+        let module = module.sprout_ref(stream.ctx());
         let kernel = module.get_kernel(&self.f);
         kernel.launch(grid_dims, block_dims, params.as_ptr(), 0, Some(stream));
     }
