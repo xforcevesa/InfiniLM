@@ -12,6 +12,7 @@ tensor = { path = "../../tensor" }
 kernel-lib = { path = "../../kernel-lib" }
 gemm = "0.17"
 intel-mkl-src = { version = "0.8", features = ["mkl-dynamic-lp64-iomp"] }
+operators = { workspace = true, features = ["common-cpu"] }
 
 [build-dependencies]
 intel-mkl-tool = "0.8"
