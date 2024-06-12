@@ -8,10 +8,7 @@ mod fused_softmax;
 mod gather;
 mod mat_mul;
 mod reform;
-mod rms_norm;
-mod rotary_embedding;
 mod sample;
-mod swiglu;
 
 use common::utok;
 use cublas::{Cublas, CublasSpore};
@@ -20,25 +17,28 @@ use cuda::{
     DevByte, Device, ModuleSpore, Ptx, Stream,
 };
 use fused_softmax::FusedSoftmax;
+use operators::{
+    rms_norm::{self, nvidia_gpu as rms_norm_nv},
+    rope::{self, nvidia_gpu as rope_nv},
+    swiglu::{self, nvidia_gpu as swiglu_nv},
+    Operator, Scheme, TensorLayout, F16, U32,
+};
 use reform::Reform;
-use rms_norm::RmsNormalization;
-use rotary_embedding::Rope;
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
 };
-use swiglu::Swiglu;
 
 pub use kernel_lib::Kernels;
 pub use sample::{sample_cpu, sample_nv};
 pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
 
 pub struct NvidiaKernelsPtx {
-    rms_norm: Arc<RmsNormalization>,
-    rotary_embedding: Arc<Rope>,
+    rms_norm: rms_norm_nv::Operator,
+    rope: rope_nv::Operator,
     reform: Arc<Reform>,
     softmax: Arc<FusedSoftmax>,
-    swiglu: Arc<Swiglu>,
+    swiglu: swiglu_nv::Operator,
 }
 
 impl NvidiaKernelsPtx {
@@ -59,13 +59,13 @@ impl NvidiaKernelsPtx {
             },
         );
         Self {
-            rms_norm: Arc::new(RmsNormalization::new(
-                CudaDataType::f16,
+            rms_norm: rms_norm_nv::Operator::new(&rms_norm_nv::Config::config_for(
+                &devices[0],
+                F16,
                 rms_norm_max_size,
-                cc,
-                block_size,
-            )),
-            rotary_embedding: Arc::new(Rope::new(cc, block_size)),
+            ))
+            .unwrap(),
+            rope: rope_nv::Operator::new(&rope_nv::Config::config_for(&devices[0], F16)).unwrap(),
             reform: Arc::new(Reform::new(32, cc, block_size)),
             softmax: Arc::new(FusedSoftmax::new(
                 CudaDataType::f16,
@@ -73,7 +73,8 @@ impl NvidiaKernelsPtx {
                 cc,
                 block_size,
             )),
-            swiglu: Arc::new(Swiglu::new(CudaDataType::f16, cc, block_size)),
+            swiglu: swiglu_nv::Operator::new(&swiglu_nv::Config::config_for(&devices[0], F16))
+                .unwrap(),
         }
     }
 }
@@ -96,11 +97,11 @@ struct ModuleWapper<T> {
 
 pub struct NvidiaKernels {
     cublas: CublasSpore,
-    rms_norm: ModuleWapper<RmsNormalization>,
-    rotary_embedding: ModuleWapper<Rope>,
+    rms_norm: rms_norm_nv::Operator,
+    rope: rope_nv::Operator,
     reform: ModuleWapper<Reform>,
     softmax: ModuleWapper<FusedSoftmax>,
-    swiglu: ModuleWapper<Swiglu>,
+    swiglu: swiglu_nv::Operator,
 }
 
 impl NvidiaKernelsPtx {
@@ -109,11 +110,11 @@ impl NvidiaKernelsPtx {
         let cublas = Cublas::new(ctx);
         NvidiaKernels {
             cublas: cublas.sporulate(),
-            rms_norm: self.rms_norm.clone().load(ctx),
-            rotary_embedding: self.rotary_embedding.clone().load(ctx),
+            rms_norm: self.rms_norm.clone(),
+            rope: self.rope.clone(),
             reform: self.reform.clone().load(ctx),
             softmax: self.softmax.clone().load(ctx),
-            swiglu: self.swiglu.clone().load(ctx),
+            swiglu: self.swiglu.clone(),
         }
     }
 }
@@ -121,11 +122,8 @@ impl NvidiaKernelsPtx {
 impl NvidiaKernels {
     pub fn kill(self, ctx: &ContextGuard) {
         drop(self.cublas.sprout(ctx));
-        drop(self.rms_norm.module.sprout(ctx));
-        drop(self.rotary_embedding.module.sprout(ctx));
         drop(self.reform.module.sprout(ctx));
         drop(self.softmax.module.sprout(ctx));
-        drop(self.swiglu.module.sprout(ctx));
     }
 }
 
@@ -165,8 +163,24 @@ impl Kernels for KernelRuntime<'_> {
         U: Deref<Target = Self::Storage>,
         V: Deref<Target = Self::Storage>,
     {
-        let ModuleWapper { module, kernel } = &self.kernels.rms_norm;
-        kernel.launch(module, y, x, w, epsilon, self.stream);
+        rms_norm_nv::Scheme::new(
+            &self.kernels.rms_norm,
+            rms_norm::LayoutAttrs {
+                y: layout(y),
+                x: layout(x),
+                w: layout(w),
+            },
+        )
+        .unwrap()
+        .launch(
+            &(
+                y.physical_mut().as_mut_ptr(),
+                x.physical().as_ptr(),
+                w.physical().as_ptr(),
+                epsilon,
+            ),
+            self.stream,
+        );
     }
 
     #[inline]
@@ -192,8 +206,22 @@ impl Kernels for KernelRuntime<'_> {
         T: DerefMut<Target = Self::Storage>,
         U: Deref<Target = Self::Storage>,
     {
-        let ModuleWapper { module, kernel } = &self.kernels.rotary_embedding;
-        kernel.launch(module, t, pos, theta, self.stream);
+        rope_nv::Scheme::new(
+            &self.kernels.rope,
+            rope::LayoutAttrs {
+                t: layout(t),
+                pos: layout(pos),
+            },
+        )
+        .unwrap()
+        .launch(
+            &(
+                t.physical_mut().as_mut_ptr(),
+                pos.physical().as_ptr(),
+                theta,
+            ),
+            self.stream,
+        );
     }
 
     #[inline]
@@ -221,8 +249,18 @@ impl Kernels for KernelRuntime<'_> {
         T: DerefMut<Target = Self::Storage>,
         U: Deref<Target = Self::Storage>,
     {
-        let ModuleWapper { module, kernel } = &self.kernels.swiglu;
-        kernel.launch(module, gate, up, self.stream);
+        swiglu_nv::Scheme::new(
+            &self.kernels.swiglu,
+            swiglu::LayoutAttrs {
+                gate: layout(gate),
+                up: layout(up),
+            },
+        )
+        .unwrap()
+        .launch(
+            &(gate.physical_mut().as_mut_ptr(), up.physical().as_ptr()),
+            self.stream,
+        );
     }
 }
 
@@ -266,4 +304,19 @@ pub fn synchronize() {
             .retain_primary()
             .apply(|ctx| ctx.synchronize());
     }
+}
+
+fn layout<T>(t: &Tensor<T>) -> TensorLayout {
+    let dt = match t.data_type() {
+        DataType::F16 => F16,
+        DataType::U32 => U32,
+        _ => todo!(),
+    };
+    let shape = t.shape().iter().map(|&x| x as usize).collect::<Vec<_>>();
+    let strides = t
+        .strides()
+        .iter()
+        .map(|&x| x as isize * t.data_type().size() as isize)
+        .collect::<Vec<_>>();
+    TensorLayout::new(dt, shape, strides, t.bytes_offset() as _)
 }

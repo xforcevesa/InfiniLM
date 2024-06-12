@@ -369,7 +369,7 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=3f247e4#3f247e4d04bfa3332004a3826058202b42928a3d"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=f458652#f458652d3b5574ca49848bef8632d43a74a981b4"
 
 [[package]]
 name = "common-cpu"
@@ -387,7 +387,7 @@ dependencies = [
 [[package]]
 name = "common-cpu"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=3f247e4#3f247e4d04bfa3332004a3826058202b42928a3d"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=f458652#f458652d3b5574ca49848bef8632d43a74a981b4"
 dependencies = [
  "common 0.1.0",
 ]
@@ -403,6 +403,7 @@ dependencies = [
  "cuda",
  "kernel-lib",
  "log",
+ "operators",
  "rand",
  "sample",
  "search-cuda-tools",
@@ -986,9 +987,9 @@ dependencies = [
 
 [[package]]
 name = "httparse"
-version = "1.9.2"
+version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f3935c160d00ac752e09787e6e6bfc26494c2183cc922f1bc678a60d4733bc2"
+checksum = "d0e7a4dd27b9476dc40cb050d3632d3bba3a70ddbff012285f7f8559a1e7e545"
 
 [[package]]
 name = "httpdate"
@@ -1579,6 +1580,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nvidia-gpu"
+version = "0.1.0"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=f458652#f458652d3b5574ca49848bef8632d43a74a981b4"
+dependencies = [
+ "build-script-cfg",
+ "common 0.1.0",
+ "cuda",
+ "search-cuda-tools",
+]
+
+[[package]]
 name = "object"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1636,13 +1648,14 @@ checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 [[package]]
 name = "operators"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=3f247e4#3f247e4d04bfa3332004a3826058202b42928a3d"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=f458652#f458652d3b5574ca49848bef8632d43a74a981b4"
 dependencies = [
  "build-script-cfg",
  "common 0.1.0",
  "common-cpu 0.1.0",
  "half",
  "log",
+ "nvidia-gpu",
  "search-cuda-tools",
  "search-neuware-tools",
 ]

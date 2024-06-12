@@ -33,7 +33,7 @@ rayon = "1.10"
 tokio = { version = "1.38", features = ["rt-multi-thread", "sync"] }
 build-script-cfg = "0.0"
 
-operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "3f247e4", default-features = false }
+operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "f458652", default-features = false }
 
 cuda = { git = "https://github.com/YdrMaster/cuda-driver", rev = "a4b3cf5" }
 cublas = { git = "https://github.com/YdrMaster/cuda-driver", rev = "a4b3cf5" }
