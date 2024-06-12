@@ -4,7 +4,6 @@
 extern crate log;
 pub extern crate cuda;
 
-mod fused_softmax;
 mod gather;
 mod mat_mul;
 mod reform;
@@ -16,8 +15,8 @@ use cuda::{
     memcpy_d2h, ComputeCapability, ContextGuard, ContextResource, ContextSpore, CudaDataType,
     DevByte, Device, ModuleSpore, Ptx, Stream,
 };
-use fused_softmax::FusedSoftmax;
 use operators::{
+    fuesd_softmax::{self, nvidia_gpu as softmax_nv},
     rms_norm::{self, nvidia_gpu as rms_norm_nv},
     rope::{self, nvidia_gpu as rope_nv},
     swiglu::{self, nvidia_gpu as swiglu_nv},
@@ -37,7 +36,7 @@ pub struct NvidiaKernelsPtx {
     rms_norm: rms_norm_nv::Operator,
     rope: rope_nv::Operator,
     reform: Arc<Reform>,
-    softmax: Arc<FusedSoftmax>,
+    softmax: softmax_nv::Operator,
     swiglu: swiglu_nv::Operator,
 }
 
@@ -67,12 +66,12 @@ impl NvidiaKernelsPtx {
             .unwrap(),
             rope: rope_nv::Operator::new(&rope_nv::Config::config_for(&devices[0], F16)).unwrap(),
             reform: Arc::new(Reform::new(32, cc, block_size)),
-            softmax: Arc::new(FusedSoftmax::new(
-                CudaDataType::f16,
+            softmax: softmax_nv::Operator::new(&softmax_nv::Config::config_for(
+                &devices[0],
+                F16,
                 softmax_max_size,
-                cc,
-                block_size,
-            )),
+            ))
+            .unwrap(),
             swiglu: swiglu_nv::Operator::new(&swiglu_nv::Config::config_for(&devices[0], F16))
                 .unwrap(),
         }
@@ -100,7 +99,7 @@ pub struct NvidiaKernels {
     rms_norm: rms_norm_nv::Operator,
     rope: rope_nv::Operator,
     reform: ModuleWapper<Reform>,
-    softmax: ModuleWapper<FusedSoftmax>,
+    softmax: softmax_nv::Operator,
     swiglu: swiglu_nv::Operator,
 }
 
@@ -113,7 +112,7 @@ impl NvidiaKernelsPtx {
             rms_norm: self.rms_norm.clone(),
             rope: self.rope.clone(),
             reform: self.reform.clone().load(ctx),
-            softmax: self.softmax.clone().load(ctx),
+            softmax: self.softmax.clone(),
             swiglu: self.swiglu.clone(),
         }
     }
@@ -123,7 +122,6 @@ impl NvidiaKernels {
     pub fn kill(self, ctx: &ContextGuard) {
         drop(self.cublas.sprout(ctx));
         drop(self.reform.module.sprout(ctx));
-        drop(self.softmax.module.sprout(ctx));
     }
 }
 
@@ -239,8 +237,12 @@ impl Kernels for KernelRuntime<'_> {
     where
         T: DerefMut<Target = Self::Storage>,
     {
-        let ModuleWapper { module, kernel } = &self.kernels.softmax;
-        kernel.launch(module, att, self.stream);
+        softmax_nv::Scheme::new(
+            &self.kernels.softmax,
+            fuesd_softmax::LayoutAttrs { att: layout(att) },
+        )
+        .unwrap()
+        .launch(&att.physical_mut().as_mut_ptr(), self.stream);
     }
 
     #[inline]
