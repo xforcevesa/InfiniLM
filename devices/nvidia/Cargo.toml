@@ -12,8 +12,6 @@ tensor = { path = "../../tensor" }
 sample = { path = "../../sample" }
 kernel-lib = { path = "../../kernel-lib" }
 cuda.workspace = true
-cublas.workspace = true
-log.workspace = true
 rand = "0.8"
 operators = { workspace = true, features = ["nvidia-gpu"] }
 

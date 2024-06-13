@@ -7,10 +7,7 @@ extern crate log;
 
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{upos, utok, FileLoadError};
-use common_nv::{
-    sample_nv, slice, udim, DataType, KernelRuntime, Kernels, NvidiaKernels, NvidiaKernelsPtx,
-    Tensor,
-};
+use common_nv::{sample_nv, slice, udim, DataType, KernelRuntime, Kernels, NvidiaKernels, Tensor};
 use cuda::{
     ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device, EventSpore, HostMemSpore,
     Stream, StreamSpore,
@@ -37,7 +34,7 @@ pub struct Transformer {
 
     resource: Arc<Resource>,
     transfer: DropOption<StreamSpore>,
-    kernels: DropOption<NvidiaKernels>,
+    kernels: NvidiaKernels,
 
     embed_tokens: Tensor<DropOption<HostMemSpore>>,
     layers: Vec<LayerStorage<HostMemSpore>>,
@@ -104,13 +101,11 @@ impl Model for Transformer {
                 .collect();
 
             Ok(Self {
-                kernels: NvidiaKernelsPtx::new(
+                kernels: NvidiaKernels::new(
                     &[device],
                     host.config.d as _,
                     host.config.max_seq_len as _,
-                )
-                .load(&transfer)
-                .into(),
+                ),
                 embed_tokens: host
                     .embed_tokens
                     .as_ref()
@@ -169,7 +164,7 @@ impl CausalLM for Transformer {
             |dst, src| {
                 self.resource.apply(|stream| {
                     let ctx = stream.ctx();
-                    self.kernels.as_ref().on(stream).reform(
+                    self.kernels.on(stream).reform(
                         &mut dst.map_physical(|u| &mut **u.mem.as_mut().sprout_mut(ctx)),
                         &src.map_physical(|u| &**u.mem.as_ref().sprout_ref(ctx)),
                     );
@@ -185,7 +180,7 @@ impl CausalLM for Transformer {
 
         let mut x = self.tensor(&[nt, d]);
         self.resource.apply(|compute| {
-            self.kernels.as_ref().on(compute).gather(
+            self.kernels.on(compute).gather(
                 &mut x
                     .as_mut()
                     .map_physical(|u| &mut **u.mem.as_mut().sprout_mut(compute.ctx())),
@@ -213,7 +208,7 @@ impl CausalLM for Transformer {
                 di: self.config.di,
                 epsilon: self.config.epsilon,
                 theta: self.config.theta,
-                kernels: self.kernels.as_ref().on(compute),
+                kernels: self.kernels.on(compute),
                 compute,
                 transfer,
                 host: &self.layers,
@@ -255,7 +250,7 @@ impl CausalLM for Transformer {
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-            let kernels = self.kernels.as_ref().on(compute);
+            let kernels = self.kernels.on(compute);
             kernels.rms_norm(&mut x, &x_, &lm_layernorm, self.config.epsilon);
             kernels.mat_mul(
                 &mut logits
@@ -305,7 +300,6 @@ impl Drop for Transformer {
         self.resource.apply(|compute| {
             let ctx = compute.ctx();
             self.transfer.take().sprout(ctx);
-            self.kernels.take().kill(ctx);
             self.embed_tokens.physical_mut().take().sprout(ctx);
             self.lm_layernorm.physical_mut().take().sprout(ctx);
             self.lm_head.physical_mut().take().sprout(ctx);

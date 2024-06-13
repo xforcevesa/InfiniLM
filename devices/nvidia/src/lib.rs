@@ -1,62 +1,38 @@
 ﻿#![cfg(detected_cuda)]
 
-#[macro_use]
-extern crate log;
 pub extern crate cuda;
 
 mod gather;
-mod reform;
 mod sample;
 
 use common::utok;
-use cuda::{
-    memcpy_d2h, ComputeCapability, ContextGuard, ContextResource, ContextSpore, CudaDataType,
-    DevByte, Device, ModuleSpore, Ptx, Stream,
-};
+use cuda::{memcpy_d2h, CudaDataType, DevByte, Device, Stream};
 use operators::{
     fuesd_softmax::{self, nvidia_gpu as softmax_nv},
     mat_mul::{self, nvidia_gpu as mat_mul_nv},
+    reform::{self, nvidia_gpu as reform_nv},
     rms_norm::{self, nvidia_gpu as rms_norm_nv},
     rope::{self, nvidia_gpu as rope_nv},
     swiglu::{self, nvidia_gpu as swiglu_nv},
     Operator, Scheme, TensorLayout, F16, U32,
 };
-use reform::Reform;
-use std::{
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
+use std::ops::{Deref, DerefMut};
 
 pub use kernel_lib::Kernels;
 pub use sample::{sample_cpu, sample_nv};
 pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
 
-pub struct NvidiaKernelsPtx {
+pub struct NvidiaKernels {
     mat_mul: mat_mul_nv::Operator,
     rms_norm: rms_norm_nv::Operator,
     rope: rope_nv::Operator,
-    reform: Arc<Reform>,
+    reform: reform_nv::Operator,
     softmax: softmax_nv::Operator,
     swiglu: swiglu_nv::Operator,
 }
 
-impl NvidiaKernelsPtx {
+impl NvidiaKernels {
     pub fn new(devices: &[Device], rms_norm_max_size: usize, softmax_max_size: usize) -> Self {
-        let (cc, block_size) = devices.iter().fold(
-            (
-                ComputeCapability {
-                    major: i32::MAX,
-                    minor: i32::MAX,
-                },
-                usize::MAX,
-            ),
-            |(cc, block_size), d| {
-                (
-                    cc.min(d.compute_capability()),
-                    block_size.min(d.max_block_dims().0),
-                )
-            },
-        );
         Self {
             mat_mul: mat_mul_nv::Operator::new(&F16).unwrap(),
             rms_norm: rms_norm_nv::Operator::new(&rms_norm_nv::Config::config_for(
@@ -66,7 +42,7 @@ impl NvidiaKernelsPtx {
             ))
             .unwrap(),
             rope: rope_nv::Operator::new(&rope_nv::Config::config_for(&devices[0], F16)).unwrap(),
-            reform: Arc::new(Reform::new(32, cc, block_size)),
+            reform: reform_nv::Operator::new(&reform_nv::Config::config_for(&devices[0])).unwrap(),
             softmax: softmax_nv::Operator::new(&softmax_nv::Config::config_for(
                 &devices[0],
                 F16,
@@ -76,51 +52,6 @@ impl NvidiaKernelsPtx {
             swiglu: swiglu_nv::Operator::new(&swiglu_nv::Config::config_for(&devices[0], F16))
                 .unwrap(),
         }
-    }
-}
-
-trait PtxWapper: Sized {
-    fn ptx(&self) -> &Ptx;
-    #[inline]
-    fn load(self: Arc<Self>, ctx: &ContextGuard) -> ModuleWapper<Self> {
-        ModuleWapper {
-            module: ctx.load(self.ptx()).sporulate(),
-            kernel: self,
-        }
-    }
-}
-
-struct ModuleWapper<T> {
-    module: ModuleSpore,
-    kernel: Arc<T>,
-}
-
-pub struct NvidiaKernels {
-    mat_mul: mat_mul_nv::Operator,
-    rms_norm: rms_norm_nv::Operator,
-    rope: rope_nv::Operator,
-    reform: ModuleWapper<Reform>,
-    softmax: softmax_nv::Operator,
-    swiglu: swiglu_nv::Operator,
-}
-
-impl NvidiaKernelsPtx {
-    pub fn load(&self, stream: &Stream) -> NvidiaKernels {
-        let ctx = stream.ctx();
-        NvidiaKernels {
-            mat_mul: self.mat_mul.clone(),
-            rms_norm: self.rms_norm.clone(),
-            rope: self.rope.clone(),
-            reform: self.reform.clone().load(ctx),
-            softmax: self.softmax.clone(),
-            swiglu: self.swiglu.clone(),
-        }
-    }
-}
-
-impl NvidiaKernels {
-    pub fn kill(self, ctx: &ContextGuard) {
-        drop(self.reform.module.sprout(ctx));
     }
 }
 
@@ -243,8 +174,18 @@ impl Kernels for KernelRuntime<'_> {
         T: DerefMut<Target = Self::Storage>,
         U: Deref<Target = Self::Storage>,
     {
-        let ModuleWapper { module, kernel } = &self.kernels.reform;
-        kernel.launch(module, dst, src, self.stream);
+        reform_nv::Scheme::new(
+            &self.kernels.reform,
+            reform::LayoutAttrs {
+                dst: layout(dst),
+                src: layout(src),
+            },
+        )
+        .unwrap()
+        .launch(
+            &(dst.physical_mut().as_mut_ptr(), src.physical().as_ptr()),
+            self.stream,
+        );
     }
 
     #[inline]

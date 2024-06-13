@@ -369,14 +369,13 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=647dceb#647dcebbdbd03b5fed9531d08398c4a484903210"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=77aeead#77aeead8f4ba8e8318a10fdb498ca0cc24331bc8"
 
 [[package]]
 name = "common-cpu"
 version = "0.0.0"
 dependencies = [
  "common 0.0.0",
- "gemm",
  "intel-mkl-src",
  "intel-mkl-tool",
  "kernel-lib",
@@ -387,7 +386,7 @@ dependencies = [
 [[package]]
 name = "common-cpu"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=647dceb#647dcebbdbd03b5fed9531d08398c4a484903210"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=77aeead#77aeead8f4ba8e8318a10fdb498ca0cc24331bc8"
 dependencies = [
  "common 0.1.0",
 ]
@@ -399,10 +398,8 @@ dependencies = [
  "build-script-cfg",
  "cc",
  "common 0.0.0",
- "cublas",
  "cuda",
  "kernel-lib",
- "log",
  "operators",
  "rand",
  "sample",
@@ -1582,7 +1579,7 @@ dependencies = [
 [[package]]
 name = "nvidia-gpu"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=647dceb#647dcebbdbd03b5fed9531d08398c4a484903210"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=77aeead#77aeead8f4ba8e8318a10fdb498ca0cc24331bc8"
 dependencies = [
  "build-script-cfg",
  "common 0.1.0",
@@ -1649,7 +1646,7 @@ checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 [[package]]
 name = "operators"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=647dceb#647dcebbdbd03b5fed9531d08398c4a484903210"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=77aeead#77aeead8f4ba8e8318a10fdb498ca0cc24331bc8"
 dependencies = [
  "build-script-cfg",
  "common 0.1.0",

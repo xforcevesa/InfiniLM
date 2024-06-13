@@ -41,7 +41,7 @@ where
 #[cfg(detected_mkl)]
 #[allow(unused)]
 mod mkl {
-    use gemm::f16;
+    use common::f16;
     use kernel_lib::Matrix;
     use std::ffi::c_int;
     use tensor::DataType;
