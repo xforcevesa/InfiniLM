@@ -15,7 +15,7 @@ use common_nv::{
         HostMemSpore, StreamSpore,
     },
     sample_nv, slice, split, udim, DataType, KernelRuntime, Kernels, LocalSplitable, NvidiaKernels,
-    NvidiaKernelsPtx, Tensor,
+    Tensor,
 };
 use itertools::izip;
 use llama::InferenceConfig;
@@ -37,7 +37,7 @@ pub struct Transformer {
 
     comms: CommunicatorGroup,
     streams: Vec<StreamSpore>,
-    kernels: Vec<NvidiaKernels>,
+    kernels: NvidiaKernels,
 
     embed_tokens: Tensor<Option<HostMemSpore>>,
     matrix: ParameterMatrix,
@@ -55,8 +55,7 @@ impl Model for Transformer {
         let host = llama::Storage::load_safetensors(model_dir)?;
         info!("load host: {:?}", time.elapsed());
 
-        let kernels =
-            NvidiaKernelsPtx::new(&meta, host.config.d as _, host.config.max_seq_len as _);
+        let kernels = NvidiaKernels::new(&meta, host.config.d as _, host.config.max_seq_len as _);
 
         let contexts = meta
             .iter()
@@ -89,9 +88,6 @@ impl Model for Transformer {
             .iter()
             .map(|context| context.apply(|ctx| ctx.stream().sporulate()))
             .collect::<Vec<_>>();
-        let kernels = zip(&contexts, &streams)
-            .map(|(context, stream)| context.apply(|ctx| kernels.load(stream.sprout_ref(ctx))))
-            .collect();
         Ok(Self {
             comms,
             streams,
@@ -152,7 +148,7 @@ impl CausalLM for Transformer {
                 for (i, context) in contexts.iter().enumerate() {
                     context.apply(|ctx| {
                         let stream = ctx.stream();
-                        let kernels = self.kernels[i].on(&stream);
+                        let kernels = self.kernels.on(&stream);
                         kernels.reform(
                             &mut dst
                                 .as_mut()
@@ -176,7 +172,7 @@ impl CausalLM for Transformer {
         let mut x = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, len));
         contexts[0].apply(|ctx| {
             let stream = self.streams[0].sprout_ref(ctx);
-            let kernels = self.kernels[0].on(&stream);
+            let kernels = self.kernels.on(&stream);
             let mut x = x.as_mut().map_physical(|u| &mut **u[0].sprout_mut(ctx));
             kernels.gather(
                 &mut x,
@@ -290,7 +286,7 @@ impl CausalLM for Transformer {
                                 .collect::<Vec<_>>();
 
                             let stream = self.streams[i].sprout_ref(ctx);
-                            let kernels = self.kernels[i].on(&stream);
+                            let kernels = self.kernels.on(&stream);
 
                             let pos = pos.map_physical(|u| stream.from_host(u));
                             let mut state_buf = Tensor::alloc(dt, &[nt, d + reusing / n], |len| {
@@ -395,7 +391,7 @@ impl CausalLM for Transformer {
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-            let kernels = self.kernels[0].on(&stream);
+            let kernels = self.kernels.on(&stream);
             kernels.rms_norm(&mut x, &x_, &model_norm, self.config.epsilon);
             kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
 
@@ -585,13 +581,8 @@ impl Drop for Transformer {
                 self.lm_head.physical_mut().take().unwrap().sprout(ctx);
             });
             self.matrix.kill(&contexts);
-            let streams = std::mem::take(&mut self.streams);
-            let kernels = std::mem::take(&mut self.kernels);
-            for (context, stream, kernels) in izip!(contexts, streams, kernels) {
-                context.apply(|ctx| {
-                    stream.sprout(ctx);
-                    kernels.kill(ctx);
-                });
+            for (context, stream) in zip(contexts, std::mem::take(&mut self.streams)) {
+                context.apply(|ctx| drop(stream.sprout(ctx)));
             }
         }
     }
