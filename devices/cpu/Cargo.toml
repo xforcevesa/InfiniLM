@@ -10,7 +10,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 common = { path = "../../common" }
 tensor = { path = "../../tensor" }
 kernel-lib = { path = "../../kernel-lib" }
-gemm = "0.17"
+gemm = "0.18"
 intel-mkl-src = { version = "0.8", features = ["mkl-dynamic-lp64-iomp"] }
 operators = { workspace = true, features = ["common-cpu"] }
 

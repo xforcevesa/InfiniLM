@@ -5,18 +5,17 @@ extern crate log;
 pub extern crate cuda;
 
 mod gather;
-mod mat_mul;
 mod reform;
 mod sample;
 
 use common::utok;
-use cublas::{Cublas, CublasSpore};
 use cuda::{
     memcpy_d2h, ComputeCapability, ContextGuard, ContextResource, ContextSpore, CudaDataType,
     DevByte, Device, ModuleSpore, Ptx, Stream,
 };
 use operators::{
     fuesd_softmax::{self, nvidia_gpu as softmax_nv},
+    mat_mul::{self, nvidia_gpu as mat_mul_nv},
     rms_norm::{self, nvidia_gpu as rms_norm_nv},
     rope::{self, nvidia_gpu as rope_nv},
     swiglu::{self, nvidia_gpu as swiglu_nv},
@@ -33,6 +32,7 @@ pub use sample::{sample_cpu, sample_nv};
 pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
 
 pub struct NvidiaKernelsPtx {
+    mat_mul: mat_mul_nv::Operator,
     rms_norm: rms_norm_nv::Operator,
     rope: rope_nv::Operator,
     reform: Arc<Reform>,
@@ -58,6 +58,7 @@ impl NvidiaKernelsPtx {
             },
         );
         Self {
+            mat_mul: mat_mul_nv::Operator::new(&F16).unwrap(),
             rms_norm: rms_norm_nv::Operator::new(&rms_norm_nv::Config::config_for(
                 &devices[0],
                 F16,
@@ -95,7 +96,7 @@ struct ModuleWapper<T> {
 }
 
 pub struct NvidiaKernels {
-    cublas: CublasSpore,
+    mat_mul: mat_mul_nv::Operator,
     rms_norm: rms_norm_nv::Operator,
     rope: rope_nv::Operator,
     reform: ModuleWapper<Reform>,
@@ -106,9 +107,8 @@ pub struct NvidiaKernels {
 impl NvidiaKernelsPtx {
     pub fn load(&self, stream: &Stream) -> NvidiaKernels {
         let ctx = stream.ctx();
-        let cublas = Cublas::new(ctx);
         NvidiaKernels {
-            cublas: cublas.sporulate(),
+            mat_mul: self.mat_mul.clone(),
             rms_norm: self.rms_norm.clone(),
             rope: self.rope.clone(),
             reform: self.reform.clone().load(ctx),
@@ -120,7 +120,6 @@ impl NvidiaKernelsPtx {
 
 impl NvidiaKernels {
     pub fn kill(self, ctx: &ContextGuard) {
-        drop(self.cublas.sprout(ctx));
         drop(self.reform.module.sprout(ctx));
     }
 }
@@ -133,7 +132,6 @@ pub struct KernelRuntime<'a> {
 impl NvidiaKernels {
     #[inline]
     pub fn on<'a>(&'a self, stream: &'a Stream) -> KernelRuntime<'a> {
-        self.cublas.sprout_ref(stream.ctx()).set_stream(stream);
         KernelRuntime {
             kernels: self,
             stream,
@@ -194,8 +192,25 @@ impl Kernels for KernelRuntime<'_> {
         U: Deref<Target = Self::Storage>,
         V: Deref<Target = Self::Storage>,
     {
-        let cublas = self.kernels.cublas.sprout_ref(self.stream.ctx());
-        mat_mul::mat_mul(cublas, c, beta, a, b, alpha)
+        mat_mul_nv::Scheme::new(
+            &self.kernels.mat_mul,
+            mat_mul::LayoutAttrs {
+                c: layout(c),
+                a: layout(a),
+                b: layout(b),
+            },
+        )
+        .unwrap()
+        .launch(
+            &(
+                c.physical_mut().as_mut_ptr(),
+                beta,
+                a.physical().as_ptr(),
+                b.physical().as_ptr(),
+                alpha,
+            ),
+            self.stream,
+        );
     }
 
     #[inline]
