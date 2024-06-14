@@ -8,7 +8,9 @@ use common::{safe_tensors::SharedTensor, upos, utok, Blob};
 use std::{ops::Deref, sync::Arc};
 use tensor::{slice, udim, DataType, Tensor};
 
-pub use compute::{ComputeStream, LLamaLayer};
+pub use common_devices::SliceOn;
+pub use compute::{ComputeConst, ComputeStream, LLamaLayer};
+pub use operators::{Device, QueueOf};
 
 pub struct Storage {
     pub config: InferenceConfig,

@@ -4,13 +4,8 @@ use common_cpu::{
     tensor::{reslice, slice, udim, Tensor},
     CpuKernels, Kernels, ThisThread,
 };
-use llama::{ComputeStream, LayerStorage, Storage, Weight};
-use std::{
-    iter::repeat,
-    ops::{Deref, DerefMut},
-    path::Path,
-    slice::from_raw_parts,
-};
+use llama::{ComputeConst, ComputeStream, Device, LayerStorage, QueueOf, SliceOn, Storage, Weight};
+use std::{iter::repeat, path::Path, slice::from_raw_parts};
 
 pub struct Transformer {
     s: Storage,
@@ -31,7 +26,7 @@ impl Model for Transformer {
 }
 
 impl ComputeStream for Transformer {
-    type Byte = u8;
+    type Device = common_cpu::Cpu;
     type Storage = Blob;
     type Buf<'m> = Blob;
     type Pos<'m> = &'m [u8];
@@ -47,78 +42,33 @@ impl ComputeStream for Transformer {
     {
         reslice(pos)
     }
-    fn map_storage<'a>(&'a self, storage: &'a mut Self::Storage) -> &'a mut [Self::Byte] {
+    #[inline]
+    fn map_storage<'a>(&'a self, storage: &'a mut Self::Storage) -> &'a mut SliceOn<Self::Device> {
         storage
     }
     #[inline]
-    fn rms_norm<Y, X, W>(&self, y: &mut Tensor<Y>, x: &Tensor<X>, w: &Tensor<W>)
-    where
-        Y: DerefMut<Target = [Self::Byte]>,
-        X: Deref<Target = [Self::Byte]>,
-        W: Deref<Target = [Self::Byte]>,
-    {
-        self.kernels
-            .rms_norm(y, x, w, self.s.config.epsilon, &ThisThread);
+    fn kernels(&self) -> &impl Kernels<Device = Self::Device> {
+        &self.kernels
     }
     #[inline]
-    fn mat_mul<O, A, B>(
+    fn queue(&self) -> &QueueOf<Self::Device> {
+        &ThisThread
+    }
+    #[inline]
+    fn constant(&self) -> ComputeConst {
+        ComputeConst {
+            nh: self.s.config.nh,
+            nkvh: self.s.config.nkvh,
+            di: self.s.config.di,
+            epsilon: self.s.config.epsilon,
+            theta: self.s.config.theta,
+        }
+    }
+
+    #[inline]
+    fn layers(
         &self,
-        o: &mut Tensor<O>,
-        beta: f32,
-        a: &Tensor<A>,
-        b: &Tensor<B>,
-        alpha: f32,
-    ) where
-        O: DerefMut<Target = [Self::Byte]>,
-        A: Deref<Target = [Self::Byte]>,
-        B: Deref<Target = [Self::Byte]>,
-    {
-        self.kernels.mat_mul(o, beta, a, b, alpha, &ThisThread);
-    }
-    #[inline]
-    fn rotary_embedding<T>(&self, t: &mut Tensor<T>, pos: &Tensor<Self::Pos<'_>>)
-    where
-        T: DerefMut<Target = [Self::Byte]>,
-    {
-        self.kernels.rope(t, pos, self.s.config.theta, &ThisThread);
-    }
-    #[inline]
-    fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
-    where
-        Y: DerefMut<Target = [Self::Byte]>,
-        X: Deref<Target = [Self::Byte]>,
-    {
-        x.reform_to(y);
-    }
-    #[inline]
-    fn softmax<X>(&self, x: &mut Tensor<X>)
-    where
-        X: DerefMut<Target = [Self::Byte]>,
-    {
-        self.kernels.softmax(x, &ThisThread);
-    }
-    #[inline]
-    fn swiglu<A, B>(&self, a: &mut Tensor<A>, b: &Tensor<B>)
-    where
-        A: DerefMut<Target = [Self::Byte]>,
-        B: Deref<Target = [Self::Byte]>,
-    {
-        self.kernels.swiglu(a, b, &ThisThread);
-    }
-    #[inline]
-    fn nh(&self) -> udim {
-        self.s.config.nh
-    }
-    #[inline]
-    fn nkvh(&self) -> udim {
-        self.s.config.nkvh
-    }
-    #[inline]
-    fn di(&self) -> udim {
-        self.s.config.di
-    }
-    #[inline]
-    fn layers(&self) -> impl Iterator<Item = impl llama::LLamaLayer<Byte = Self::Byte>> {
+    ) -> impl Iterator<Item = impl llama::LLamaLayer<Byte = <Self::Device as Device>::Byte>> {
         self.s.layers.iter().map(LlamaLayer)
     }
 }
@@ -208,6 +158,7 @@ impl CausalLM for Transformer {
     ) -> Tensor<Self::Storage> {
         let dt = self.s.config.dt;
         let d = self.s.config.d;
+        let epsilon = self.s.config.epsilon;
 
         let mut x = hidden_state;
         let range = DecodingMeta::select(&mut x, decoding, |dst, src| dst.copy_from_slice(src));
@@ -225,8 +176,10 @@ impl CausalLM for Transformer {
         let x_ = x
             .as_ref()
             .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-        self.rms_norm(&mut x, &x_, lm_layernorm);
-        self.mat_mul(&mut logits, 0., &x, lm_head, 1.);
+        self.kernels()
+            .rms_norm(&mut x, &x_, lm_layernorm, epsilon, self.queue());
+        self.kernels()
+            .mat_mul(&mut logits, 0., &x, lm_head, 1., self.queue());
 
         logits
     }

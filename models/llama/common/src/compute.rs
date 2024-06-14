@@ -1,13 +1,15 @@
 ﻿use causal_lm::QueryContext;
+use common_devices::{Kernels, SliceOn};
 use itertools::izip;
+use operators::{Device, QueueOf};
 use std::ops::{Deref, DerefMut};
 use tensor::{slice, split, udim, LocalSplitable, Tensor};
 
 pub trait ComputeStream {
-    type Byte;
+    type Device: Device;
     type Storage;
-    type Buf<'m>: DerefMut<Target = [Self::Byte]>;
-    type Pos<'m>: Deref<Target = [Self::Byte]>;
+    type Buf<'m>: DerefMut<Target = SliceOn<Self::Device>>;
+    type Pos<'m>: Deref<Target = SliceOn<Self::Device>>;
 
     fn malloc(&self, len: usize) -> Self::Buf<'_>;
     fn free(&self, _mem: Self::Buf<'_>) {}
@@ -15,48 +17,15 @@ pub trait ComputeStream {
     where
         Self: 'p;
     fn free_pos(&self, _mem: Self::Pos<'_>) {}
-    fn map_storage<'a>(&'a self, storage: &'a mut Self::Storage) -> &'a mut [Self::Byte];
+    fn map_storage<'a>(&'a self, storage: &'a mut Self::Storage) -> &'a mut SliceOn<Self::Device>;
 
-    fn rms_norm<O, X, W>(&self, o: &mut Tensor<O>, x: &Tensor<X>, w: &Tensor<W>)
-    where
-        O: DerefMut<Target = [Self::Byte]>,
-        X: Deref<Target = [Self::Byte]>,
-        W: Deref<Target = [Self::Byte]>;
+    fn kernels(&self) -> &impl Kernels<Device = Self::Device>;
+    fn queue(&self) -> &QueueOf<Self::Device>;
+    fn constant(&self) -> ComputeConst;
 
-    fn mat_mul<O, A, B>(
+    fn layers(
         &self,
-        o: &mut Tensor<O>,
-        beta: f32,
-        a: &Tensor<A>,
-        b: &Tensor<B>,
-        alpha: f32,
-    ) where
-        O: DerefMut<Target = [Self::Byte]>,
-        A: Deref<Target = [Self::Byte]>,
-        B: Deref<Target = [Self::Byte]>;
-
-    fn rotary_embedding<X>(&self, x: &mut Tensor<X>, pos: &Tensor<Self::Pos<'_>>)
-    where
-        X: DerefMut<Target = [Self::Byte]>;
-
-    fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
-    where
-        Y: DerefMut<Target = [Self::Byte]>,
-        X: Deref<Target = [Self::Byte]>;
-
-    fn softmax<X>(&self, x: &mut Tensor<X>)
-    where
-        X: DerefMut<Target = [Self::Byte]>;
-
-    fn swiglu<A, B>(&self, a: &mut Tensor<A>, b: &Tensor<B>)
-    where
-        A: DerefMut<Target = [Self::Byte]>,
-        B: Deref<Target = [Self::Byte]>;
-
-    fn nh(&self) -> udim;
-    fn nkvh(&self) -> udim;
-    fn di(&self) -> udim;
-    fn layers(&self) -> impl Iterator<Item = impl LLamaLayer<Byte = Self::Byte>>;
+    ) -> impl Iterator<Item = impl LLamaLayer<Byte = <Self::Device as Device>::Byte>>;
 
     fn forward<'q>(
         &self,
@@ -82,15 +51,20 @@ pub trait ComputeStream {
             })
             .collect::<Vec<_>>();
 
+        let ComputeConst {
+            nh,
+            nkvh,
+            di,
+            epsilon,
+            theta,
+        } = self.constant();
         let dt = token_embedded.data_type();
         let d = token_embedded.shape()[1];
-        let nh = self.nh();
-        let nkvh = self.nkvh();
         let dh = d / nh;
         let dkv = nkvh * dh;
-        let di = self.di();
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
+        let queue = self.queue();
 
         let mut x = token_embedded
             .as_mut()
@@ -107,8 +81,10 @@ pub trait ComputeStream {
             let (mut x1, qkv) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing);
             let mut qkv = qkv.slice(&[slice![=>], slice![=> d + dkv + dkv]]);
 
-            self.rms_norm(&mut x1, &x, &params.att_layernorm());
-            self.mat_mul(&mut qkv, 0., &x1, &params.att_qkv(), 1.);
+            self.kernels()
+                .rms_norm(&mut x1, &x, &params.att_layernorm(), epsilon, queue);
+            self.kernels()
+                .mat_mul(&mut qkv, 0., &x1, &params.att_qkv(), 1., queue);
 
             let (q, k, v) = split!(qkv; [1]: d, dkv, dkv);
             let mut q = q.reshape(&[nt, nh, dh]);
@@ -116,8 +92,8 @@ pub trait ComputeStream {
             let v = v.reshape(&[nt, nkvh, dh]);
             let o = x1.reshape(&[nt, nh, dh]);
 
-            self.rotary_embedding(&mut q, &pos);
-            self.rotary_embedding(&mut k, &pos);
+            self.kernels().rope(&mut q, &pos, theta, queue);
+            self.kernels().rope(&mut k, &pos, theta, queue);
 
             let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
             let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
@@ -150,33 +126,39 @@ pub trait ComputeStream {
                 let mut q_att = Tensor::new(dt, shape_q0, &mut q_buf[..]);
                 let mut k_cat = k_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
                 let mut v_cat = v_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-                self.reform(&mut q_att, &q);
-                self.reform(&mut k_cat, &k);
-                self.reform(&mut v_cat, &v);
+                self.kernels().reform(&mut q_att, &q, queue);
+                self.kernels().reform(&mut k_cat, &k, queue);
+                self.kernels().reform(&mut v_cat, &v, queue);
 
                 let q_att = q_att.reshape(shape_q1);
                 let k_att = k_cache.slice(slice_att).transpose(&[0, 2, 1]);
                 let v_att = v_cache.slice(slice_att);
 
                 let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
-                self.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
+                self.kernels()
+                    .mat_mul(&mut att, 0., &q_att, &k_att, head_div, queue);
                 let mut att = att.reshape(shape_att1);
-                self.softmax(&mut att);
+                self.kernels().softmax(&mut att, queue);
                 let mut x2 = q_att;
-                self.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
+                self.kernels()
+                    .mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1., queue);
 
-                self.reform(&mut o, &x2.reshape(shape_q0));
+                self.kernels().reform(&mut o, &x2.reshape(shape_q0), queue);
             }
 
             let (mut x1, gate_up) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing);
             let mut gate_up = gate_up.slice(&[slice![=>], slice![=> di + di]]);
 
-            self.mat_mul(&mut x, 1., &x1, &params.att_o(), 1.);
-            self.rms_norm(&mut x1, &x, &params.mlp_layernorm());
-            self.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
+            self.kernels()
+                .mat_mul(&mut x, 1., &x1, &params.att_o(), 1., queue);
+            self.kernels()
+                .rms_norm(&mut x1, &x, &params.mlp_layernorm(), epsilon, queue);
+            self.kernels()
+                .mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1., queue);
             let (mut gate, up) = split!(gate_up; [1]: di, di);
-            self.swiglu(&mut gate, &up);
-            self.mat_mul(&mut x, 1., &gate, &params.mlp_down(), 1.);
+            self.kernels().swiglu(&mut gate, &up, queue);
+            self.kernels()
+                .mat_mul(&mut x, 1., &gate, &params.mlp_down(), 1., queue);
         }
         self.free_pos(pos.take_physical());
         self.free(state_buf.take_physical());
@@ -185,6 +167,14 @@ pub trait ComputeStream {
         drop(x);
         token_embedded
     }
+}
+
+pub struct ComputeConst {
+    pub nh: udim,
+    pub nkvh: udim,
+    pub di: udim,
+    pub epsilon: f32,
+    pub theta: f32,
 }
 
 pub trait LLamaLayer {

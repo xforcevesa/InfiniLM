@@ -7,18 +7,17 @@ extern crate log;
 
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{upos, utok, FileLoadError};
-use common_nv::{sample_nv, slice, udim, DataType, Kernels, NvidiaKernels, Tensor};
+use common_nv::{sample_nv, slice, udim, DataType, Gpu, Kernels, NvidiaKernels, Tensor};
 use cuda::{
     ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device, EventSpore, HostMemSpore,
     Stream, StreamSpore,
 };
-use llama::{InferenceConfig, LayerStorage, Weight};
+use llama::{ComputeConst, InferenceConfig, LayerStorage, SliceOn, Weight};
 use resource::{DropOption, Resource};
 use std::{
     cell::RefCell,
     collections::VecDeque,
     iter::repeat,
-    ops::{Deref, DerefMut},
     path::Path,
     rc::Rc,
     slice::from_raw_parts,
@@ -345,87 +344,57 @@ type DevMemPool<'a> =
     Rc<RefCell<MutexGuard<'a, VecDeque<(LayerStorage<DevMemSpore>, EventSpore)>>>>;
 
 impl<'a> llama::ComputeStream for ComputeStream<'a> {
-    type Byte = DevByte;
+    type Device = Gpu;
     type Storage = Cache;
     type Buf<'m> = DevMem<'m>;
     type Pos<'m> = DevMem<'m>;
 
+    #[inline]
     fn malloc(&self, len: usize) -> Self::Buf<'_> {
         self.compute.malloc::<u8>(len)
     }
+    #[inline]
     fn free(&self, mem: Self::Buf<'_>) {
         mem.drop_on(self.compute);
     }
+    #[inline]
     fn map_pos<'b>(&self, pos: &'b [u32]) -> Self::Pos<'b>
     where
         Self: 'b,
     {
         self.compute.from_host(pos)
     }
+    #[inline]
     fn free_pos(&self, mem: Self::Pos<'_>) {
         mem.drop_on(self.compute);
     }
-    fn map_storage<'b>(&'b self, storage: &'b mut Self::Storage) -> &'b mut [Self::Byte] {
+    #[inline]
+    fn map_storage<'b>(&'b self, storage: &'b mut Self::Storage) -> &'b mut SliceOn<Self::Device> {
         storage.mem.as_mut().sprout_mut(self.compute.ctx())
     }
-    fn rms_norm<O, X, W>(&self, o: &mut Tensor<O>, x: &Tensor<X>, w: &Tensor<W>)
-    where
-        O: DerefMut<Target = [Self::Byte]>,
-        X: Deref<Target = [Self::Byte]>,
-        W: Deref<Target = [Self::Byte]>,
-    {
-        self.kernels.rms_norm(o, x, w, self.epsilon, self.compute);
+    #[inline]
+    fn kernels(&self) -> &impl Kernels<Device = Self::Device> {
+        self.kernels
     }
-    fn mat_mul<O, A, B>(
+    #[inline]
+    fn queue(&self) -> &llama::QueueOf<Self::Device> {
+        self.compute
+    }
+    #[inline]
+    fn constant(&self) -> ComputeConst {
+        ComputeConst {
+            nh: self.nh,
+            nkvh: self.nkvh,
+            di: self.di,
+            epsilon: self.epsilon,
+            theta: self.theta,
+        }
+    }
+
+    fn layers(
         &self,
-        o: &mut Tensor<O>,
-        beta: f32,
-        a: &Tensor<A>,
-        b: &Tensor<B>,
-        alpha: f32,
-    ) where
-        O: DerefMut<Target = [Self::Byte]>,
-        A: Deref<Target = [Self::Byte]>,
-        B: Deref<Target = [Self::Byte]>,
+    ) -> impl Iterator<Item = impl llama::LLamaLayer<Byte = <Self::Device as llama::Device>::Byte>>
     {
-        self.kernels.mat_mul(o, beta, a, b, alpha, self.compute);
-    }
-    fn rotary_embedding<X>(&self, x: &mut Tensor<X>, pos: &Tensor<Self::Pos<'_>>)
-    where
-        X: DerefMut<Target = [Self::Byte]>,
-    {
-        self.kernels.rope(x, pos, self.theta, self.compute);
-    }
-    fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
-    where
-        Y: DerefMut<Target = [Self::Byte]>,
-        X: Deref<Target = [Self::Byte]>,
-    {
-        self.kernels.reform(y, x, self.compute);
-    }
-    fn softmax<X>(&self, x: &mut Tensor<X>)
-    where
-        X: DerefMut<Target = [Self::Byte]>,
-    {
-        self.kernels.softmax(x, self.compute);
-    }
-    fn swiglu<A, B>(&self, a: &mut Tensor<A>, b: &Tensor<B>)
-    where
-        A: DerefMut<Target = [Self::Byte]>,
-        B: Deref<Target = [Self::Byte]>,
-    {
-        self.kernels.swiglu(a, b, self.compute);
-    }
-    fn nh(&self) -> udim {
-        self.nh
-    }
-    fn nkvh(&self) -> udim {
-        self.nkvh
-    }
-    fn di(&self) -> udim {
-        self.di
-    }
-    fn layers(&self) -> impl Iterator<Item = impl llama::LLamaLayer<Byte = Self::Byte>> {
         Iter::new(self.host, self.dev.clone(), self.compute, self.transfer)
     }
 }

@@ -19,6 +19,7 @@ use std::{
 };
 
 pub use common_devices::Kernels;
+pub use operators::nvidia_gpu::Device as Gpu;
 pub use sample::{sample_cpu, sample_nv};
 pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
 
@@ -79,7 +80,7 @@ impl NvidiaKernels {
 }
 
 impl Kernels for NvidiaKernels {
-    type Device = operators::nvidia_gpu::Device;
+    type Device = Gpu;
 
     fn gather<T, U, I>(
         &self,

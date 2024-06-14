@@ -23,7 +23,7 @@ use tensor::Tensor;
 pub extern crate tensor;
 
 pub use common_devices::Kernels;
-pub use operators::common_cpu::ThisThread;
+pub use operators::common_cpu::{Device as Cpu, ThisThread};
 
 pub struct CpuKernels {
     mat_mul: mat_mul::Operator,
@@ -46,7 +46,7 @@ impl Default for CpuKernels {
 }
 
 impl Kernels for CpuKernels {
-    type Device = operators::common_cpu::Device;
+    type Device = Cpu;
 
     fn gather<T, U, I>(
         &self,

@@ -307,7 +307,7 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=2ba3829#2ba3829e1786da625c821109462a849132f3d1d0"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=cac4307#cac4307555531a8903330b99ca12b218a2a34259"
 
 [[package]]
 name = "common-cpu"
@@ -322,7 +322,7 @@ dependencies = [
 [[package]]
 name = "common-cpu"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=2ba3829#2ba3829e1786da625c821109462a849132f3d1d0"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=cac4307#cac4307555531a8903330b99ca12b218a2a34259"
 dependencies = [
  "common 0.1.0",
 ]
@@ -848,7 +848,9 @@ version = "0.0.0"
 dependencies = [
  "causal-lm",
  "common 0.0.0",
+ "common-devices",
  "itertools 0.13.0",
+ "operators",
  "rayon",
  "serde",
  "serde_json",
@@ -1098,7 +1100,7 @@ dependencies = [
 [[package]]
 name = "nvidia-gpu"
 version = "0.1.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=2ba3829#2ba3829e1786da625c821109462a849132f3d1d0"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=cac4307#cac4307555531a8903330b99ca12b218a2a34259"
 dependencies = [
  "build-script-cfg",
  "common 0.1.0",
@@ -1125,7 +1127,7 @@ checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 [[package]]
 name = "operators"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=2ba3829#2ba3829e1786da625c821109462a849132f3d1d0"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=cac4307#cac4307555531a8903330b99ca12b218a2a34259"
 dependencies = [
  "build-script-cfg",
  "common 0.1.0",
