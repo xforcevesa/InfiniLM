@@ -14,7 +14,7 @@ use common_nv::{
         AsRaw, Context, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device,
         HostMemSpore, Stream, StreamSpore,
     },
-    sample_nv, slice, split, udim, DataType, LocalSplitable, NvidiaKernels, Tensor,
+    sample_nv, slice, split, udim, DataType, Kernels, LocalSplitable, NvidiaKernels, Tensor,
 };
 use itertools::izip;
 use llama::InferenceConfig;

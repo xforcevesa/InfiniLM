@@ -1,3 +1,4 @@
+use common::utok;
 use operators::{
     fuesd_softmax::{self, FuesdSoftmax},
     mat_mul::{self, MatMul},
@@ -14,7 +15,7 @@ use std::{
 };
 use tensor::{DataType, Tensor};
 
-pub fn layout<T>(t: &Tensor<T>) -> TensorLayout {
+fn layout<T>(t: &Tensor<T>) -> TensorLayout {
     let dt = match t.data_type() {
         DataType::F16 => F16,
         DataType::U32 => U32,
@@ -27,6 +28,72 @@ pub fn layout<T>(t: &Tensor<T>) -> TensorLayout {
         .map(|&x| x as isize * t.data_type().size() as isize)
         .collect::<Vec<_>>();
     TensorLayout::new(dt, shape, strides, t.bytes_offset() as _)
+}
+
+pub type SliceOn<D> = [<D as Device>::Byte];
+
+pub trait Kernels {
+    type Device: Device;
+
+    fn gather<T, U, I>(
+        &self,
+        x: &mut Tensor<T>,
+        table: &Tensor<U>,
+        tokens: I,
+        queue: &QueueOf<Self::Device>,
+    ) where
+        T: DerefMut<Target = SliceOn<Self::Device>>,
+        U: Deref<Target = [u8]>,
+        I: IntoIterator<Item = utok>;
+
+    fn rms_norm<T, U, V>(
+        &self,
+        y: &mut Tensor<T>,
+        x: &Tensor<U>,
+        w: &Tensor<V>,
+        epsilon: f32,
+        queue: &QueueOf<Self::Device>,
+    ) where
+        T: DerefMut<Target = SliceOn<Self::Device>>,
+        U: Deref<Target = SliceOn<Self::Device>>,
+        V: Deref<Target = SliceOn<Self::Device>>;
+
+    fn rope<T, U>(
+        &self,
+        t: &mut Tensor<T>,
+        pos: &Tensor<U>,
+        theta: f32,
+        queue: &QueueOf<Self::Device>,
+    ) where
+        T: DerefMut<Target = SliceOn<Self::Device>>,
+        U: Deref<Target = SliceOn<Self::Device>>;
+
+    fn mat_mul<T, U, V>(
+        &self,
+        c: &mut Tensor<T>,
+        beta: f32,
+        a: &Tensor<U>,
+        b: &Tensor<V>,
+        alpha: f32,
+        queue: &QueueOf<Self::Device>,
+    ) where
+        T: DerefMut<Target = SliceOn<Self::Device>>,
+        U: Deref<Target = SliceOn<Self::Device>>,
+        V: Deref<Target = SliceOn<Self::Device>>;
+
+    fn reform<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>, queue: &QueueOf<Self::Device>)
+    where
+        T: DerefMut<Target = SliceOn<Self::Device>>,
+        U: Deref<Target = SliceOn<Self::Device>>;
+
+    fn softmax<T>(&self, att: &mut Tensor<T>, queue: &QueueOf<Self::Device>)
+    where
+        T: DerefMut<Target = SliceOn<Self::Device>>;
+
+    fn swiglu<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>, queue: &QueueOf<Self::Device>)
+    where
+        T: DerefMut<Target = SliceOn<Self::Device>>,
+        U: Deref<Target = SliceOn<Self::Device>>;
 }
 
 pub fn rms_norm<S, D, Y, X, W>(

@@ -1,6 +1,9 @@
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{f16, upos, utok, Blob, FileLoadError};
-use common_cpu::{CpuKernels, ThisThread};
+use common_cpu::{
+    tensor::{reslice, slice, udim, Tensor},
+    CpuKernels, Kernels, ThisThread,
+};
 use llama::{ComputeStream, LayerStorage, Storage, Weight};
 use std::{
     iter::repeat,
@@ -8,7 +11,6 @@ use std::{
     path::Path,
     slice::from_raw_parts,
 };
-use tensor::{reslice, slice, udim, Tensor};
 
 pub struct Transformer {
     s: Storage,

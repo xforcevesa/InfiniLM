@@ -863,7 +863,6 @@ dependencies = [
  "common 0.0.0",
  "common-cpu 0.0.0",
  "llama",
- "tensor",
 ]
 
 [[package]]

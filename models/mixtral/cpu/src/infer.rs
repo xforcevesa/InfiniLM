@@ -1,7 +1,7 @@
 use super::MixtralCPU;
 use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleMeta};
 use common::{f16, upos, utok, Blob};
-use common_cpu::ThisThread;
+use common_cpu::{Kernels, ThisThread};
 use itertools::izip;
 use std::{iter::repeat, slice::from_raw_parts};
 use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
