@@ -172,7 +172,7 @@ impl CausalLM for Transformer {
         let mut x = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, len));
         contexts[0].apply(|ctx| {
             let stream = self.streams[0].sprout_ref(ctx);
-            let kernels = self.kernels.on(&stream);
+            let kernels = self.kernels.on(stream);
             let mut x = x.as_mut().map_physical(|u| &mut **u[0].sprout_mut(ctx));
             kernels.gather(
                 &mut x,
@@ -187,7 +187,7 @@ impl CausalLM for Transformer {
             contexts[i].apply(|ctx| {
                 let stream = self.streams[i].sprout_ref(ctx);
                 let dst = x.physical_mut()[i].sprout_mut(ctx);
-                comm.broadcast(dst, None, 0, &stream);
+                comm.broadcast(dst, None, 0, stream);
             });
         }
         x.map_physical(|mem| Cache { contexts, mem })
@@ -286,7 +286,7 @@ impl CausalLM for Transformer {
                                 .collect::<Vec<_>>();
 
                             let stream = self.streams[i].sprout_ref(ctx);
-                            let kernels = self.kernels.on(&stream);
+                            let kernels = self.kernels.on(stream);
 
                             let pos = pos.map_physical(|u| stream.from_host(u));
                             let mut state_buf = Tensor::alloc(dt, &[nt, d + reusing / n], |len| {
@@ -319,7 +319,7 @@ impl CausalLM for Transformer {
                                     None,
                                     cast_dt(self.config.dt),
                                     nccl::ReduceType::ncclSum,
-                                    &stream,
+                                    stream,
                                 );
 
                                 self.mlp(&kernels, &params, &mut x, &mut state_buf, i);
@@ -328,14 +328,14 @@ impl CausalLM for Transformer {
                                     None,
                                     cast_dt(self.config.dt),
                                     nccl::ReduceType::ncclSum,
-                                    &stream,
+                                    stream,
                                 );
                             }
 
-                            pos.take_physical().drop_on(&stream);
-                            att_buf.drop_on(&stream);
-                            q_buf.drop_on(&stream);
-                            state_buf.take_physical().drop_on(&stream);
+                            pos.take_physical().drop_on(stream);
+                            att_buf.drop_on(stream);
+                            q_buf.drop_on(stream);
+                            state_buf.take_physical().drop_on(stream);
                         })
                     })
                 })
@@ -391,7 +391,7 @@ impl CausalLM for Transformer {
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-            let kernels = self.kernels.on(&stream);
+            let kernels = self.kernels.on(stream);
             kernels.rms_norm(&mut x, &x_, &model_norm, self.config.epsilon);
             kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
 
