@@ -18,7 +18,6 @@ use operators::{
 };
 use std::ops::{Deref, DerefMut};
 
-pub use kernel_lib::Kernels;
 pub use sample::{sample_cpu, sample_nv};
 pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
 
@@ -70,13 +69,11 @@ impl NvidiaKernels {
     }
 }
 
-impl Kernels for KernelRuntime<'_> {
-    type Storage = [DevByte];
-
+impl KernelRuntime<'_> {
     #[inline]
-    fn gather<T, U, I>(&self, x: &mut Tensor<T>, table: &Tensor<U>, tokens: I)
+    pub fn gather<T, U, I>(&self, x: &mut Tensor<T>, table: &Tensor<U>, tokens: I)
     where
-        T: DerefMut<Target = Self::Storage>,
+        T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [u8]>,
         I: IntoIterator<Item = utok>,
     {
@@ -84,11 +81,11 @@ impl Kernels for KernelRuntime<'_> {
     }
 
     #[inline]
-    fn rms_norm<T, U, V>(&self, y: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
+    pub fn rms_norm<T, U, V>(&self, y: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
     where
-        T: DerefMut<Target = Self::Storage>,
-        U: Deref<Target = Self::Storage>,
-        V: Deref<Target = Self::Storage>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
+        V: Deref<Target = [DevByte]>,
     {
         rms_norm_nv::Scheme::new(
             &self.kernels.rms_norm,
@@ -111,7 +108,7 @@ impl Kernels for KernelRuntime<'_> {
     }
 
     #[inline]
-    fn mat_mul<T, U, V>(
+    pub fn mat_mul<T, U, V>(
         &self,
         c: &mut Tensor<T>,
         beta: f32,
@@ -119,9 +116,9 @@ impl Kernels for KernelRuntime<'_> {
         b: &Tensor<V>,
         alpha: f32,
     ) where
-        T: DerefMut<Target = Self::Storage>,
-        U: Deref<Target = Self::Storage>,
-        V: Deref<Target = Self::Storage>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
+        V: Deref<Target = [DevByte]>,
     {
         mat_mul_nv::Scheme::new(
             &self.kernels.mat_mul,
@@ -145,10 +142,10 @@ impl Kernels for KernelRuntime<'_> {
     }
 
     #[inline]
-    fn rotary_embedding<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32)
+    pub fn rotary_embedding<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32)
     where
-        T: DerefMut<Target = Self::Storage>,
-        U: Deref<Target = Self::Storage>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
     {
         rope_nv::Scheme::new(
             &self.kernels.rope,
@@ -169,10 +166,10 @@ impl Kernels for KernelRuntime<'_> {
     }
 
     #[inline]
-    fn reform<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>)
+    pub fn reform<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>)
     where
-        T: DerefMut<Target = Self::Storage>,
-        U: Deref<Target = Self::Storage>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
     {
         reform_nv::Scheme::new(
             &self.kernels.reform,
@@ -189,9 +186,9 @@ impl Kernels for KernelRuntime<'_> {
     }
 
     #[inline]
-    fn softmax<T>(&self, att: &mut Tensor<T>)
+    pub fn softmax<T>(&self, att: &mut Tensor<T>)
     where
-        T: DerefMut<Target = Self::Storage>,
+        T: DerefMut<Target = [DevByte]>,
     {
         softmax_nv::Scheme::new(
             &self.kernels.softmax,
@@ -202,10 +199,10 @@ impl Kernels for KernelRuntime<'_> {
     }
 
     #[inline]
-    fn swiglu<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>)
+    pub fn swiglu<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>)
     where
-        T: DerefMut<Target = Self::Storage>,
-        U: Deref<Target = Self::Storage>,
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
     {
         swiglu_nv::Scheme::new(
             &self.kernels.swiglu,

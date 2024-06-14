@@ -5,7 +5,6 @@ members = [
     "tokenizer",
     "causal-lm",
     "sample",
-    "kernel-lib",
     "service",
     "web-api",
     "xtask",

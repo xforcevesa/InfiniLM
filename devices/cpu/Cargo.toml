@@ -9,9 +9,4 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 [dependencies]
 common = { path = "../../common" }
 tensor = { path = "../../tensor" }
-kernel-lib = { path = "../../kernel-lib" }
-intel-mkl-src = { version = "0.8", features = ["mkl-dynamic-lp64-iomp"] }
 operators = { workspace = true, features = ["common-cpu"] }
-
-[build-dependencies]
-intel-mkl-tool = "0.8"

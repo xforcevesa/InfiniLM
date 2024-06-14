@@ -10,7 +10,6 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 common = { path = "../../common" }
 tensor = { path = "../../tensor" }
 sample = { path = "../../sample" }
-kernel-lib = { path = "../../kernel-lib" }
 cuda.workspace = true
 rand = "0.8"
 operators = { workspace = true, features = ["nvidia-gpu"] }

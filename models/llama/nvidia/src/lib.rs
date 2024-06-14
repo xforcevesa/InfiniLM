@@ -7,7 +7,7 @@ extern crate log;
 
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{upos, utok, FileLoadError};
-use common_nv::{sample_nv, slice, udim, DataType, KernelRuntime, Kernels, NvidiaKernels, Tensor};
+use common_nv::{sample_nv, slice, udim, DataType, KernelRuntime, NvidiaKernels, Tensor};
 use cuda::{
     ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device, EventSpore, HostMemSpore,
     Stream, StreamSpore,
