@@ -1,7 +1,7 @@
 use super::MixtralCPU;
 use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleMeta};
 use common::{f16, upos, utok, Blob};
-use common_cpu::{gather, mat_mul, rotary_embedding, softmax, swiglu};
+use common_cpu::ThisThread;
 use itertools::izip;
 use std::{iter::repeat, slice::from_raw_parts};
 use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
@@ -58,7 +58,8 @@ impl CausalLM for MixtralCPU {
         let nt = tokens.len() as udim;
 
         let mut x = Tensor::alloc(dt, &[nt, d], Blob::new);
-        gather(&mut x, &self.params.embed_tokens(), tokens);
+        self.kernels
+            .gather(&mut x, &self.params.embed_tokens(), tokens, &ThisThread);
         x
     }
 
@@ -118,10 +119,12 @@ impl CausalLM for MixtralCPU {
             let mut qkv = qkv.slice(&[slice![=>], slice![=> d + dkv + dkv]]);
 
             let input_layernorm = self.params.input_layernorm(layer);
-            self.rms_norm(&mut x1, &x, &input_layernorm);
+            self.kernels
+                .rms_norm(&mut x1, &x, &input_layernorm, self.epsilon, &ThisThread);
 
             let w_qkv = self.params.w_qkv(layer).transpose(&[1, 0]);
-            mat_mul(&mut qkv, 0., &x1, &w_qkv, 1.);
+            self.kernels
+                .mat_mul(&mut qkv, 0., &x1, &w_qkv, 1., &ThisThread);
 
             let (q, k, v) = split!(qkv; [1]: d, dkv, dkv);
             let mut q = q.reshape(&[nt, nh, dh]);
@@ -129,8 +132,8 @@ impl CausalLM for MixtralCPU {
             let v = v.reshape(&[nt, nkvh, dh]);
             let o = x1.reshape(&[nt, nh, dh]);
 
-            rotary_embedding(&mut q, &pos, self.theta);
-            rotary_embedding(&mut k, &pos, self.theta);
+            self.kernels.rope(&mut q, &pos, self.theta, &ThisThread);
+            self.kernels.rope(&mut k, &pos, self.theta, &ThisThread);
 
             let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
             let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
@@ -164,11 +167,19 @@ impl CausalLM for MixtralCPU {
                 let v_att = v_cache.slice(slice_att);
 
                 let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
-                mat_mul(&mut att, 0., &q_att, &k_att, head_div);
+                self.kernels
+                    .mat_mul(&mut att, 0., &q_att, &k_att, head_div, &ThisThread);
                 let mut att = att.reshape(shape_att1);
-                softmax(&mut att);
+                self.kernels.softmax(&mut att, &ThisThread);
                 let mut x2 = q_att;
-                mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
+                self.kernels.mat_mul(
+                    &mut x2,
+                    0.,
+                    &att.reshape(shape_att0),
+                    &v_att,
+                    1.,
+                    &ThisThread,
+                );
 
                 x2.reshape(shape_q0).reform_to(&mut o);
             }
@@ -177,14 +188,16 @@ impl CausalLM for MixtralCPU {
             let gate_up = gate_up.slice(&[slice![=>], slice![=> di + di]]);
 
             let wo = self.params.w_o(layer).transpose(&[1, 0]);
-            mat_mul(&mut x, 1., &x1, &wo, 1.);
+            self.kernels.mat_mul(&mut x, 1., &x1, &wo, 1., &ThisThread);
 
             let post_layernorm = self.params.post_attention_layernorm(layer);
-            self.rms_norm(&mut x1, &x, &post_layernorm);
+            self.kernels
+                .rms_norm(&mut x1, &x, &post_layernorm, self.epsilon, &ThisThread);
 
             let w_moe_gate = self.params.moe_gate(layer).transpose(&[1, 0]);
-            mat_mul(&mut routes, 0., &x1, &w_moe_gate, 1.);
-            softmax(&mut routes);
+            self.kernels
+                .mat_mul(&mut routes, 0., &x1, &w_moe_gate, 1., &ThisThread);
+            self.kernels.softmax(&mut routes, &ThisThread);
             topk(&routes, self.k as _, &mut moe_w, &mut moe_i);
             let weights: &[f16] = reslice(moe_w.as_slice());
             let indices: &[u32] = reslice(moe_i.as_slice());
@@ -207,13 +220,27 @@ impl CausalLM for MixtralCPU {
                     let expert = indices[(tok * self.k + k) as usize];
                     let expert_w = weights[(tok * self.k + k) as usize].to_f32() / sum;
                     let w_gate_up = self.params.mlp_gate_up(layer, expert).transpose(&[1, 0]);
-                    mat_mul(&mut gate_up_slice, 0., &x1_slice, &w_gate_up, 1.);
+                    self.kernels.mat_mul(
+                        &mut gate_up_slice,
+                        0.,
+                        &x1_slice,
+                        &w_gate_up,
+                        1.,
+                        &ThisThread,
+                    );
                     let mut gate_up_slice = gate_up_slice.split(1, &[di as _, di as _]);
                     let up = gate_up_slice.pop_back().unwrap();
                     let mut gate = gate_up_slice.pop_back().unwrap();
-                    swiglu(&mut gate, &up);
+                    self.kernels.swiglu(&mut gate, &up, &ThisThread);
                     let mlp_down = self.params.mlp_down(layer, expert).transpose(&[1, 0]);
-                    mat_mul(&mut x0_slice, 1., &gate, &mlp_down, expert_w);
+                    self.kernels.mat_mul(
+                        &mut x0_slice,
+                        1.,
+                        &gate,
+                        &mlp_down,
+                        expert_w,
+                        &ThisThread,
+                    );
                 }
             }
         }
@@ -245,8 +272,10 @@ impl CausalLM for MixtralCPU {
         let x_ = x
             .as_ref()
             .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-        self.rms_norm(&mut x, &x_, lm_layernorm);
-        mat_mul(&mut logits, 0., &x, &lm_head, 1.);
+        self.kernels
+            .rms_norm(&mut x, &x_, lm_layernorm, self.epsilon, &ThisThread);
+        self.kernels
+            .mat_mul(&mut logits, 0., &x, &lm_head, 1., &ThisThread);
 
         logits
     }

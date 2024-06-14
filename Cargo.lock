@@ -862,9 +862,7 @@ dependencies = [
  "causal-lm",
  "common 0.0.0",
  "common-cpu 0.0.0",
- "common-devices",
  "llama",
- "operators",
  "tensor",
 ]
 
@@ -981,10 +979,8 @@ dependencies = [
  "causal-lm",
  "common 0.0.0",
  "common-cpu 0.0.0",
- "common-devices",
  "itertools 0.13.0",
  "mixtral",
- "operators",
  "tensor",
 ]
 

@@ -1,12 +1,9 @@
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{f16, upos, utok, Blob, FileLoadError};
-use common_cpu::{gather, mat_mul, rotary_embedding, softmax, swiglu};
-use common_devices::rms_norm;
+use common_cpu::{CpuKernels, ThisThread};
 use llama::{ComputeStream, LayerStorage, Storage, Weight};
-use operators::{common_cpu::ThisThread, rms_norm, Operator, F16};
 use std::{
     iter::repeat,
-    marker::PhantomData,
     ops::{Deref, DerefMut},
     path::Path,
     slice::from_raw_parts,
@@ -15,7 +12,7 @@ use tensor::{reslice, slice, udim, Tensor};
 
 pub struct Transformer {
     s: Storage,
-    rms_norm: rms_norm::common_cpu::Operator,
+    kernels: CpuKernels,
 }
 
 impl Model for Transformer {
@@ -26,7 +23,7 @@ impl Model for Transformer {
     fn load(model_dir: impl AsRef<Path>, _meta: Self::Meta) -> Result<Self, Self::Error> {
         Ok(Self {
             s: llama::Storage::load_safetensors(model_dir)?,
-            rms_norm: rms_norm::common_cpu::Operator::new(&F16).unwrap(),
+            kernels: Default::default(),
         })
     }
 }
@@ -58,15 +55,8 @@ impl ComputeStream for Transformer {
         X: Deref<Target = [Self::Byte]>,
         W: Deref<Target = [Self::Byte]>,
     {
-        rms_norm(
-            PhantomData::<rms_norm::common_cpu::Scheme>,
-            &self.rms_norm,
-            y,
-            x,
-            w,
-            self.s.config.epsilon,
-            &ThisThread,
-        )
+        self.kernels
+            .rms_norm(y, x, w, self.s.config.epsilon, &ThisThread);
     }
     #[inline]
     fn mat_mul<O, A, B>(
@@ -81,14 +71,14 @@ impl ComputeStream for Transformer {
         A: Deref<Target = [Self::Byte]>,
         B: Deref<Target = [Self::Byte]>,
     {
-        mat_mul(o, beta, a, b, alpha);
+        self.kernels.mat_mul(o, beta, a, b, alpha, &ThisThread);
     }
     #[inline]
-    fn rotary_embedding<X>(&self, x: &mut Tensor<X>, pos: &Tensor<Self::Pos<'_>>)
+    fn rotary_embedding<T>(&self, t: &mut Tensor<T>, pos: &Tensor<Self::Pos<'_>>)
     where
-        X: DerefMut<Target = [Self::Byte]>,
+        T: DerefMut<Target = [Self::Byte]>,
     {
-        rotary_embedding(x, pos, self.s.config.theta);
+        self.kernels.rope(t, pos, self.s.config.theta, &ThisThread);
     }
     #[inline]
     fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
@@ -103,7 +93,7 @@ impl ComputeStream for Transformer {
     where
         X: DerefMut<Target = [Self::Byte]>,
     {
-        softmax(x);
+        self.kernels.softmax(x, &ThisThread);
     }
     #[inline]
     fn swiglu<A, B>(&self, a: &mut Tensor<A>, b: &Tensor<B>)
@@ -111,7 +101,7 @@ impl ComputeStream for Transformer {
         A: DerefMut<Target = [Self::Byte]>,
         B: Deref<Target = [Self::Byte]>,
     {
-        swiglu(a, b);
+        self.kernels.swiglu(a, b, &ThisThread);
     }
     #[inline]
     fn nh(&self) -> udim {
@@ -196,7 +186,8 @@ impl CausalLM for Transformer {
         let nt = tokens.len() as udim;
 
         let mut x = Tensor::alloc(dt, &[nt, d], Blob::new);
-        gather(&mut x, &self.s.embed_tokens, tokens);
+        self.kernels
+            .gather(&mut x, &self.s.embed_tokens, tokens, &ThisThread);
         x
     }
 
@@ -233,7 +224,7 @@ impl CausalLM for Transformer {
             .as_ref()
             .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
         self.rms_norm(&mut x, &x_, lm_layernorm);
-        mat_mul(&mut logits, 0., &x, lm_head, 1.);
+        self.mat_mul(&mut logits, 0., &x, lm_head, 1.);
 
         logits
     }

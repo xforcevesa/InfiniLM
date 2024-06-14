@@ -480,8 +480,8 @@ impl Transformer {
         let o = x1.reshape(&[nt, nh, dh]);
         let o = o.slice(&[slice![=>], slice![=> nh / n], slice![=>]]);
 
-        kernels.rotary_embedding(&mut q, pos, theta, stream);
-        kernels.rotary_embedding(&mut k, pos, theta, stream);
+        kernels.rope(&mut q, pos, theta, stream);
+        kernels.rope(&mut k, pos, theta, stream);
 
         let q = q.transpose(&[1, 0, 2]).split(1, seq_len);
         let k = k.transpose(&[1, 0, 2]).split(1, seq_len);

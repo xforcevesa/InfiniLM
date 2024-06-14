@@ -394,8 +394,7 @@ impl<'a> llama::ComputeStream for ComputeStream<'a> {
     where
         X: DerefMut<Target = [Self::Byte]>,
     {
-        self.kernels
-            .rotary_embedding(x, pos, self.theta, self.compute);
+        self.kernels.rope(x, pos, self.theta, self.compute);
     }
     fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
     where

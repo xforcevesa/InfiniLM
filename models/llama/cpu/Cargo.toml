@@ -8,9 +8,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 
 [dependencies]
 common = { path = "../../../common" }
-tensor = { path = "../../../tensor" }
-common-devices = { path = "../../../devices/common" }
 common-cpu = { path = "../../../devices/cpu" }
+tensor = { path = "../../../tensor" }
 causal-lm = { path = "../../../causal-lm" }
 llama = { path = "../common" }
-operators.workspace = true

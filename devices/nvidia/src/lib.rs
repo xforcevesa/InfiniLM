@@ -6,16 +6,12 @@ mod gather;
 mod sample;
 
 use common::utok;
-use common_devices::{layout, rms_norm};
+use common_devices::{mat_mul, reform, rms_norm, rope, softmax, swiglu};
 use cuda::{CudaDataType, DevByte, Device, Stream};
 use operators::{
-    fuesd_softmax::{self, nvidia_gpu as softmax_nv},
-    mat_mul::{self, nvidia_gpu as mat_mul_nv},
-    reform::{self, nvidia_gpu as reform_nv},
-    rms_norm::nvidia_gpu as rms_norm_nv,
-    rope::{self, nvidia_gpu as rope_nv},
-    swiglu::{self, nvidia_gpu as swiglu_nv},
-    Operator, Scheme, F16,
+    fuesd_softmax::nvidia_gpu as softmax_nv, mat_mul::nvidia_gpu as mat_mul_nv,
+    reform::nvidia_gpu as reform_nv, rms_norm::nvidia_gpu as rms_norm_nv,
+    rope::nvidia_gpu as rope_nv, swiglu::nvidia_gpu as swiglu_nv, Operator, F16,
 };
 use std::{
     marker::PhantomData,
@@ -36,24 +32,47 @@ pub struct NvidiaKernels {
 
 impl NvidiaKernels {
     pub fn new(devices: &[Device], rms_norm_max_size: usize, softmax_max_size: usize) -> Self {
+        let max_num_threads_block = devices.iter().map(|d| d.max_block_dims().0).min().unwrap();
+        let compute_capability = devices
+            .iter()
+            .map(Device::compute_capability)
+            .min()
+            .unwrap();
         Self {
             mat_mul: mat_mul_nv::Operator::new(&F16).unwrap(),
-            rms_norm: rms_norm_nv::Operator::new(&rms_norm_nv::Config::config_for(
-                &devices[0],
-                F16,
-                rms_norm_max_size,
-            ))
+            rms_norm: rms_norm_nv::Operator::new(&rms_norm_nv::Config {
+                data_layout: F16,
+                num_items_reduce: rms_norm_max_size,
+                num_threads_warp: 32,
+                max_num_threads_block,
+                compute_capability,
+            })
             .unwrap(),
-            rope: rope_nv::Operator::new(&rope_nv::Config::config_for(&devices[0], F16)).unwrap(),
-            reform: reform_nv::Operator::new(&reform_nv::Config::config_for(&devices[0])).unwrap(),
-            softmax: softmax_nv::Operator::new(&softmax_nv::Config::config_for(
-                &devices[0],
-                F16,
-                softmax_max_size,
-            ))
+            rope: rope_nv::Operator::new(&rope_nv::Config {
+                data_layout: F16,
+                max_num_threads_block,
+                compute_capability,
+            })
             .unwrap(),
-            swiglu: swiglu_nv::Operator::new(&swiglu_nv::Config::config_for(&devices[0], F16))
-                .unwrap(),
+            reform: reform_nv::Operator::new(&reform_nv::Config {
+                num_threads_warp: 32,
+                max_num_threads_block,
+                compute_capability,
+            })
+            .unwrap(),
+            softmax: softmax_nv::Operator::new(&softmax_nv::Config {
+                data_layout: F16,
+                max_seq_len: softmax_max_size,
+                max_num_threads_block,
+                compute_capability,
+            })
+            .unwrap(),
+            swiglu: swiglu_nv::Operator::new(&swiglu_nv::Config {
+                data_layout: F16,
+                max_num_threads_block,
+                compute_capability,
+            })
+            .unwrap(),
         }
     }
 }
@@ -94,6 +113,22 @@ impl NvidiaKernels {
     }
 
     #[inline]
+    pub fn rope<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32, stream: &Stream)
+    where
+        T: DerefMut<Target = [DevByte]>,
+        U: Deref<Target = [DevByte]>,
+    {
+        rope(
+            PhantomData::<rope_nv::Scheme>,
+            &self.rope,
+            t,
+            pos,
+            theta,
+            stream,
+        );
+    }
+
+    #[inline]
     pub fn mat_mul<T, U, V>(
         &self,
         c: &mut Tensor<T>,
@@ -107,52 +142,14 @@ impl NvidiaKernels {
         U: Deref<Target = [DevByte]>,
         V: Deref<Target = [DevByte]>,
     {
-        mat_mul_nv::Scheme::new(
+        mat_mul(
+            PhantomData::<mat_mul_nv::Scheme>,
             &self.mat_mul,
-            mat_mul::LayoutAttrs {
-                c: layout(c),
-                a: layout(a),
-                b: layout(b),
-            },
-        )
-        .unwrap()
-        .launch(
-            &(
-                c.physical_mut().as_mut_ptr(),
-                beta,
-                a.physical().as_ptr(),
-                b.physical().as_ptr(),
-                alpha,
-            ),
-            stream,
-        );
-    }
-
-    #[inline]
-    pub fn rotary_embedding<T, U>(
-        &self,
-        t: &mut Tensor<T>,
-        pos: &Tensor<U>,
-        theta: f32,
-        stream: &Stream,
-    ) where
-        T: DerefMut<Target = [DevByte]>,
-        U: Deref<Target = [DevByte]>,
-    {
-        rope_nv::Scheme::new(
-            &self.rope,
-            rope::LayoutAttrs {
-                t: layout(t),
-                pos: layout(pos),
-            },
-        )
-        .unwrap()
-        .launch(
-            &(
-                t.physical_mut().as_mut_ptr(),
-                pos.physical().as_ptr(),
-                theta,
-            ),
+            c,
+            beta,
+            a,
+            b,
+            alpha,
             stream,
         );
     }
@@ -163,16 +160,11 @@ impl NvidiaKernels {
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
-        reform_nv::Scheme::new(
+        reform(
+            PhantomData::<reform_nv::Scheme>,
             &self.reform,
-            reform::LayoutAttrs {
-                dst: layout(dst),
-                src: layout(src),
-            },
-        )
-        .unwrap()
-        .launch(
-            &(dst.physical_mut().as_mut_ptr(), src.physical().as_ptr()),
+            dst,
+            src,
             stream,
         );
     }
@@ -182,12 +174,12 @@ impl NvidiaKernels {
     where
         T: DerefMut<Target = [DevByte]>,
     {
-        softmax_nv::Scheme::new(
+        softmax(
+            PhantomData::<softmax_nv::Scheme>,
             &self.softmax,
-            fuesd_softmax::LayoutAttrs { att: layout(att) },
-        )
-        .unwrap()
-        .launch(&att.physical_mut().as_mut_ptr(), stream);
+            att,
+            stream,
+        );
     }
 
     #[inline]
@@ -196,16 +188,11 @@ impl NvidiaKernels {
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
-        swiglu_nv::Scheme::new(
+        swiglu(
+            PhantomData::<swiglu_nv::Scheme>,
             &self.swiglu,
-            swiglu::LayoutAttrs {
-                gate: layout(gate),
-                up: layout(up),
-            },
-        )
-        .unwrap()
-        .launch(
-            &(gate.physical_mut().as_mut_ptr(), up.physical().as_ptr()),
+            gate,
+            up,
             stream,
         );
     }
