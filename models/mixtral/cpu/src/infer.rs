@@ -1,7 +1,7 @@
 use super::MixtralCPU;
 use causal_lm::{CausalLM, DecodingMeta, QueryContext, SampleMeta};
 use common::{f16, upos, utok, Blob};
-use common_cpu::{gather, mat_mul, rms_norm, rotary_embedding, softmax, swiglu};
+use common_cpu::{gather, mat_mul, rotary_embedding, softmax, swiglu};
 use itertools::izip;
 use std::{iter::repeat, slice::from_raw_parts};
 use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
@@ -118,7 +118,7 @@ impl CausalLM for MixtralCPU {
             let mut qkv = qkv.slice(&[slice![=>], slice![=> d + dkv + dkv]]);
 
             let input_layernorm = self.params.input_layernorm(layer);
-            rms_norm(&mut x1, &x, &input_layernorm, self.epsilon);
+            self.rms_norm(&mut x1, &x, &input_layernorm);
 
             let w_qkv = self.params.w_qkv(layer).transpose(&[1, 0]);
             mat_mul(&mut qkv, 0., &x1, &w_qkv, 1.);
@@ -180,7 +180,7 @@ impl CausalLM for MixtralCPU {
             mat_mul(&mut x, 1., &x1, &wo, 1.);
 
             let post_layernorm = self.params.post_attention_layernorm(layer);
-            rms_norm(&mut x1, &x, &post_layernorm, self.epsilon);
+            self.rms_norm(&mut x1, &x, &post_layernorm);
 
             let w_moe_gate = self.params.moe_gate(layer).transpose(&[1, 0]);
             mat_mul(&mut routes, 0., &x1, &w_moe_gate, 1.);
@@ -245,7 +245,7 @@ impl CausalLM for MixtralCPU {
         let x_ = x
             .as_ref()
             .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-        rms_norm(&mut x, &x_, lm_layernorm, self.epsilon);
+        self.rms_norm(&mut x, &x_, lm_layernorm);
         mat_mul(&mut logits, 0., &x, &lm_head, 1.);
 
         logits

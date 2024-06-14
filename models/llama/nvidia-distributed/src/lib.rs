@@ -12,9 +12,9 @@ use common_nv::{
     cast_dt,
     cuda::{
         AsRaw, Context, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device,
-        HostMemSpore, StreamSpore,
+        HostMemSpore, Stream, StreamSpore,
     },
-    sample_nv, slice, split, udim, DataType, KernelRuntime, LocalSplitable, NvidiaKernels, Tensor,
+    sample_nv, slice, split, udim, DataType, LocalSplitable, NvidiaKernels, Tensor,
 };
 use itertools::izip;
 use llama::InferenceConfig;
@@ -146,13 +146,12 @@ impl CausalLM for Transformer {
             |mut dst, src| {
                 for (i, context) in contexts.iter().enumerate() {
                     context.apply(|ctx| {
-                        let stream = ctx.stream();
-                        let kernels = self.kernels.on(&stream);
-                        kernels.reform(
+                        self.kernels.reform(
                             &mut dst
                                 .as_mut()
                                 .map_physical(|u| &mut **u.mem[i].sprout_mut(ctx)),
                             &src.as_ref().map_physical(|u| &**u.mem[i].sprout_ref(ctx)),
+                            &ctx.stream(),
                         );
                     });
                 }
@@ -170,16 +169,15 @@ impl CausalLM for Transformer {
 
         let mut x = Tensor::alloc(dt, &[nt, d], |len| malloc_all(&contexts, len));
         contexts[0].apply(|ctx| {
-            let stream = self.streams[0].sprout_ref(ctx);
-            let kernels = self.kernels.on(stream);
             let mut x = x.as_mut().map_physical(|u| &mut **u[0].sprout_mut(ctx));
-            kernels.gather(
+            self.kernels.gather(
                 &mut x,
                 &self
                     .embed_tokens
                     .as_ref()
                     .map_physical(|u| u.as_deref().unwrap()),
                 tokens,
+                self.streams[0].sprout_ref(ctx),
             );
         });
         for (i, comm) in self.comms.call().iter().enumerate() {
@@ -285,7 +283,6 @@ impl CausalLM for Transformer {
                                 .collect::<Vec<_>>();
 
                             let stream = self.streams[i].sprout_ref(ctx);
-                            let kernels = self.kernels.on(stream);
 
                             let pos = pos.map_physical(|u| stream.from_host(u));
                             let mut state_buf = Tensor::alloc(dt, &[nt, d + reusing / n], |len| {
@@ -300,7 +297,7 @@ impl CausalLM for Transformer {
                                 let params = self.matrix.get(layer, i, ctx);
 
                                 self.self_att(
-                                    &kernels,
+                                    &self.kernels,
                                     &mut queries,
                                     seq_len,
                                     &params,
@@ -312,6 +309,7 @@ impl CausalLM for Transformer {
                                     i,
                                     layer,
                                     nt,
+                                    stream,
                                 );
                                 comm.all_reduce(
                                     x.physical_mut(),
@@ -321,7 +319,7 @@ impl CausalLM for Transformer {
                                     stream,
                                 );
 
-                                self.mlp(&kernels, &params, &mut x, &mut state_buf, i);
+                                self.mlp(&self.kernels, &params, &mut x, &mut state_buf, i, stream);
                                 comm.all_reduce(
                                     x.physical_mut(),
                                     None,
@@ -390,9 +388,10 @@ impl CausalLM for Transformer {
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-            let kernels = self.kernels.on(stream);
-            kernels.rms_norm(&mut x, &x_, &model_norm, self.config.epsilon);
-            kernels.mat_mul(&mut logits, 0., &x, &lm_head, 1.);
+            self.kernels
+                .rms_norm(&mut x, &x_, &model_norm, self.config.epsilon, stream);
+            self.kernels
+                .mat_mul(&mut logits, 0., &x, &lm_head, 1., stream);
 
             logits.map_physical(|u| Cache {
                 contexts: contexts.clone(),
@@ -439,7 +438,7 @@ impl CausalLM for Transformer {
 impl Transformer {
     fn self_att(
         &self,
-        kernels: &KernelRuntime,
+        kernels: &NvidiaKernels,
         queries: &mut [QueryContext<&mut [DevByte]>],
         seq_len: &[udim],
         params: &Layer,
@@ -451,6 +450,7 @@ impl Transformer {
         i: usize,
         layer: usize,
         nt: udim,
+        stream: &Stream,
     ) {
         let dt = self.config.dt;
         let d = self.config.d;
@@ -470,8 +470,8 @@ impl Transformer {
         let (mut x1, qkv) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
         let mut qkv = qkv.slice(&[slice![=>], slice![=> (d + dkv + dkv) / n]]);
 
-        kernels.rms_norm(&mut x1, x, &params.input_layernorm(), epsilon);
-        kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1.);
+        kernels.rms_norm(&mut x1, x, &params.input_layernorm(), epsilon, stream);
+        kernels.mat_mul(&mut qkv, 0., &x1, &params.w_qkv(), 1., stream);
 
         let (q, k, v) = split!(qkv; [1]: d / n, dkv / n, dkv / n);
         let mut q = q.reshape(&[nt, nh / n, dh]);
@@ -480,8 +480,8 @@ impl Transformer {
         let o = x1.reshape(&[nt, nh, dh]);
         let o = o.slice(&[slice![=>], slice![=> nh / n], slice![=>]]);
 
-        kernels.rotary_embedding(&mut q, pos, theta);
-        kernels.rotary_embedding(&mut k, pos, theta);
+        kernels.rotary_embedding(&mut q, pos, theta, stream);
+        kernels.rotary_embedding(&mut k, pos, theta, stream);
 
         let q = q.transpose(&[1, 0, 2]).split(1, seq_len);
         let k = k.transpose(&[1, 0, 2]).split(1, seq_len);
@@ -506,38 +506,46 @@ impl Transformer {
             let mut q_att = Tensor::new(dt, shape_q0, &mut q_buf[..]);
             let mut k_cat = k_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
             let mut v_cat = v_cache.as_mut().slice(slice_cat).map_physical(|u| &mut **u);
-            kernels.reform(&mut q_att, &q);
-            kernels.reform(&mut k_cat, &k);
-            kernels.reform(&mut v_cat, &v);
+            kernels.reform(&mut q_att, &q, stream);
+            kernels.reform(&mut k_cat, &k, stream);
+            kernels.reform(&mut v_cat, &v, stream);
 
             let q_att = q_att.reshape(shape_q1);
             let k_att = k_cache.slice(slice_att).transpose(&[0, 2, 1]);
             let v_att = v_cache.slice(slice_att);
 
             let mut att = Tensor::new(dt, shape_att0, &mut att_buf[..]);
-            kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div);
+            kernels.mat_mul(&mut att, 0., &q_att, &k_att, head_div, stream);
             let mut att = att.reshape(shape_att1);
-            kernels.softmax(&mut att);
+            kernels.softmax(&mut att, stream);
             let mut x2 = q_att;
-            kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1.);
+            kernels.mat_mul(&mut x2, 0., &att.reshape(shape_att0), &v_att, 1., stream);
 
-            kernels.reform(&mut o, &x2.reshape(shape_q0));
+            kernels.reform(&mut o, &x2.reshape(shape_q0), stream);
         }
 
         let (x1, _) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
 
         let o = x1.as_ref().slice(&[slice![=>], slice![=> d/n as udim]]);
         let o = o.map_physical(|u| &**u);
-        kernels.mat_mul(x, if i == 0 { 1. } else { 0. }, &o, &params.w_o(), 1.);
+        kernels.mat_mul(
+            x,
+            if i == 0 { 1. } else { 0. },
+            &o,
+            &params.w_o(),
+            1.,
+            stream,
+        );
     }
 
     fn mlp(
         &self,
-        kernels: &KernelRuntime,
+        kernels: &NvidiaKernels,
         params: &Layer,
         x: &mut Tensor<&mut [DevByte]>,
         state_buf: &mut Tensor<DevMem>,
         i: usize,
+        stream: &Stream,
     ) {
         let d = self.config.d;
         let nh = self.config.nh;
@@ -553,18 +561,19 @@ impl Transformer {
         let (mut x1, gate_up) = split!(state_buf.as_mut().map_physical(|u| LocalSplitable::from(&mut **u)); [1]: d, reusing / n);
         let mut gate_up = gate_up.slice(&[slice![=>], slice![=> (di + di) / n]]);
 
-        kernels.rms_norm(&mut x1, x, &params.post_att_layernorm(), epsilon);
-        kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1.);
+        kernels.rms_norm(&mut x1, x, &params.post_att_layernorm(), epsilon, stream);
+        kernels.mat_mul(&mut gate_up, 0., &x1, &params.mlp_gate_up(), 1., stream);
 
         let (mut gate, up) = split!(gate_up; [1]: di / n, di / n);
 
-        kernels.swiglu(&mut gate, &up);
+        kernels.swiglu(&mut gate, &up, stream);
         kernels.mat_mul(
             x,
             if i == 0 { 1. } else { 0. },
             &gate,
             &params.mlp_down(),
             1.,
+            stream,
         );
     }
 }

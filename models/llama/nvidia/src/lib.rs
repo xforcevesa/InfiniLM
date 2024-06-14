@@ -7,7 +7,7 @@ extern crate log;
 
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{upos, utok, FileLoadError};
-use common_nv::{sample_nv, slice, udim, DataType, KernelRuntime, NvidiaKernels, Tensor};
+use common_nv::{sample_nv, slice, udim, DataType, NvidiaKernels, Tensor};
 use cuda::{
     ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device, EventSpore, HostMemSpore,
     Stream, StreamSpore,
@@ -164,9 +164,10 @@ impl CausalLM for Transformer {
             |dst, src| {
                 self.resource.apply(|stream| {
                     let ctx = stream.ctx();
-                    self.kernels.on(stream).reform(
+                    self.kernels.reform(
                         &mut dst.map_physical(|u| &mut **u.mem.as_mut().sprout_mut(ctx)),
                         &src.map_physical(|u| &**u.mem.as_ref().sprout_ref(ctx)),
+                        stream,
                     );
                 })
             },
@@ -180,12 +181,13 @@ impl CausalLM for Transformer {
 
         let mut x = self.tensor(&[nt, d]);
         self.resource.apply(|compute| {
-            self.kernels.on(compute).gather(
+            self.kernels.gather(
                 &mut x
                     .as_mut()
                     .map_physical(|u| &mut **u.mem.as_mut().sprout_mut(compute.ctx())),
                 &self.embed_tokens.as_ref().map_physical(|u| &**u.as_ref()),
                 tokens,
+                compute,
             )
         });
         x
@@ -208,7 +210,7 @@ impl CausalLM for Transformer {
                 di: self.config.di,
                 epsilon: self.config.epsilon,
                 theta: self.config.theta,
-                kernels: self.kernels.on(compute),
+                kernels: &self.kernels,
                 compute,
                 transfer,
                 host: &self.layers,
@@ -250,9 +252,9 @@ impl CausalLM for Transformer {
             let x_ = x
                 .as_ref()
                 .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
-            let kernels = self.kernels.on(compute);
-            kernels.rms_norm(&mut x, &x_, &lm_layernorm, self.config.epsilon);
-            kernels.mat_mul(
+            self.kernels
+                .rms_norm(&mut x, &x_, &lm_layernorm, self.config.epsilon, compute);
+            self.kernels.mat_mul(
                 &mut logits
                     .as_mut()
                     .map_physical(|u| &mut **u.mem.as_mut().sprout_mut(ctx)),
@@ -260,6 +262,7 @@ impl CausalLM for Transformer {
                 &x,
                 &lm_head,
                 1.,
+                compute,
             );
 
             logits
@@ -331,7 +334,7 @@ struct ComputeStream<'a> {
     di: udim,
     epsilon: f32,
     theta: f32,
-    kernels: KernelRuntime<'a>,
+    kernels: &'a NvidiaKernels,
     compute: &'a Stream<'a>,
     transfer: &'a Stream<'a>,
     host: &'a [LayerStorage<HostMemSpore>],
@@ -371,7 +374,7 @@ impl<'a> llama::ComputeStream for ComputeStream<'a> {
         X: Deref<Target = [Self::Byte]>,
         W: Deref<Target = [Self::Byte]>,
     {
-        self.kernels.rms_norm(o, x, w, self.epsilon);
+        self.kernels.rms_norm(o, x, w, self.epsilon, self.compute);
     }
     fn mat_mul<O, A, B>(
         &self,
@@ -385,33 +388,34 @@ impl<'a> llama::ComputeStream for ComputeStream<'a> {
         A: Deref<Target = [Self::Byte]>,
         B: Deref<Target = [Self::Byte]>,
     {
-        self.kernels.mat_mul(o, beta, a, b, alpha);
+        self.kernels.mat_mul(o, beta, a, b, alpha, self.compute);
     }
     fn rotary_embedding<X>(&self, x: &mut Tensor<X>, pos: &Tensor<Self::Pos<'_>>)
     where
         X: DerefMut<Target = [Self::Byte]>,
     {
-        self.kernels.rotary_embedding(x, pos, self.theta);
+        self.kernels
+            .rotary_embedding(x, pos, self.theta, self.compute);
     }
     fn reform<Y, X>(&self, y: &mut Tensor<Y>, x: &Tensor<X>)
     where
         Y: DerefMut<Target = [Self::Byte]>,
         X: Deref<Target = [Self::Byte]>,
     {
-        self.kernels.reform(y, x);
+        self.kernels.reform(y, x, self.compute);
     }
     fn softmax<X>(&self, x: &mut Tensor<X>)
     where
         X: DerefMut<Target = [Self::Byte]>,
     {
-        self.kernels.softmax(x);
+        self.kernels.softmax(x, self.compute);
     }
     fn swiglu<A, B>(&self, a: &mut Tensor<A>, b: &Tensor<B>)
     where
         A: DerefMut<Target = [Self::Byte]>,
         B: Deref<Target = [Self::Byte]>,
     {
-        self.kernels.swiglu(a, b);
+        self.kernels.swiglu(a, b, self.compute);
     }
     fn nh(&self) -> udim {
         self.nh

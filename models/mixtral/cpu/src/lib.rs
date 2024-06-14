@@ -2,10 +2,15 @@ mod infer;
 
 use causal_lm::Model;
 use common::{safe_tensors::SafeTensors, utok, FileLoadError};
-use mixtral::ConfigJson;
-use mixtral::MixtralParams;
-use std::path::Path;
-use tensor::{udim, DataType};
+use common_devices::rms_norm;
+use mixtral::{ConfigJson, MixtralParams};
+use operators::{common_cpu::ThisThread, rms_norm, Operator, F16};
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    path::Path,
+};
+use tensor::{udim, DataType, Tensor};
 
 pub struct MixtralCPU {
     eos_token: utok,
@@ -21,6 +26,8 @@ pub struct MixtralCPU {
     epsilon: f32,
     theta: f32,
     params: MixtralParams,
+
+    rms_norm: rms_norm::common_cpu::Operator,
 }
 
 impl Model for MixtralCPU {
@@ -43,7 +50,28 @@ impl Model for MixtralCPU {
             params: MixtralParams::new(&config, SafeTensors::load_from_dir(model_dir)?),
             ne: config.num_local_experts as _,
             k: config.num_experts_per_tok as _,
+
+            rms_norm: rms_norm::common_cpu::Operator::new(&F16).unwrap(),
         })
+    }
+}
+
+impl MixtralCPU {
+    fn rms_norm<Y, X, W>(&self, y: &mut Tensor<Y>, x: &Tensor<X>, w: &Tensor<W>)
+    where
+        Y: DerefMut<Target = [u8]>,
+        X: Deref<Target = [u8]>,
+        W: Deref<Target = [u8]>,
+    {
+        rms_norm(
+            PhantomData::<rms_norm::common_cpu::Scheme>,
+            &self.rms_norm,
+            y,
+            x,
+            w,
+            self.epsilon,
+            &ThisThread,
+        );
     }
 }
 

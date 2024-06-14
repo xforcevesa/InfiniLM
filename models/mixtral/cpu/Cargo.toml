@@ -6,8 +6,10 @@ authors = ["Zezhong Pan <panzezhong@qiyuanlab.com>"]
 
 [dependencies]
 common = { path = "../../../common" }
-tensor = { path = "../../../tensor" }
+common-devices = { path = "../../../devices/common" }
 common-cpu = { path = "../../../devices/cpu" }
+tensor = { path = "../../../tensor" }
 causal-lm = { path = "../../../causal-lm" }
 mixtral = { path = "../common" }
 itertools.workspace = true
+operators.workspace = true

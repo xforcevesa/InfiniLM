@@ -6,17 +6,21 @@ mod gather;
 mod sample;
 
 use common::utok;
-use cuda::{memcpy_d2h, CudaDataType, DevByte, Device, Stream};
+use common_devices::{layout, rms_norm};
+use cuda::{CudaDataType, DevByte, Device, Stream};
 use operators::{
     fuesd_softmax::{self, nvidia_gpu as softmax_nv},
     mat_mul::{self, nvidia_gpu as mat_mul_nv},
     reform::{self, nvidia_gpu as reform_nv},
-    rms_norm::{self, nvidia_gpu as rms_norm_nv},
+    rms_norm::nvidia_gpu as rms_norm_nv,
     rope::{self, nvidia_gpu as rope_nv},
     swiglu::{self, nvidia_gpu as swiglu_nv},
-    Operator, Scheme, TensorLayout, F16, U32,
+    Operator, Scheme, F16,
 };
-use std::ops::{Deref, DerefMut};
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 
 pub use sample::{sample_cpu, sample_nv};
 pub use tensor::{reslice, reslice_mut, slice, split, udim, DataType, LocalSplitable, Tensor};
@@ -54,56 +58,38 @@ impl NvidiaKernels {
     }
 }
 
-pub struct KernelRuntime<'a> {
-    pub kernels: &'a NvidiaKernels,
-    pub stream: &'a Stream<'a>,
-}
-
 impl NvidiaKernels {
     #[inline]
-    pub fn on<'a>(&'a self, stream: &'a Stream) -> KernelRuntime<'a> {
-        KernelRuntime {
-            kernels: self,
-            stream,
-        }
-    }
-}
-
-impl KernelRuntime<'_> {
-    #[inline]
-    pub fn gather<T, U, I>(&self, x: &mut Tensor<T>, table: &Tensor<U>, tokens: I)
+    pub fn gather<T, U, I>(&self, x: &mut Tensor<T>, table: &Tensor<U>, tokens: I, stream: &Stream)
     where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [u8]>,
         I: IntoIterator<Item = utok>,
     {
-        gather::gather(x, table, tokens, self.stream);
+        gather::gather(x, table, tokens, stream);
     }
 
     #[inline]
-    pub fn rms_norm<T, U, V>(&self, y: &mut Tensor<T>, x: &Tensor<U>, w: &Tensor<V>, epsilon: f32)
-    where
+    pub fn rms_norm<T, U, V>(
+        &self,
+        y: &mut Tensor<T>,
+        x: &Tensor<U>,
+        w: &Tensor<V>,
+        epsilon: f32,
+        stream: &Stream,
+    ) where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
         V: Deref<Target = [DevByte]>,
     {
-        rms_norm_nv::Scheme::new(
-            &self.kernels.rms_norm,
-            rms_norm::LayoutAttrs {
-                y: layout(y),
-                x: layout(x),
-                w: layout(w),
-            },
-        )
-        .unwrap()
-        .launch(
-            &(
-                y.physical_mut().as_mut_ptr(),
-                x.physical().as_ptr(),
-                w.physical().as_ptr(),
-                epsilon,
-            ),
-            self.stream,
+        rms_norm(
+            PhantomData::<rms_norm_nv::Scheme>,
+            &self.rms_norm,
+            y,
+            x,
+            w,
+            epsilon,
+            stream,
         );
     }
 
@@ -115,13 +101,14 @@ impl KernelRuntime<'_> {
         a: &Tensor<U>,
         b: &Tensor<V>,
         alpha: f32,
+        stream: &Stream,
     ) where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
         V: Deref<Target = [DevByte]>,
     {
         mat_mul_nv::Scheme::new(
-            &self.kernels.mat_mul,
+            &self.mat_mul,
             mat_mul::LayoutAttrs {
                 c: layout(c),
                 a: layout(a),
@@ -137,18 +124,23 @@ impl KernelRuntime<'_> {
                 b.physical().as_ptr(),
                 alpha,
             ),
-            self.stream,
+            stream,
         );
     }
 
     #[inline]
-    pub fn rotary_embedding<T, U>(&self, t: &mut Tensor<T>, pos: &Tensor<U>, theta: f32)
-    where
+    pub fn rotary_embedding<T, U>(
+        &self,
+        t: &mut Tensor<T>,
+        pos: &Tensor<U>,
+        theta: f32,
+        stream: &Stream,
+    ) where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
         rope_nv::Scheme::new(
-            &self.kernels.rope,
+            &self.rope,
             rope::LayoutAttrs {
                 t: layout(t),
                 pos: layout(pos),
@@ -161,18 +153,18 @@ impl KernelRuntime<'_> {
                 pos.physical().as_ptr(),
                 theta,
             ),
-            self.stream,
+            stream,
         );
     }
 
     #[inline]
-    pub fn reform<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>)
+    pub fn reform<T, U>(&self, dst: &mut Tensor<T>, src: &Tensor<U>, stream: &Stream)
     where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
         reform_nv::Scheme::new(
-            &self.kernels.reform,
+            &self.reform,
             reform::LayoutAttrs {
                 dst: layout(dst),
                 src: layout(src),
@@ -181,31 +173,31 @@ impl KernelRuntime<'_> {
         .unwrap()
         .launch(
             &(dst.physical_mut().as_mut_ptr(), src.physical().as_ptr()),
-            self.stream,
+            stream,
         );
     }
 
     #[inline]
-    pub fn softmax<T>(&self, att: &mut Tensor<T>)
+    pub fn softmax<T>(&self, att: &mut Tensor<T>, stream: &Stream)
     where
         T: DerefMut<Target = [DevByte]>,
     {
         softmax_nv::Scheme::new(
-            &self.kernels.softmax,
+            &self.softmax,
             fuesd_softmax::LayoutAttrs { att: layout(att) },
         )
         .unwrap()
-        .launch(&att.physical_mut().as_mut_ptr(), self.stream);
+        .launch(&att.physical_mut().as_mut_ptr(), stream);
     }
 
     #[inline]
-    pub fn swiglu<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>)
+    pub fn swiglu<T, U>(&self, gate: &mut Tensor<T>, up: &Tensor<U>, stream: &Stream)
     where
         T: DerefMut<Target = [DevByte]>,
         U: Deref<Target = [DevByte]>,
     {
         swiglu_nv::Scheme::new(
-            &self.kernels.swiglu,
+            &self.swiglu,
             swiglu::LayoutAttrs {
                 gate: layout(gate),
                 up: layout(up),
@@ -214,7 +206,7 @@ impl KernelRuntime<'_> {
         .unwrap()
         .launch(
             &(gate.physical_mut().as_mut_ptr(), up.physical().as_ptr()),
-            self.stream,
+            stream,
         );
     }
 }
@@ -238,20 +230,6 @@ pub fn cast_dt(dt: DataType) -> CudaDataType {
     }
 }
 
-#[allow(unused)]
-pub fn map_tensor<T>(tensor: &Tensor<T>) -> Tensor<Vec<u8>>
-where
-    T: Deref<Target = [DevByte]>,
-{
-    unsafe {
-        tensor.as_ref().map_physical(|dev| {
-            let mut buf = vec![0; dev.len()];
-            memcpy_d2h(&mut buf, dev);
-            buf
-        })
-    }
-}
-
 pub fn synchronize() {
     cuda::init();
     for i in 0..cuda::Device::count() {
@@ -259,19 +237,4 @@ pub fn synchronize() {
             .retain_primary()
             .apply(|ctx| ctx.synchronize());
     }
-}
-
-fn layout<T>(t: &Tensor<T>) -> TensorLayout {
-    let dt = match t.data_type() {
-        DataType::F16 => F16,
-        DataType::U32 => U32,
-        _ => todo!(),
-    };
-    let shape = t.shape().iter().map(|&x| x as usize).collect::<Vec<_>>();
-    let strides = t
-        .strides()
-        .iter()
-        .map(|&x| x as isize * t.data_type().size() as isize)
-        .collect::<Vec<_>>();
-    TensorLayout::new(dt, shape, strides, t.bytes_offset() as _)
 }

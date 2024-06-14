@@ -1,5 +1,5 @@
 [package]
-name = "common-cpu"
+name = "common-devices"
 version = "0.0.0"
 edition = "2021"
 authors = ["YdrMaster <ydrml@hotmail.com>"]
@@ -8,6 +8,5 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 
 [dependencies]
 common = { path = "../../common" }
-common-devices = { path = "../common" }
 tensor = { path = "../../tensor" }
-operators = { workspace = true, features = ["common-cpu"] }
+operators.workspace = true
