@@ -12,3 +12,4 @@ serde_json.workspace = true
 half.workspace = true
 memmap2.workspace = true
 safetensors = "0.4"
+gguf-rs = "0.1.3"

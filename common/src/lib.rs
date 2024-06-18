@@ -14,6 +14,7 @@ mod between_f32;
 mod blob;
 pub mod safe_tensors;
 pub mod test_model;
+pub mod gguf;
 
 pub use between_f32::BetweenF32;
 pub use blob::Blob;
