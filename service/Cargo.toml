@@ -16,4 +16,4 @@ tokio.workspace = true
 
 [dev-dependencies]
 colored = "2.1"
-llama-cpu = { path = "../models/llama/cpu" }
+llama-cpu = { path = "../models/llama/common-cpu" }

@@ -166,9 +166,9 @@ checksum = "62416e5d5d54b59baf7fd793ee632d83a7512d2d4ef227729642b45db09e6c7d"
 
 [[package]]
 name = "bytemuck"
-version = "1.16.0"
+version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78834c15cb5d5efe3452d58b1e8ba890dd62d21907f867f383358198e56ebca5"
+checksum = "b236fc92302c97ed75b38da1f4917b5cdda4984745740f153a5d3059e48d725e"
 dependencies = [
  "bytemuck_derive",
 ]
@@ -728,9 +728,9 @@ dependencies = [
 
 [[package]]
 name = "httparse"
-version = "1.9.3"
+version = "1.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0e7a4dd27b9476dc40cb050d3632d3bba3a70ddbff012285f7f8559a1e7e545"
+checksum = "0fcc0b4a115bf80b728eb8ea024ad5bd707b615bfed49e0665b6e0f86fd082d9"
 
 [[package]]
 name = "httpdate"
@@ -858,6 +858,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "llama-cn"
+version = "0.0.0"
+dependencies = [
+ "build-script-cfg",
+ "causal-lm",
+ "common 0.0.0",
+ "llama",
+ "search-neuware-tools 0.1.0 (git+https://github.com/YdrMaster/cndrv?rev=d94e170)",
+]
+
+[[package]]
 name = "llama-cpu"
 version = "0.0.1"
 dependencies = [
@@ -945,9 +956,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniz_oxide"
-version = "0.7.3"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87dfd01fe195c66b572b37921ad8803d010623c0aca821bea2302239d155cdae"
+checksum = "b8a240ddb74feaf34a79a7add65a741f3167852fba007066dcac1ca548d89c08"
 dependencies = [
  "adler",
 ]
@@ -1137,7 +1148,7 @@ dependencies = [
  "log",
  "nvidia-gpu",
  "search-cuda-tools",
- "search-neuware-tools",
+ "search-neuware-tools 0.1.0 (git+https://github.com/YdrMaster/cndrv?rev=fb46d04)",
 ]
 
 [[package]]
@@ -1352,9 +1363,9 @@ checksum = "f3cb5ba0dc43242ce17de99c180e96db90b235b8a9fdc9543c96d2209116bd9f"
 
 [[package]]
 name = "safe_arch"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f398075ce1e6a179b46f51bd88d0598b92b00d3551f1a2d4ac49e771b56ac354"
+checksum = "c3460605018fdc9612bce72735cba0d27efbcd9904780d44c7e3a9948f96148a"
 dependencies = [
  "bytemuck",
 ]
@@ -1393,6 +1404,11 @@ source = "git+https://github.com/YdrMaster/cuda-driver?rev=a4b3cf5#a4b3cf53de9c5
 dependencies = [
  "find_cuda_helper",
 ]
+
+[[package]]
+name = "search-neuware-tools"
+version = "0.1.0"
+source = "git+https://github.com/YdrMaster/cndrv?rev=d94e170#d94e170d227647e98ee84b621f3e4510b04cd5cd"
 
 [[package]]
 name = "search-neuware-tools"
@@ -1881,6 +1897,7 @@ dependencies = [
  "colored",
  "common 0.0.0",
  "llama",
+ "llama-cn",
  "llama-cpu",
  "llama-nv",
  "llama-nv-distributed",

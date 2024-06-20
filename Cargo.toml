@@ -14,9 +14,10 @@ members = [
     "devices/nvidia",
 
     "models/llama/common",
-    "models/llama/cpu",
-    "models/llama/nvidia",
-    "models/llama/nvidia-distributed",
+    "models/llama/common-cpu",
+    "models/llama/nvidia-gpu",
+    "models/llama/nvidia-gpu-distributed",
+    "models/llama/cambricon-mlu",
     "models/mixtral/common",
     "models/mixtral/cpu",
 ]
@@ -38,3 +39,6 @@ operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "cac4307"
 cuda = { git = "https://github.com/YdrMaster/cuda-driver", rev = "a4b3cf5" }
 nccl = { git = "https://github.com/YdrMaster/cuda-driver", rev = "a4b3cf5" }
 search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "a4b3cf5" }
+
+cndrv = { git = "https://github.com/YdrMaster/cndrv", rev = "d94e170" }
+search-neuware-tools = { git = "https://github.com/YdrMaster/cndrv", rev = "d94e170" }

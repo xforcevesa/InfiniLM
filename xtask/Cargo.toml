@@ -15,9 +15,10 @@ web-api = { path = "../web-api" }
 
 # models
 llama = { path = "../models/llama/common" }
-llama-cpu = { path = "../models/llama/cpu" }
-llama-nv = { path = "../models/llama/nvidia", optional = true }
-llama-nv-distributed = { path = "../models/llama/nvidia-distributed", optional = true }
+llama-cpu = { path = "../models/llama/common-cpu" }
+llama-nv = { path = "../models/llama/nvidia-gpu", optional = true }
+llama-nv-distributed = { path = "../models/llama/nvidia-gpu-distributed", optional = true }
+llama-cn = { path = "../models/llama/cambricon-mlu", optional = true }
 mixtral = { path = "../models/mixtral/common" }
 mixtral-cpu = { path = "../models/mixtral/cpu" }
 

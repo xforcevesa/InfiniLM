@@ -1,0 +1,14 @@
+[package]
+name = "llama-cn"
+version = "0.0.0"
+edition = "2021"
+authors = ["YdrMaster <ydrml@hotmail.com>"]
+
+[dependencies]
+common = { path = "../../../common" }
+causal-lm = { path = "../../../causal-lm" }
+llama = { path = "../common" }
+
+[build-dependencies]
+build-script-cfg.workspace = true
+search-neuware-tools.workspace = true
