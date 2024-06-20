@@ -7,13 +7,15 @@ extern crate log;
 
 use causal_lm::{CausalLM, DecodingMeta, Model, QueryContext, SampleMeta};
 use common::{upos, utok, FileLoadError};
-use common_nv::{sample_nv, slice, udim, DataType, Gpu, Kernels, NvidiaKernels, Tensor};
+use common_nv::{
+    sample_nv, slice, udim, DataType, DropOption, Gpu, Kernels, NvidiaKernels, Tensor,
+};
 use cuda::{
     ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device, EventSpore, HostMemSpore,
     Stream, StreamSpore,
 };
 use llama::{ComputeConst, InferenceConfig, LayerStorage, SliceOn, Weight};
-use resource::{DropOption, Resource};
+use resource::Resource;
 use std::{
     cell::RefCell,
     collections::VecDeque,
@@ -301,10 +303,10 @@ impl Drop for Transformer {
     fn drop(&mut self) {
         self.resource.apply(|compute| {
             let ctx = compute.ctx();
-            self.transfer.take().sprout(ctx);
-            self.embed_tokens.physical_mut().take().sprout(ctx);
-            self.lm_layernorm.physical_mut().take().sprout(ctx);
-            self.lm_head.physical_mut().take().sprout(ctx);
+            self.transfer.sprout(ctx);
+            self.embed_tokens.physical_mut().sprout(ctx);
+            self.lm_layernorm.physical_mut().sprout(ctx);
+            self.lm_head.physical_mut().sprout(ctx);
             while let Some(layer) = self.layers.pop() {
                 layer.att_layernorm.take_physical().sprout(ctx);
                 layer.att_qkv.take_physical().sprout(ctx);

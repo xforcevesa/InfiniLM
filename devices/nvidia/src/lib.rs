@@ -7,7 +7,7 @@ mod sample;
 
 use common::utok;
 use common_devices::{mat_mul, reform, rms_norm, rope, softmax, swiglu, SliceOn};
-use cuda::{CudaDataType, Device};
+use cuda::{ContextGuard, ContextSpore, CudaDataType, Device};
 use operators::{
     fuesd_softmax::nvidia_gpu as softmax, mat_mul::nvidia_gpu as mat_mul,
     reform::nvidia_gpu as reform, rms_norm::nvidia_gpu as rms_norm, rope::nvidia_gpu as rope,
@@ -204,6 +204,32 @@ pub fn cast_dt(dt: DataType) -> CudaDataType {
         DataType::F32 => CudaDataType::f32,
         DataType::F64 => CudaDataType::f64,
         _ => unreachable!(),
+    }
+}
+
+pub struct DropOption<T>(Option<T>);
+
+impl<T> From<T> for DropOption<T> {
+    #[inline]
+    fn from(value: T) -> Self {
+        Self(Some(value))
+    }
+}
+
+impl<T: ContextSpore> DropOption<T> {
+    #[inline]
+    pub fn as_ref(&self) -> &T {
+        self.0.as_ref().unwrap()
+    }
+
+    #[inline]
+    pub fn as_mut(&mut self) -> &mut T {
+        self.0.as_mut().unwrap()
+    }
+
+    #[inline]
+    pub fn sprout<'ctx>(&mut self, ctx: &'ctx ContextGuard) -> <T as ContextSpore>::Resource<'ctx> {
+        self.0.take().unwrap().sprout(ctx)
     }
 }
 

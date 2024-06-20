@@ -14,7 +14,8 @@ use common_nv::{
         AsRaw, Context, ContextResource, ContextSpore, DevByte, DevMem, DevMemSpore, Device,
         HostMemSpore, Stream, StreamSpore,
     },
-    sample_nv, slice, split, udim, DataType, Kernels, LocalSplitable, NvidiaKernels, Tensor,
+    sample_nv, slice, split, udim, DataType, DropOption, Kernels, LocalSplitable, NvidiaKernels,
+    Tensor,
 };
 use itertools::izip;
 use llama::InferenceConfig;
@@ -38,10 +39,10 @@ pub struct Transformer {
     streams: Vec<StreamSpore>,
     kernels: NvidiaKernels,
 
-    embed_tokens: Tensor<Option<HostMemSpore>>,
+    embed_tokens: Tensor<DropOption<HostMemSpore>>,
     matrix: ParameterMatrix,
-    lm_layernorm: Tensor<Option<DevMemSpore>>,
-    lm_head: Tensor<Option<DevMemSpore>>,
+    lm_layernorm: Tensor<DropOption<DevMemSpore>>,
+    lm_head: Tensor<DropOption<DevMemSpore>>,
 }
 
 impl Model for Transformer {
@@ -75,12 +76,12 @@ impl Model for Transformer {
                 host.embed_tokens.map_physical(|u| {
                     let mut host = ctx.malloc_host::<u8>(u.len());
                     host.clone_from_slice(&u);
-                    Some(host.sporulate())
+                    host.sporulate().into()
                 }),
                 host.lm_layernorm
-                    .map_physical(|u| Some(ctx.from_host(&u).sporulate())),
+                    .map_physical(|u| ctx.from_host(&u).sporulate().into()),
                 host.lm_head
-                    .map_physical(|u| Some(ctx.from_host(&u).sporulate())),
+                    .map_physical(|u| ctx.from_host(&u).sporulate().into()),
             )
         });
         let streams = contexts
@@ -172,10 +173,7 @@ impl CausalLM for Transformer {
             let mut x = x.as_mut().map_physical(|u| &mut **u[0].sprout_mut(ctx));
             self.kernels.gather(
                 &mut x,
-                &self
-                    .embed_tokens
-                    .as_ref()
-                    .map_physical(|u| u.as_deref().unwrap()),
+                &self.embed_tokens.as_ref().map_physical(|u| &**u.as_ref()),
                 tokens,
                 self.streams[0].sprout_ref(ctx),
             );
@@ -373,11 +371,11 @@ impl CausalLM for Transformer {
             let model_norm = self
                 .lm_layernorm
                 .as_ref()
-                .map_physical(|u| &**u.as_ref().unwrap().sprout_ref(ctx));
+                .map_physical(|u| &**u.as_ref().sprout_ref(ctx));
             let lm_head = self
                 .lm_head
                 .as_ref()
-                .map_physical(|u| &**u.as_ref().unwrap().sprout_ref(ctx));
+                .map_physical(|u| &**u.as_ref().sprout_ref(ctx));
 
             let mut x = x.slice(&[slice![range.start => range.end], slice![=>]]);
             let mut logits = Tensor::alloc(dt, &[x.shape()[0], lm_head.shape()[1]], |len| {
@@ -584,9 +582,9 @@ impl Drop for Transformer {
         let contexts = self.comms.contexts().collect::<Vec<_>>();
         unsafe {
             contexts[0].apply(|ctx| {
-                self.embed_tokens.physical_mut().take().unwrap().sprout(ctx);
-                self.lm_layernorm.physical_mut().take().unwrap().sprout(ctx);
-                self.lm_head.physical_mut().take().unwrap().sprout(ctx);
+                self.embed_tokens.physical_mut().sprout(ctx);
+                self.lm_layernorm.physical_mut().sprout(ctx);
+                self.lm_head.physical_mut().sprout(ctx);
             });
             self.matrix.kill(&contexts);
             for (context, stream) in zip(contexts, std::mem::take(&mut self.streams)) {

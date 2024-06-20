@@ -1,29 +1,8 @@
-﻿use common_nv::cuda::{
-    Context, ContextResource, ContextSpore, DevMemSpore, Device, Stream, StreamSpore,
+﻿use common_nv::{
+    cuda::{Context, ContextResource, ContextSpore, DevMemSpore, Device, Stream, StreamSpore},
+    DropOption,
 };
 use std::sync::Arc;
-
-pub(super) struct DropOption<T>(Option<T>);
-
-impl<T> From<T> for DropOption<T> {
-    fn from(value: T) -> Self {
-        Self(Some(value))
-    }
-}
-
-impl<T> DropOption<T> {
-    pub fn as_ref(&self) -> &T {
-        self.0.as_ref().unwrap()
-    }
-
-    pub fn as_mut(&mut self) -> &mut T {
-        self.0.as_mut().unwrap()
-    }
-
-    pub fn take(&mut self) -> T {
-        self.0.take().unwrap()
-    }
-}
 
 pub(super) struct Resource {
     context: Context,
@@ -51,8 +30,7 @@ impl Resource {
 impl Drop for Resource {
     #[inline]
     fn drop(&mut self) {
-        self.context
-            .apply(|ctx| drop(self.compute.take().sprout(ctx)));
+        self.context.apply(|ctx| drop(self.compute.sprout(ctx)));
     }
 }
 
@@ -77,7 +55,7 @@ impl Drop for Cache {
     #[inline]
     fn drop(&mut self) {
         self.res.apply(|stream| {
-            self.mem.take().sprout(stream.ctx()).drop_on(stream);
+            self.mem.sprout(stream.ctx()).drop_on(stream);
         });
     }
 }
