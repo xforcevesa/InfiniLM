@@ -32,7 +32,9 @@ time = "0.3"
 [build-dependencies]
 build-script-cfg.workspace = true
 search-cuda-tools.workspace = true
+search-neuware-tools.workspace = true
 
 [features]
-default = ["nvidia"]
+default = ["nvidia", "cambricon"]
 nvidia = ["llama-nv", "llama-nv-distributed"]
+cambricon = ["llama-cn"]

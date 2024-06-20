@@ -8,7 +8,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 
 [dependencies]
 common = { path = "../../../common" }
-common-nv = { path = "../../../devices/nvidia" }
+common-nv = { path = "../../../devices/nvidia-gpu" }
 causal-lm = { path = "../../../causal-lm" }
 llama = { path = "../common" }
 log.workspace = true

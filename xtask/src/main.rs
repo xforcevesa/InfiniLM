@@ -195,6 +195,11 @@ trait Task: Sized {
         {
             llama_nv::cuda::init();
         }
+        // 如果感知到寒武纪环境则初始化
+        #[cfg(detected_neuware)]
+        {
+            llama_cn::cndrv::init();
+        }
 
         let nvidia = self.inference().nvidia();
         match self.inference().model_type() {
@@ -231,6 +236,11 @@ trait Task: Sized {
         #[cfg(detected_cuda)]
         {
             llama_nv::synchronize();
+        }
+        // 同步等待寒武纪上任务结束
+        #[cfg(detected_neuware)]
+        {
+            llama_cn::synchronize();
         }
         // 关闭 tokio 运行时
         runtime.shutdown_background();

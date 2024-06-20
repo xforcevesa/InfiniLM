@@ -6,7 +6,7 @@ authors = ["Zezhong Pan <panzezhong@qiyuanlab.com>"]
 
 [dependencies]
 common = { path = "../../../common" }
-common-cpu = { path = "../../../devices/cpu" }
+common-cpu = { path = "../../../devices/common-cpu" }
 tensor = { path = "../../../tensor" }
 causal-lm = { path = "../../../causal-lm" }
 mixtral = { path = "../common" }

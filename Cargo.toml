@@ -10,8 +10,9 @@ members = [
     "xtask",
 
     "devices/common",
-    "devices/cpu",
-    "devices/nvidia",
+    "devices/common-cpu",
+    "devices/nvidia-gpu",
+    "devices/cambricon-mlu",
 
     "models/llama/common",
     "models/llama/common-cpu",
@@ -40,5 +41,5 @@ cuda = { git = "https://github.com/YdrMaster/cuda-driver", rev = "a4b3cf5" }
 nccl = { git = "https://github.com/YdrMaster/cuda-driver", rev = "a4b3cf5" }
 search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "a4b3cf5" }
 
-cndrv = { git = "https://github.com/YdrMaster/cndrv", rev = "d94e170" }
+cndrv = { git = "https://github.com/YdrMaster/cndrv", rev = "4fe3e85" }
 search-neuware-tools = { git = "https://github.com/YdrMaster/cndrv", rev = "d94e170" }

@@ -278,6 +278,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b82cf0babdbd58558212896d1a4272303a57bdb245c2bf1147185fb45640e70"
 
 [[package]]
+name = "cndrv"
+version = "0.1.0"
+source = "git+https://github.com/YdrMaster/cndrv?rev=4fe3e85#4fe3e85d9042efbe8ad017d5a892c4e99c739f9d"
+dependencies = [
+ "bindgen",
+ "build-script-cfg",
+ "log",
+ "search-neuware-tools 0.1.0 (git+https://github.com/YdrMaster/cndrv?rev=4fe3e85)",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -308,6 +319,18 @@ dependencies = [
 name = "common"
 version = "0.1.0"
 source = "git+https://github.com/YdrMaster/operators-rs?rev=cac4307#cac4307555531a8903330b99ca12b218a2a34259"
+
+[[package]]
+name = "common-cn"
+version = "0.0.0"
+dependencies = [
+ "build-script-cfg",
+ "cndrv",
+ "common 0.0.0",
+ "common-devices",
+ "search-neuware-tools 0.1.0 (git+https://github.com/YdrMaster/cndrv?rev=d94e170)",
+ "tensor",
+]
 
 [[package]]
 name = "common-cpu"
@@ -864,6 +887,7 @@ dependencies = [
  "build-script-cfg",
  "causal-lm",
  "common 0.0.0",
+ "common-cn",
  "llama",
  "search-neuware-tools 0.1.0 (git+https://github.com/YdrMaster/cndrv?rev=d94e170)",
 ]
@@ -1408,6 +1432,11 @@ dependencies = [
 [[package]]
 name = "search-neuware-tools"
 version = "0.1.0"
+source = "git+https://github.com/YdrMaster/cndrv?rev=4fe3e85#4fe3e85d9042efbe8ad017d5a892c4e99c739f9d"
+
+[[package]]
+name = "search-neuware-tools"
+version = "0.1.0"
 source = "git+https://github.com/YdrMaster/cndrv?rev=d94e170#d94e170d227647e98ee84b621f3e4510b04cd5cd"
 
 [[package]]
@@ -1905,6 +1934,7 @@ dependencies = [
  "mixtral",
  "mixtral-cpu",
  "search-cuda-tools",
+ "search-neuware-tools 0.1.0 (git+https://github.com/YdrMaster/cndrv?rev=d94e170)",
  "service",
  "simple_logger",
  "tensor",

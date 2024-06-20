@@ -8,6 +8,6 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 
 [dependencies]
 common = { path = "../../../common" }
-common-cpu = { path = "../../../devices/cpu" }
+common-cpu = { path = "../../../devices/common-cpu" }
 causal-lm = { path = "../../../causal-lm" }
 llama = { path = "../common" }
